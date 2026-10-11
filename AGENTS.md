@@ -1,11 +1,19 @@
-# mods-claude
+# claude-config
 
-Mods locales para Claude Code. Hoy hay uno: **`panel-uso`**, un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens.
+Herramientas personales para Claude Code, en dos partes separadas:
+
+- **`panel-uso/`**: mod (plugin) con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens.
+- **`flujos/`**: los flujos `/implementador`, `/implementador-ligero` y `/documentar`, con sus agentes y herramientas. Se instalan copiándolos a `~/.claude` (ver [Flujos](#flujos)).
 
 ## Estructura
 
 ```
 .claude/implementador.json        pasos de verificación para /implementador
+flujos/
+  instalar.mjs                    copia los flujos a ~/.claude (o los trae con --traer)
+  skills/<nombre>/SKILL.md        → ~/.claude/skills/<nombre>/SKILL.md
+  agents/<nombre>.md              → ~/.claude/agents/<nombre>.md
+  herramientas/                   → ~/.claude/flujos/ (estado, verificar, guardia, comun.md)
 panel-uso/
   .claude-plugin/plugin.json      manifiesto (nombre, versión, types)
   .claude-plugin/marketplace.json marketplace «mods-locales»
@@ -25,9 +33,10 @@ panel-uso/
 ```
 claude plugin validate panel-uso
 claude plugin test panel-uso
+node --test flujos/herramientas/guardia.test.mjs
 ```
 
-Los dos tienen que terminar sin errores antes de dar algo por hecho. Los tests simulan el motor (`mock.clock`, `mock.store`, `on('process.run', …)`, `on('session.root', …)`), así que **no prueban** lo visual ni que un proceso real abra una ventana: eso se comprueba a mano con `/reload-plugins`.
+Los tres tienen que terminar sin errores antes de dar algo por hecho. Los tests del panel simulan el motor (`mock.clock`, `mock.store`, `on('process.run', …)`, `on('session.root', …)`), así que **no prueban** lo visual ni que un proceso real abra una ventana: eso se comprueba a mano con `/reload-plugins`.
 
 ## panel-uso
 
@@ -71,6 +80,21 @@ La vista `inline` (terminal angosta) es una sola línea: `ctx 42% · 5h 30% (en 
 - La ruta del proyecto nunca va como argumento de un proceso ni por un shell. Va solo como `cwd`, y antes se valida con `tipoDeRuta`.
 - El `exitCode` del comando de Windows sí sirve como señal de error: si es distinto de 0, el botón avisa con un toast.
 
+## Flujos
+
+El repo es la fuente de verdad: los flujos se editan en `flujos/` y después se instalan.
+
+```
+node flujos/instalar.mjs              copia a ~/.claude lo que cambió
+node flujos/instalar.mjs --revisar    muestra qué cambiaría, sin copiar
+node flujos/instalar.mjs --traer      trae al repo lo que se editó directo en ~/.claude
+node flujos/instalar.mjs --forzar     pisa la copia instalada aunque sea más nueva
+```
+
+- Si la copia instalada es más nueva que la del repo (alguien la editó en `~/.claude`), `instalar.mjs` la **frena** y termina con exit 1, para no perder ese cambio. Se resuelve con `--traer` o con `--forzar`.
+- Nunca borra: un archivo quitado del repo sigue instalado hasta que se borre a mano.
+- No toca `~/.claude/flujos/registros/` (bitácoras locales de cada proyecto, no van al repo).
+- Los flujos llaman a sus herramientas por la ruta fija `~/.claude/flujos/…`, así que **corren desde la copia instalada**, no desde el repo: un cambio en `flujos/` no rige hasta instalarlo.
 ## Instalación
 
 El mod está registrado en local como `panel-uso@mods-locales`. Después de editar archivos, `/reload-plugins` lo vuelve a leer desde la carpeta `panel-uso`.

@@ -1,6 +1,7 @@
 {
   "verificar": [
     { "nombre": "validate", "cmd": "claude plugin validate panel-uso" },
-    { "nombre": "test", "cmd": "claude plugin test panel-uso" }
+    { "nombre": "test", "cmd": "claude plugin test panel-uso" },
+    { "nombre": "test flujos", "cmd": "node --test flujos/herramientas/guardia.test.mjs" }
   ]
 }
