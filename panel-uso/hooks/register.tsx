@@ -19,7 +19,7 @@ import {
   tono,
   tramos,
 } from './formato'
-import { PREFIJO, RETENCION_MS, anotar, clave, comoRegistro, inicioSemana, podar, resumir } from './semana'
+import { PREFIJO, RETENCION_MS, anotar, clave, comoRegistro, etiquetaDia, inicioSemana, podar, resumir } from './semana'
 import type { NivelEsfuerzo, Registro, Uso } from './semana'
 
 const PANEL = 'panel-uso'
@@ -83,7 +83,7 @@ async function releerSemana($: EngineInterface) {
       registros.push(r)
       if (k === propia) deEsta = r
     }
-    await update($, semana, () => resumir(registros, inicioSemana(m?.limites ?? [], t)))
+    await update($, semana, () => resumir(registros, inicioSemana(m?.limites ?? [], t), t))
     await update($, sesion, () => resumir([deEsta], 0))
   } catch {
     // Sin store la sección queda como estaba.
@@ -393,6 +393,10 @@ export const register: Register = on => {
 
     const ancho = Math.max(6, Math.min(40, e.props.bodyColumns))
 
+    // Fila de un día: etiqueta (6) + espacio (1) + barra + total (7) = `ancho`.
+    const anchoBarraDia = Math.max(1, ancho - 6 - 1 - 7)
+    const maxDia = (s: Semana) => Math.max(1, ...s.dias.map(x => x.total))
+
     /**
      * Tokens por modelo y esfuerzo: la misma tabla para la sesión y la semana.
      * Bajo cada fila va su barra con el % de la sección (barra + % = ancho).
@@ -454,6 +458,18 @@ export const register: Register = on => {
                   </Box>
                 )
               })}
+            </Box>
+          )}
+          {plegable !== undefined && visible && s !== null && s.dias.length > 0 && (
+            <Box flexDirection="column" marginTop={1}>
+              <Text dimColor>por día</Text>
+              {s.dias.map(dia => (
+                <Box key={`dia-${dia.inicio}`}>
+                  <Text>{`${etiquetaDia(dia.inicio).padEnd(6)} `}</Text>
+                  <Text color="claude">{barra((dia.total / maxDia(s)) * 100, anchoBarraDia)}</Text>
+                  <Text dimColor>{tokens(dia.total).padStart(7)}</Text>
+                </Box>
+              ))}
             </Box>
           )}
           {visible && s !== null && (desde !== null || s.total > 0) && (

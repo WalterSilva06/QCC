@@ -59,6 +59,14 @@ export type FilaSemana = {
   salida: number
 }
 
+/** Los tokens de un día local. */
+export type DiaSemana = {
+  /** Comienzo del día local (ms), a las 00:00 de la zona horaria de la máquina. */
+  inicio: number
+  /** Entrada + salida + caché leída + caché escrita de ese día (como `FilaSemana.total`); 0 si no hubo uso. */
+  total: number
+}
+
 /** Tokens de todas las sesiones (hilo principal y subagentes) desde `desde`. */
 export type Semana = {
   /** Inicio de la ventana (ms): la del límite semanal, o 7 días atrás sin él. */
@@ -68,6 +76,11 @@ export type Semana = {
   salida: number
   /** La hora más vieja guardada (ms); si es posterior a `desde`, la semana está incompleta. */
   registroDesde: number | null
+  /**
+   * Total por día local, de más viejo a más nuevo, sin huecos (los días sin uso valen 0) y
+   * con tope de 7 días (los más recientes). Vacía si no hay uso.
+   */
+  dias: DiaSemana[]
 }
 
 declare module 'claude-code' {

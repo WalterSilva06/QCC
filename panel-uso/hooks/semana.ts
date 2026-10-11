@@ -1,6 +1,6 @@
 // Tokens de la semana por modelo y esfuerzo. Puro: sin `$`, para poder probarlo solo.
 
-import type { FilaSemana, Semana } from '../types'
+import type { DiaSemana, FilaSemana, Semana } from '../types'
 
 const HORA = 3_600_000
 const DIA = 24 * HORA
@@ -113,12 +113,56 @@ export function nombreEsfuerzo(nivel: string): string {
   return nivel
 }
 
+const DIAS_CORTOS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']
+
+/** Cuántos días lleva la lista `dias` como máximo. */
+const MAX_DIAS = 7
+
+/** `sáb 10`, `mié 7`: nombre corto del día local de `ms` y su número. */
+export function etiquetaDia(ms: number): string {
+  const f = new Date(ms)
+
+  return `${DIAS_CORTOS[f.getDay()] ?? ''} ${f.getDate()}`
+}
+
+/** Comienzo (ms) del día local de `ms`. */
+function inicioDeDia(ms: number): number {
+  const f = new Date(ms)
+  f.setHours(0, 0, 0, 0)
+
+  return f.getTime()
+}
+
+/**
+ * Los totales por día local, de más viejo a más nuevo y sin huecos (los días sin uso valen 0).
+ * Con `ahora` la lista llega hasta su día; son los 7 más recientes. Avanza por calendario,
+ * no de 24 h en 24 h, para que un cambio de hora no duplique ni pierda un día.
+ */
+function porDia(totales: ReadonlyMap<number, number>, ahora?: number): DiaSemana[] {
+  if (totales.size === 0) return []
+
+  const claves = [...totales.keys()]
+  const primero = Math.min(...claves)
+  const ultimo = Math.max(...claves, ahora === undefined ? -Infinity : inicioDeDia(ahora))
+  const f = new Date(ultimo)
+  const dias: DiaSemana[] = []
+  for (let i = 0; i < MAX_DIAS; i++) {
+    const inicio = new Date(f.getFullYear(), f.getMonth(), f.getDate() - i).getTime()
+    if (inicio < primero) break
+    dias.unshift({ inicio, total: totales.get(inicio) ?? 0 })
+  }
+
+  return dias
+}
+
 /**
  * Suma los registros de todas las sesiones desde `desde`, por familia de modelo y esfuerzo,
- * de mayor a menor. Una hora cuenta entera si termina después de `desde`.
+ * de mayor a menor, y por día local. Una hora cuenta entera si termina después de `desde`.
+ * Con `ahora`, la lista de días llega hasta el día de `ahora`.
  */
-export function resumir(registros: readonly Registro[], desde: number): Semana {
+export function resumir(registros: readonly Registro[], desde: number, ahora?: number): Semana {
   const filas = new Map<string, FilaSemana>()
+  const totales = new Map<number, number>()
   let primera: number | null = null
 
   for (const r of registros) {
@@ -126,6 +170,7 @@ export function resumir(registros: readonly Registro[], desde: number): Semana {
       const h = Number(hora)
       if (primera === null || h < primera) primera = h
       if (h + HORA <= desde) continue
+      const dia = inicioDeDia(h)
 
       for (const [k, c] of Object.entries(porClave)) {
         // `modelo|esfuerzo` (principal, también los datos viejos) o `modelo|esfuerzo|sub`.
@@ -141,6 +186,7 @@ export function resumir(registros: readonly Registro[], desde: number): Semana {
         fila.total += c[0] + c[1] + c[2] + c[3]
         fila.salida += c[1]
         filas.set(id, fila)
+        totales.set(dia, (totales.get(dia) ?? 0) + c[0] + c[1] + c[2] + c[3])
       }
     }
   }
@@ -153,5 +199,6 @@ export function resumir(registros: readonly Registro[], desde: number): Semana {
     total: lista.reduce((s, f) => s + f.total, 0),
     salida: lista.reduce((s, f) => s + f.salida, 0),
     registroDesde: primera,
+    dias: porDia(totales, ahora),
   }
 }

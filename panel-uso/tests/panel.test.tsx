@@ -4,8 +4,18 @@ import type { Engine } from 'claude-code/testing'
 
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import { aDesglose, barra, falta, pct, tokens, tono, tramos } from '../hooks/formato'
-import { anotar, clave, comoRegistro, familia, inicioDeHora, inicioSemana, podar, resumir } from '../hooks/semana'
-import type { Registro } from '../hooks/semana'
+import {
+  anotar,
+  clave,
+  comoRegistro,
+  etiquetaDia,
+  familia,
+  inicioDeHora,
+  inicioSemana,
+  podar,
+  resumir,
+} from '../hooks/semana'
+import type { Cuentas, Registro } from '../hooks/semana'
 
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
 
@@ -822,6 +832,206 @@ describe('semana', () => {
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await ui.find({ type: 'Text', text: /sin respuestas anotadas/ })).toBeDefined()
+    await ui.unmount()
+  })
+})
+
+/** Un registro con una sola clave en cada hora dada. */
+function registroEn(horas: readonly number[], cuentas: Cuentas = [1, 2, 3, 4]): Registro {
+  return Object.fromEntries(horas.map(h => [String(h), { 'claude-opus-5-5|high': cuentas }]))
+}
+
+/** Comienzo del día local `d` (día del mes, puede salirse del mes: se normaliza por calendario). */
+function diaLocal(anio: number, mes: number, d: number): number {
+  return new Date(anio, mes, d).getTime()
+}
+
+describe('días', () => {
+  test('etiquetaDia: nombre corto en español y número del día local', async () => {
+    expect(etiquetaDia(new Date(2026, 9, 10, 12).getTime())).toBe('sáb 10')
+    expect(etiquetaDia(new Date(2026, 9, 7, 0).getTime())).toBe('mié 7')
+    expect(etiquetaDia(new Date(2026, 9, 11, 23, 59).getTime())).toBe('dom 11')
+    expect(etiquetaDia(new Date(2026, 9, 12, 8).getTime())).toBe('lun 12')
+    expect(etiquetaDia(new Date(2026, 9, 13, 8).getTime())).toBe('mar 13')
+    expect(etiquetaDia(new Date(2026, 9, 8, 8).getTime())).toBe('jue 8')
+    expect(etiquetaDia(new Date(2026, 9, 9, 8).getTime())).toBe('vie 9')
+  })
+
+  test('agrupa por día local y suma entrada, salida y las dos cachés', async () => {
+    const r = registroEn([
+      new Date(2026, 9, 5, 9).getTime(),
+      new Date(2026, 9, 5, 18).getTime(),
+      new Date(2026, 9, 6, 12).getTime(),
+    ])
+    const s = resumir([r], 0)
+
+    expect(s.dias).toEqual([
+      { inicio: diaLocal(2026, 9, 5), total: 20 },
+      { inicio: diaLocal(2026, 9, 6), total: 10 },
+    ])
+    expect(s.total).toBe(30)
+  })
+
+  test('suma las sesiones del mismo día y rellena con 0 los días sin uso', async () => {
+    const a = registroEn([new Date(2026, 9, 5, 12).getTime()], [10, 0, 0, 0])
+    const b = registroEn([new Date(2026, 9, 5, 15).getTime(), new Date(2026, 9, 8, 12).getTime()], [5, 0, 0, 0])
+    const s = resumir([a, b], 0)
+
+    expect(s.dias).toEqual([
+      { inicio: diaLocal(2026, 9, 5), total: 15 },
+      { inicio: diaLocal(2026, 9, 6), total: 0 },
+      { inicio: diaLocal(2026, 9, 7), total: 0 },
+      { inicio: diaLocal(2026, 9, 8), total: 5 },
+    ])
+  })
+
+  test('tope de 7 días: quedan los 7 más recientes', async () => {
+    const horas = Array.from({ length: 10 }, (_, i) => new Date(2026, 9, 1 + i, 12).getTime())
+    const s = resumir([registroEn(horas)], 0)
+
+    expect(s.dias.map(d => d.inicio)).toEqual(Array.from({ length: 7 }, (_, i) => diaLocal(2026, 9, 4 + i)))
+  })
+
+  test('con `ahora` la lista llega hasta hoy; sin él, hasta el último día con uso', async () => {
+    const r = registroEn([new Date(2026, 9, 6, 12).getTime()], [10, 0, 0, 0])
+    const ahora = new Date(2026, 9, 9, 15).getTime()
+
+    const con = resumir([r], 0, ahora)
+    expect(con.dias).toEqual([
+      { inicio: diaLocal(2026, 9, 6), total: 10 },
+      { inicio: diaLocal(2026, 9, 7), total: 0 },
+      { inicio: diaLocal(2026, 9, 8), total: 0 },
+      { inicio: diaLocal(2026, 9, 9), total: 0 },
+    ])
+
+    expect(resumir([r], 0).dias).toEqual([{ inicio: diaLocal(2026, 9, 6), total: 10 }])
+    // `ahora` en el mismo día del último uso no agrega nada.
+    expect(resumir([r], 0, new Date(2026, 9, 6, 23).getTime()).dias).toHaveLength(1)
+  })
+
+  test('con `ahora` y mucho tiempo sin uso, quedan solo los 7 últimos días (todos en 0 salvo el viejo fuera)', async () => {
+    const r = registroEn([new Date(2026, 9, 1, 12).getTime()])
+    const s = resumir([r], 0, new Date(2026, 9, 10, 12).getTime())
+
+    expect(s.dias.map(d => d.inicio)).toEqual(Array.from({ length: 7 }, (_, i) => diaLocal(2026, 9, 4 + i)))
+    expect(s.dias.every(d => d.total === 0)).toBe(true)
+  })
+
+  test('sin uso, o con todo antes de la ventana, `dias` queda vacío', async () => {
+    expect(resumir([], 0).dias).toEqual([])
+    expect(resumir([{}], 0, AHORA).dias).toEqual([])
+
+    const viejo = registroEn([new Date(2026, 9, 1, 12).getTime()])
+    expect(resumir([viejo], new Date(2026, 9, 5).getTime(), AHORA).dias).toEqual([])
+  })
+
+  test('la ventana de la semana sigue igual: una hora que termina antes de `desde` no cuenta', async () => {
+    const h = new Date(2026, 9, 5, 12).getTime()
+    const r = registroEn([h, h + 3 * 3_600_000], [10, 0, 0, 0])
+
+    expect(resumir([r], h + 3_600_000).dias).toEqual([{ inicio: diaLocal(2026, 9, 5), total: 10 }])
+    expect(resumir([r], h + 3 * 3_600_000 + 3_600_000).dias).toEqual([])
+  })
+
+  test('avanza por calendario: 7 días seguidos son 7 inicios distintos, con cualquier huso, cambio de hora o fin de mes', async () => {
+    // Cada arranque posible de 2026 (cruza fines de mes y los cambios de hora de cualquier huso).
+    for (let n = 0; n < 365; n++) {
+      const horas = Array.from({ length: 7 }, (_, i) => new Date(2026, 0, 1 + n + i, 12).getTime())
+      const esperados = Array.from({ length: 7 }, (_, i) => diaLocal(2026, 0, 1 + n + i))
+      const s = resumir([registroEn(horas)], 0)
+
+      expect(s.dias.map(d => d.inicio)).toEqual(esperados)
+      expect(new Set(s.dias.map(d => d.inicio)).size).toBe(7)
+      expect(s.dias.every(d => d.total === 10)).toBe(true)
+
+      // Un solo día con uso al principio y `ahora` 6 días después: rellena los 5 del medio con 0.
+      const hueco = resumir([registroEn([horas[0] ?? 0])], 0, horas[6])
+      expect(hueco.dias.map(d => d.inicio)).toEqual(esperados)
+      expect(hueco.dias.map(d => d.total)).toEqual([10, 0, 0, 0, 0, 0, 0])
+    }
+
+    // Fin de mes explícito: del 27 de septiembre al 3 de octubre.
+    const s = resumir([registroEn([0, 1, 2, 3, 4, 5, 6].map(i => new Date(2026, 8, 27 + i, 12).getTime()))], 0)
+    expect(s.dias.map(d => etiquetaDia(d.inicio).split(' ')[1])).toEqual(['27', '28', '29', '30', '1', '2', '3'])
+  })
+
+  test('el panel desplegado dibuja «por día»: etiqueta, barra y total de cada día, a ancho completo', async ($, on) => {
+    const dia5 = new Date(2026, 9, 5, 12).getTime()
+    const dia8 = new Date(2026, 9, 8, 12).getTime()
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on, {
+      'uso:otra': {
+        [String(dia5)]: { [clave('claude-sonnet-5-5', 'low')]: [400_000, 0, 0, 0] },
+        [String(dia8)]: { [clave('claude-sonnet-5-5', 'low')]: [100_000, 0, 0, 0] },
+      },
+    })
+    on('session.id', () => ({ value: 's1' }))
+    motorResponde(on, 'claude-opus-5-5')
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'medium')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+    // Plegada: ni el bloque ni sus filas.
+    let textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    expect(textos).not.toContain('por día')
+    expect(await ui.find({ type: 'Box', key: `dia-${diaLocal(2026, 9, 5)}` })).toBeUndefined()
+
+    await ui.press({ key: 's-plegar' })
+    textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+
+    // Solo en «Esta semana», una vez; «Esta sesión» no lo muestra.
+    expect(textos.filter(t => t === 'por día')).toHaveLength(1)
+    expect(textos.indexOf('por día')).toBeGreaterThan(textos.indexOf('Esta semana'))
+
+    // Del 5 de octubre al día local de AHORA, y los totales: 400k, 100k y lo de este turno (100k).
+    const hoy = new Date(AHORA)
+    const ultimo = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).getTime()
+    const inicios: number[] = []
+    for (let i = 0; diaLocal(2026, 9, 5 + i) <= ultimo; i++) inicios.push(diaLocal(2026, 9, 5 + i))
+    const totales = new Map<number, number>([
+      [diaLocal(2026, 9, 5), 400_000],
+      [diaLocal(2026, 9, 8), 100_000],
+    ])
+    totales.set(ultimo, (totales.get(ultimo) ?? 0) + 100_000)
+    const ancho = 32
+
+    for (const inicio of inicios) {
+      const total = totales.get(inicio) ?? 0
+      const fila = await ui.find({ type: 'Box', key: `dia-${inicio}` })
+      const esperada = `${etiquetaDia(inicio).padEnd(6)} ${barra((total / 400_000) * 100, ancho - 14)}${tokens(total).padStart(7)}`
+
+      expect(textos).toContain(`${etiquetaDia(inicio).padEnd(6)} `)
+      expect(fila?.text).toBe(esperada)
+      expect(fila?.text).toHaveLength(ancho)
+    }
+    expect(await ui.find({ type: 'Box', key: `dia-${inicios[0] ?? 0}` })).toBeDefined()
+    // Ni un día antes del primero ni uno después de hoy.
+    expect(await ui.find({ type: 'Box', key: `dia-${diaLocal(2026, 9, 4)}` })).toBeUndefined()
+    expect(await ui.find({ type: 'Box', key: `dia-${diaLocal(2026, 9, 5 + inicios.length)}` })).toBeUndefined()
+    expect(textos.slice(textos.indexOf('por día'))).toContain('   400k')
+
+    // Plegar otra vez lo quita.
+    await ui.press({ key: 's-plegar' })
+    textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    expect(textos).not.toContain('por día')
+    await ui.unmount()
+  })
+
+  test('el panel sin uso no dibuja «por día»', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on, { 'prefs:semana': true })
+    on('session.id', () => ({ value: 's1' }))
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+
+    expect(textos).not.toContain('por día')
     await ui.unmount()
   })
 })
