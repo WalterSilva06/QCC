@@ -83,6 +83,19 @@ export type Semana = {
   dias: DiaSemana[]
 }
 
+/** La actividad de una fila de «Esta sesión»: peticiones al modelo en curso y si espera una herramienta. */
+export type ActividadFila = {
+  /** Peticiones de esta fila que salieron y aún no vuelven (nunca negativo). */
+  enVuelo: number
+  /** Su última respuesta pidió una herramienta: la fila espera a que se ejecute y siga el turno. */
+  pendiente: boolean
+  /** Hora (ms) del último cambio de esta fila; sirve para caducar la espera. */
+  desde: number
+}
+
+/** La actividad por id de fila (`Opus 5.5|high|principal`, igual al de las filas de `Semana`). */
+export type Actividad = Record<string, ActividadFila>
+
 declare module 'claude-code' {
   interface PluginState {
     'panel-uso': {
@@ -96,6 +109,8 @@ declare module 'claude-code' {
       sesion: Semana | null
       /** «Esta semana» desplegada; se recuerda en el store con la clave `prefs:semana`. */
       semanaAbierta: boolean
+      /** Qué filas de «Esta sesión» tienen una petición en curso o esperan a otra; solo de esta terminal. */
+      actividad: Actividad
     }
   }
 }

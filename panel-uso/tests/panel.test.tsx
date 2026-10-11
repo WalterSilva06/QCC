@@ -5,17 +5,25 @@ import type { Engine } from 'claude-code/testing'
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import { aDesglose, barra, falta, pct, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
+  ESPERA_MAX_MS,
   anotar,
   clave,
   comoRegistro,
+  estadoActividad,
   etiquetaDia,
   familia,
+  idDeFila,
+  idFila,
   inicioDeHora,
   inicioSemana,
+  iniciarPeticion,
+  limpiarPendientes,
   podar,
   resumir,
+  terminarPeticion,
 } from '../hooks/semana'
 import type { Cuentas, Registro } from '../hooks/semana'
+import type { Actividad } from '../types'
 
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
 
@@ -677,7 +685,8 @@ describe('semana', () => {
     const i = textos.indexOf('Opus 5.5 medium', ses)
     expect(i).toBeGreaterThan(ses)
     expect(i).toBeLessThan(sem)
-    expect(textos.slice(i, i + 5)).toEqual(['Opus 5.5 medium', '   100k', '     2k', '█'.repeat(25), ' 100,0%'])
+    // Tras la etiqueta va el ■ de actividad (solo en la sesión): por eso son 6 textos y no 5.
+    expect(textos.slice(i, i + 6)).toEqual(['Opus 5.5 medium', ' ■', '   100k', '     2k', '█'.repeat(25), ' 100,0%'])
 
     // Semana: Sonnet 400k de 500k (80 %) y Opus 100k (20 %), cada barra bajo su fila.
     const j = textos.indexOf('Sonnet 5.5 low', sem)
@@ -1171,6 +1180,339 @@ describe('días', () => {
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
     expect(textos).not.toContain('por día')
+    await ui.unmount()
+  })
+})
+
+describe('actividad (puro)', () => {
+  const T0 = 5_000_000
+  const A = idFila('claude-opus-5-5', 'high', false)
+  const B = idFila('claude-opus-5-5', 'high', true)
+
+  test('inicio → activo', async () => {
+    const a = iniciarPeticion({}, A, T0)
+
+    expect(a[A]).toEqual({ enVuelo: 1, pendiente: false, desde: T0 })
+    expect(estadoActividad(a, A, T0)).toBe('activo')
+    expect(estadoActividad(a, B, T0)).toBe('inactivo')
+  })
+
+  test('fin con herramienta pendiente y otra fila en vuelo → espera', async () => {
+    let a: Actividad = iniciarPeticion({}, A, T0)
+    a = iniciarPeticion(a, B, T0)
+    a = terminarPeticion(a, A, T0 + 1_000, true)
+
+    expect(a[A]).toEqual({ enVuelo: 0, pendiente: true, desde: T0 + 1_000 })
+    expect(estadoActividad(a, A, T0 + 2_000)).toBe('espera')
+    expect(estadoActividad(a, B, T0 + 2_000)).toBe('activo')
+  })
+
+  test('la misma fila pendiente sin ninguna otra activa → espera', async () => {
+    let a: Actividad = iniciarPeticion({}, A, T0)
+    a = terminarPeticion(a, A, T0 + 1_000, true)
+
+    expect(estadoActividad(a, A, T0 + 2_000)).toBe('espera')
+    // Otra fila conocida pero sin nada en vuelo no cambia nada.
+    a = terminarPeticion(iniciarPeticion(a, B, T0 + 3_000), B, T0 + 4_000, false)
+    expect(estadoActividad(a, A, T0 + 5_000)).toBe('espera')
+    expect(estadoActividad(a, B, T0 + 5_000)).toBe('inactivo')
+  })
+
+  test('fin sin herramienta → inactivo, aunque otra fila esté activa', async () => {
+    let a: Actividad = iniciarPeticion({}, A, T0)
+    a = iniciarPeticion(a, B, T0)
+    a = terminarPeticion(a, A, T0 + 1_000, false)
+
+    expect(a[A]?.pendiente).toBe(false)
+    expect(estadoActividad(a, A, T0 + 2_000)).toBe('inactivo')
+  })
+
+  test('los contadores nunca son negativos: terminar más veces de las que se inició', async () => {
+    let a: Actividad = terminarPeticion({}, A, T0, false)
+    expect(a[A]?.enVuelo).toBe(0)
+
+    a = iniciarPeticion(a, A, T0)
+    a = terminarPeticion(a, A, T0 + 1, false)
+    a = terminarPeticion(a, A, T0 + 2, false)
+    a = terminarPeticion(a, A, T0 + 3, true)
+
+    expect(a[A]?.enVuelo).toBe(0)
+    // La última terminación pidió herramienta: sin otra fila activa ahora también es espera.
+    expect(estadoActividad(a, A, T0 + 4)).toBe('espera')
+  })
+
+  test('dos peticiones simultáneas de la misma fila: con una que termina sigue activa', async () => {
+    let a: Actividad = iniciarPeticion(iniciarPeticion({}, A, T0), A, T0 + 1)
+    expect(a[A]?.enVuelo).toBe(2)
+
+    a = terminarPeticion(a, A, T0 + 2, false)
+    expect(a[A]?.enVuelo).toBe(1)
+    expect(estadoActividad(a, A, T0 + 3)).toBe('activo')
+
+    a = terminarPeticion(a, A, T0 + 4, false)
+    expect(estadoActividad(a, A, T0 + 5)).toBe('inactivo')
+  })
+
+  test('iniciar una petición borra la espera de su fila', async () => {
+    let a: Actividad = iniciarPeticion({}, B, T0)
+    a = terminarPeticion(iniciarPeticion(a, A, T0), A, T0 + 1, true)
+    expect(a[A]?.pendiente).toBe(true)
+
+    a = iniciarPeticion(a, A, T0 + 2)
+    expect(a[A]).toEqual({ enVuelo: 1, pendiente: false, desde: T0 + 2 })
+  })
+
+  test('la espera caduca pasados ESPERA_MAX_MS', async () => {
+    expect(ESPERA_MAX_MS).toBe(30 * 60_000)
+    let a: Actividad = iniciarPeticion({}, B, T0)
+    a = terminarPeticion(iniciarPeticion(a, A, T0), A, T0, true)
+
+    expect(estadoActividad(a, A, T0 + ESPERA_MAX_MS)).toBe('espera')
+    expect(estadoActividad(a, A, T0 + ESPERA_MAX_MS + 1)).toBe('inactivo')
+  })
+
+  test('limpiarPendientes: quita toda espera y no toca lo que sigue en vuelo; no muta', async () => {
+    let a: Actividad = iniciarPeticion({}, B, T0)
+    a = terminarPeticion(iniciarPeticion(a, A, T0), A, T0 + 1, true)
+    const copia = JSON.parse(JSON.stringify(a)) as Actividad
+    const limpia = limpiarPendientes(a)
+
+    expect(limpia[A]).toEqual({ enVuelo: 0, pendiente: false, desde: T0 + 1 })
+    expect(limpia[B]).toEqual({ enVuelo: 1, pendiente: false, desde: T0 })
+    expect(estadoActividad(limpia, A, T0 + 2)).toBe('inactivo')
+    expect(a).toEqual(copia)
+    expect(limpiarPendientes({})).toEqual({})
+  })
+
+  test('las funciones no mutan la actividad que reciben', async () => {
+    const a: Actividad = Object.freeze({ [A]: Object.freeze({ enVuelo: 1, pendiente: false, desde: T0 }) })
+
+    expect(iniciarPeticion(a, A, T0 + 1)[A]?.enVuelo).toBe(2)
+    expect(terminarPeticion(a, A, T0 + 1, true)[A]?.enVuelo).toBe(0)
+    expect(a[A]?.enVuelo).toBe(1)
+  })
+
+  test('idFila coincide con el id de las filas de resumir (principal, subagente y sin esfuerzo)', async () => {
+    const h = inicioDeHora(AHORA)
+    let r: Registro = {}
+    r = anotar(r, h, clave('claude-opus-5-5', 'high'), USO)
+    r = anotar(r, h, clave('claude-opus-5-5', 'high', true), USO)
+    r = anotar(r, h, clave('claude-haiku-5-5', undefined), USO)
+    r = anotar(r, h, clave('claude-sonnet-4-20250514', 'xhigh', true), USO)
+    const s = resumir([r], h - 1)
+
+    expect(s.filas.map(idDeFila).sort()).toEqual(
+      [
+        idFila('claude-opus-5-5', 'high', false),
+        idFila('claude-opus-5-5', 'high', true),
+        idFila('claude-haiku-5-5', undefined, false),
+        idFila('claude-sonnet-4-20250514', 'xhigh', true),
+      ].sort(),
+    )
+    expect(idFila('claude-opus-5-5', 'high', false)).toBe('Opus 5.5|high|principal')
+    expect(idFila('claude-haiku-5-5', undefined, true)).toBe('Haiku 5.5|—|subagente')
+  })
+})
+
+type Ui = Awaited<ReturnType<Engine['ui']['mount']>>
+
+/** Deja correr las promesas pendientes del motor de prueba (la petición en curso avanza hasta su compuerta). */
+const esperar = () => new Promise<void>(r => setTimeout(r, 25))
+
+/**
+ * El modelo bajo los plugins, con control: cada petición espera la compuerta de quien la hace
+ * (`principal` o su `agentId`), y puede pedir una herramienta o fallar.
+ */
+function motorControlado(on: On, modelo: string) {
+  const compuertas = new Map<string, Promise<void>>()
+  const pidenHerramienta = new Set<string>()
+  const fallan = new Set<string>()
+  on('turn.step', async function* (_$, e) {
+    const quien = e.agentId ?? 'principal'
+    await compuertas.get(quien)
+    if (fallan.has(quien)) throw new Error('modelo caído')
+    const pide = pidenHerramienta.has(quien)
+
+    return {
+      turnId: e.turnId,
+      index: e.index,
+      answer: '',
+      toolUses: pide ? [{ name: 'Read', input: {} }] : [],
+      stopReason: pide ? ('tool_use' as const) : ('end_turn' as const),
+      usage: { ...USO, model: modelo },
+    }
+  })
+
+  /** Cierra la compuerta de `quien`; devuelve cómo abrirla. */
+  function detener(quien: string): () => void {
+    let abrir: () => void = () => undefined
+    compuertas.set(quien, new Promise<void>(r => (abrir = r)))
+
+    return abrir
+  }
+
+  return { detener, pidenHerramienta, fallan }
+}
+
+/** El `color` del ■ que sigue a la etiqueta de la fila (el primero del árbol con ese texto). */
+async function colorDe(ui: Ui, etiqueta: string): Promise<unknown> {
+  const arbol = await ui.findAll({})
+  const i = arbol.findIndex(n => n.type === 'Text' && n.text === etiqueta)
+  const cuadrado = arbol.slice(i + 1).find(n => n.type === 'Text' && n.text === ' ■')
+
+  return i === -1 ? undefined : cuadrado?.props.color
+}
+
+describe('actividad en el panel', () => {
+  function preparar(on: On, modelo = 'claude-opus-5-5') {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on)
+    on('session.id', () => ({ value: 's1' }))
+
+    return motorControlado(on, modelo)
+  }
+
+  test('una petición en curso pinta el ■ de su fila en success y, al terminar, en subtle', async ($, on) => {
+    const motor = preparar(on)
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
+
+    const abrir = motor.detener('principal')
+    const enCurso = paso($, 'claude-opus-5-5', 'high')
+    await esperar()
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('success')
+
+    abrir()
+    await enCurso
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
+    await ui.unmount()
+  })
+
+  test('el principal pide herramienta mientras un subagente sigue en curso: principal warning, subagente success', async ($, on) => {
+    const motor = preparar(on)
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+    await paso($, 'claude-opus-5-5', 'high', 'agente-1')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const abrirSub = motor.detener('agente-1')
+    const sub = paso($, 'claude-opus-5-5', 'high', 'agente-1')
+    await esperar()
+    motor.pidenHerramienta.add('principal')
+    await paso($, 'claude-opus-5-5', 'high')
+
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('warning')
+    expect(await colorDe(ui, 'Opus 5.5 high · sub')).toBe('success')
+
+    // Al terminar el subagente el principal sigue esperando su herramienta (hasta turn.complete o una nueva petición).
+    abrirSub()
+    await sub
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('warning')
+    expect(await colorDe(ui, 'Opus 5.5 high · sub')).toBe('subtle')
+    await ui.unmount()
+  })
+
+  test('el principal pide herramienta sin ningún subagente: warning; nueva petición success; sin herramienta subtle', async ($, on) => {
+    const motor = preparar(on)
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    motor.pidenHerramienta.add('principal')
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('warning')
+
+    motor.pidenHerramienta.delete('principal')
+    const abrir = motor.detener('principal')
+    const siguiente = paso($, 'claude-opus-5-5', 'high')
+    await esperar()
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('success')
+
+    abrir()
+    await siguiente
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
+    await ui.unmount()
+  })
+
+  test('si next lanza, el error llega intacto, la fila queda gris y el panel sigue vivo', async ($, on) => {
+    const motor = preparar(on)
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const abrir = motor.detener('principal')
+    motor.fallan.add('principal')
+    const enCurso = paso($, 'claude-opus-5-5', 'high')
+    const resultado = enCurso.then(
+      () => null,
+      (err: unknown) => err,
+    )
+    await esperar()
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('success')
+
+    abrir()
+    const error = await resultado
+    // El kit de pruebas convierte el fallo del motor de abajo en su propio error («no implementation
+    // for turn.step»): el hook del panel lo deja pasar tal cual, sin envolverlo ni tragarlo.
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toMatch(/turn\.step/)
+    expect((error as Error).message).not.toMatch(/panel/i)
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
+
+    // La fila no quedó con un contador pegado: la petición siguiente vuelve a abrir y cerrar bien.
+    motor.fallan.clear()
+    const abrir2 = motor.detener('principal')
+    const otra = paso($, 'claude-opus-5-5', 'high')
+    await esperar()
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('success')
+    abrir2()
+    await otra
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
+    await ui.unmount()
+  })
+
+  test('«Esta semana» no lleva cuadrados; «Esta sesión» sí, uno por fila', async ($, on) => {
+    const motor = preparar(on)
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+    await paso($, 'claude-opus-5-5', 'high', 'agente-1')
+    motor.detener('principal')()
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 's-plegar' })
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    const sem = textos.indexOf('Esta semana')
+
+    expect(textos.slice(sem)).toContain('Opus 5.5 high')
+    expect(textos.slice(sem)).not.toContain(' ■')
+    expect(textos.slice(0, sem).filter(t => t === ' ■')).toHaveLength(2)
+    await ui.unmount()
+  })
+
+  test('session.end limpia la actividad: la fila en curso vuelve a gris', async ($, on) => {
+    const motor = preparar(on)
+    on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const abrir = motor.detener('principal')
+    const enCurso = paso($, 'claude-opus-5-5', 'high')
+    await esperar()
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('success')
+
+    await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
+
+    // Cuando la petición vieja termina, no deja el contador negativo ni cambia nada.
+    abrir()
+    await enCurso
+    expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
     await ui.unmount()
   })
 })

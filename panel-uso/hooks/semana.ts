@@ -1,6 +1,6 @@
 // Tokens de la semana por modelo y esfuerzo. Puro: sin `$`, para poder probarlo solo.
 
-import type { DiaSemana, FilaSemana, Semana } from '../types'
+import type { Actividad, DiaSemana, FilaSemana, Semana } from '../types'
 
 const HORA = 3_600_000
 const DIA = 24 * HORA
@@ -201,4 +201,51 @@ export function resumir(registros: readonly Registro[], desde: number, ahora?: n
     registroDesde: primera,
     dias: porDia(totales, ahora),
   }
+}
+
+/** Cuánto vale una espera (respuesta que pidió una herramienta) antes de darla por perdida: 30 min. */
+export const ESPERA_MAX_MS = 30 * 60_000
+
+/**
+ * El id de una fila de la tabla: el mismo que forma `resumir` con `familia`,
+ * `nombreEsfuerzo` y el origen (`principal` o `subagente`).
+ */
+export function idFila(modeloId: string, esfuerzo: NivelEsfuerzo, subagente: boolean): string {
+  return `${familia(modeloId)}|${nombreEsfuerzo(esfuerzo === undefined ? '' : String(esfuerzo))}|${subagente ? 'subagente' : 'principal'}`
+}
+
+/** El id de una fila ya resumida; coincide con `idFila` de las peticiones que la formaron. */
+export function idDeFila(f: FilaSemana): string {
+  return `${f.modelo}|${f.esfuerzo}|${f.origen}`
+}
+
+/** Una petición al modelo sale: una más en vuelo y ya no espera. Devuelve una actividad nueva. */
+export function iniciarPeticion(a: Actividad, id: string, t: number): Actividad {
+  return { ...a, [id]: { enVuelo: (a[id]?.enVuelo ?? 0) + 1, pendiente: false, desde: t } }
+}
+
+/**
+ * Una petición termina (o falla): una menos en vuelo, nunca por debajo de 0.
+ * Si su respuesta pidió una herramienta, la fila queda pendiente de otra petición.
+ */
+export function terminarPeticion(a: Actividad, id: string, t: number, pideHerramienta: boolean): Actividad {
+  return { ...a, [id]: { enVuelo: Math.max(0, (a[id]?.enVuelo ?? 0) - 1), pendiente: pideHerramienta, desde: t } }
+}
+
+/** Quita toda espera (el turno del hilo principal terminó); no toca lo que sigue en vuelo. */
+export function limpiarPendientes(a: Actividad): Actividad {
+  return Object.fromEntries(Object.entries(a).map(([id, f]) => [id, { ...f, pendiente: false }]))
+}
+
+/**
+ * `activo`: la fila tiene una petición en curso. `espera`: su última respuesta pidió una herramienta
+ * (cualquiera, no solo un subagente) y aún no empezó la siguiente petición de esa fila, hace menos
+ * de `ESPERA_MAX_MS`. Si no, `inactivo`.
+ */
+export function estadoActividad(a: Actividad, id: string, ahora: number): 'activo' | 'espera' | 'inactivo' {
+  const f = a[id]
+  if (f === undefined) return 'inactivo'
+  if (f.enVuelo > 0) return 'activo'
+
+  return f.pendiente && ahora - f.desde <= ESPERA_MAX_MS ? 'espera' : 'inactivo'
 }

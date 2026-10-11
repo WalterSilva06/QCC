@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit } from 'claude-code'
+import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
 
-import type { Esfuerzo, Medida, Semana } from '../types'
+import type { Actividad, Esfuerzo, Medida, Semana } from '../types'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
 import {
@@ -20,7 +20,23 @@ import {
   totalConSalida,
   tramos,
 } from './formato'
-import { PREFIJO, RETENCION_MS, anotar, clave, comoRegistro, etiquetaDia, inicioSemana, podar, resumir } from './semana'
+import {
+  PREFIJO,
+  RETENCION_MS,
+  anotar,
+  clave,
+  comoRegistro,
+  estadoActividad,
+  etiquetaDia,
+  idDeFila,
+  idFila,
+  inicioSemana,
+  iniciarPeticion,
+  limpiarPendientes,
+  podar,
+  resumir,
+  terminarPeticion,
+} from './semana'
 import type { NivelEsfuerzo, Registro, Uso } from './semana'
 
 const PANEL = 'panel-uso'
@@ -39,6 +55,10 @@ const precisando = atom({ plugin: 'panel-uso', key: 'precisando' } as const, fal
 const semana = atom({ plugin: 'panel-uso', key: 'semana' } as const, null)
 const sesion = atom({ plugin: 'panel-uso', key: 'sesion' } as const, null)
 const semanaAbierta = atom({ plugin: 'panel-uso', key: 'semanaAbierta' } as const, false)
+const actividad = atom({ plugin: 'panel-uso', key: 'actividad' } as const, {})
+
+/** Color del ■ de cada fila de «Esta sesión» según su actividad. */
+const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
 
 /** Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. */
 const PREF_SEMANA = 'prefs:semana'
@@ -88,6 +108,19 @@ async function releerSemana($: EngineInterface) {
     await update($, sesion, () => resumir([deEsta], 0))
   } catch {
     // Sin store la sección queda como estaba.
+  }
+}
+
+/**
+ * Cambia la actividad de las filas con la hora actual. Nunca rechaza: un fallo del panel
+ * no puede frenar ni cambiar una petición al modelo.
+ */
+async function marcarActividad($: EngineInterface, cambio: (a: Actividad, t: number) => Actividad) {
+  try {
+    const t = await $.clock.now()
+    await update($, actividad, a => cambio(a, t))
+  } catch {
+    // Sin seguimiento los cuadrados quedan como estaban.
   }
 }
 
@@ -289,6 +322,11 @@ export const register: Register = on => {
       // El tick de 30 s lo corrige.
     }
     try {
+      await update($, actividad, () => ({}))
+    } catch {
+      // Sin limpiar, la caducidad de la espera lo corrige.
+    }
+    try {
       const guardada = await $.store.get(PREF_SEMANA)
       await update($, semanaAbierta, () => guardada === true)
     } catch {
@@ -341,6 +379,12 @@ export const register: Register = on => {
   // `/clear` no dispara `session.start`: sin esto el panel seguiría con el contexto anterior
   // hasta el próximo turno. Los límites son de la cuenta y siguen valiendo.
   on('session.end', async ($, e, next) => {
+    try {
+      // Cualquier razón: lo que estaba en vuelo ya no cuenta para la sesión que sigue.
+      await update($, actividad, () => ({}))
+    } catch {
+      // No puede frenar el cierre.
+    }
     if (e.reason === 'clear') {
       try {
         await update($, medida, m => (m === null ? null : { ventana: m.ventana, limites: m.limites }))
@@ -368,7 +412,24 @@ export const register: Register = on => {
       }
     }
 
-    const r = yield* next(e)
+    // La fila se abre y se cierra con el id de la petición, no con el de la respuesta.
+    const id = idFila(e.model, e.effort, e.agentId !== undefined)
+    await marcarActividad($, (a, t) => iniciarPeticion(a, id, t))
+
+    let pideHerramienta = false
+    let r: TurnStepResult
+    try {
+      r = yield* next(e)
+      try {
+        pideHerramienta = r.toolUses.length > 0 || r.stopReason === 'tool_use'
+      } catch {
+        // Sin saberlo, la fila queda inactiva.
+      }
+    } finally {
+      // Falle o no la petición, el contador baja; el error de `next` sigue su camino intacto.
+      await marcarActividad($, (a, t) => terminarPeticion(a, id, t, pideHerramienta))
+    }
+
     if (r.usage !== null) {
       try {
         await anotarUso($, r.usage.model || e.model, e.effort, e.agentId !== undefined, r.usage)
@@ -380,6 +441,19 @@ export const register: Register = on => {
     return r
   })
 
+  // El turno del hilo principal terminó: ninguna fila espera ya una herramienta.
+  on('turn.complete', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      try {
+        await update($, actividad, limpiarPendientes)
+      } catch {
+        // La espera caduca sola a los 30 min.
+      }
+    }
+
+    return next(e)
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const m = await read($, medida)
@@ -389,6 +463,7 @@ export const register: Register = on => {
     const sem = await read($, semana)
     const ses = await read($, sesion)
     const abierta = await read($, semanaAbierta)
+    const act = await read($, actividad)
     await read($, ahora)
     const t = await $.clock.now()
 
@@ -402,6 +477,7 @@ export const register: Register = on => {
      * Tokens por modelo y esfuerzo: la misma tabla para la sesión y la semana.
      * Bajo cada fila va su barra con el % de la sección (barra + % = ancho).
      * Con `plegable`, plegada muestra solo el título, el total y el botón.
+     * Con `conActividad`, cada fila lleva un ■ (verde: en curso; amarillo: espera; gris: inactiva).
      * El encabezado lleva el total y la salida; si con el botón no caben en `ancho`,
      * queda solo el total y la salida pasa al pie.
      */
@@ -411,6 +487,7 @@ export const register: Register = on => {
       s: Semana | null,
       desde: string | null,
       plegable?: { abierta: boolean },
+      conActividad = false,
     ) => {
       const visible = plegable === undefined || plegable.abierta
       const label = plegable?.abierta ? 'Ocultar' : 'Ver'
@@ -456,6 +533,7 @@ export const register: Register = on => {
                     <Box>
                       <Box flexGrow={1}>
                         <Text wrap="truncate-end">{`${f.modelo} ${f.esfuerzo}${f.origen === 'subagente' ? ' · sub' : ''}`}</Text>
+                        {conActividad && <Text color={COLOR_ACTIVIDAD[estadoActividad(act, idDeFila(f), t)]}> ■</Text>}
                       </Box>
                       <Text>{tokens(f.total).padStart(7)}</Text>
                       <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
@@ -625,7 +703,7 @@ export const register: Register = on => {
         </Box>
 
         {/* La hora anotada se redondea a la hora entera: «desde» mentiría en la sesión. */}
-        {tabla('Esta sesión', 'n', ses, null)}
+        {tabla('Esta sesión', 'n', ses, null, undefined, true)}
 
         {tabla(
           'Esta semana',
