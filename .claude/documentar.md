@@ -12,12 +12,12 @@
 - Los SKILL.md y agentes de flujos/ no son doc: son código de los flujos (fuente, solo lectura).
 
 ## Fuentes
-- panel-uso/hooks/register.tsx — hooks, estado y dibujo del panel — solo lectura — densa sí (lector en Sonnet)
+- panel-uso/hooks/register.tsx — hooks, estado y dibujo del panel — solo lectura — densa sí (lector en Haiku max)
 - panel-uso/hooks/semana.ts, formato.ts, carpeta.ts — lógica pura — solo lectura — densa no
 - panel-uso/.claude-plugin/, panel-uso/types/index.d.ts, panel-uso/tests/ — manifiesto, tipos, tests — solo lectura — densa no
 - flujos/skills/*/SKILL.md — comandos /implementador, /implementador-ligero, /documentar — solo lectura — densa no
 - flujos/agents/*.md — agentes de los flujos — solo lectura — densa no
-- flujos/herramientas/guardia.mjs — guardia de comandos y bitácora — solo lectura — densa sí (lector en Sonnet)
+- flujos/herramientas/guardia.mjs — guardia de comandos y bitácora — solo lectura — densa sí (lector en Haiku max)
 - flujos/herramientas/estado.mjs, verificar.mjs, comun.md, config.ejemplo.md — solo lectura — densa no
 - flujos/instalar.mjs — instalador — solo lectura — densa no
 - .claude/implementador.json — pasos de verificación — solo lectura — densa no

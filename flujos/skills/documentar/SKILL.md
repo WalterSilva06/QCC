@@ -20,7 +20,7 @@ allowed-tools:
 
 # /documentar — flujo de documentación
 
-Eres el **documentador** (Sonnet, esfuerzo high): acuerdas qué documentar, delegas la lectura pesada y escribes tú la doc. Agentes: `lector` (Haiku; Sonnet medium para fuentes densas) y `revisor-doc` (Haiku; Opus medium con `--profundo`).
+Eres el **documentador** (Sonnet, esfuerzo high): acuerdas qué documentar, delegas la lectura pesada y escribes tú la doc. Agentes: `lector` (Haiku xhigh; Haiku max para fuentes densas) y `revisor-doc` (Haiku xhigh; Opus medium con `--profundo`).
 
 **Pedido:** $ARGUMENTS
 
@@ -89,7 +89,7 @@ Estados: `pendiente` (no tocado), `en curso` (ficha aprobada, sin cerrar), `leí
 
 **3. Lectura**
 - Fuentes cortas (< ~300 líneas en total): las lees tú.
-- Si no, `lector` (plantilla abajo). Con fuente densa (fórmulas, macros, lógica de negocio con redondeos, fechas o dinero, normas legales) o si las reglas del proyecto lo piden, despáchalo con `model: "sonnet"` y `effort: "medium"`; si no, sin `model` ni `effort`. Si el tema cruza varias fuentes independientes, un lector por fuente, uno a la vez.
+- Si no, `lector` (plantilla abajo). Con fuente densa (fórmulas, macros, lógica de negocio con redondeos, fechas o dinero, normas legales) o si las reglas del proyecto lo piden, despáchalo con `effort: "max"`; si no, sin `effort`. Si el tema cruza varias fuentes independientes, un lector por fuente, uno a la vez.
 - Si el reporte trae DUDAS que cambian el destino o el alcance: no hagas otra ronda de preguntas; anótalas como pendientes en la doc.
 
 **4. Escritura**
@@ -129,7 +129,7 @@ Para doc que ya está escrita: no se redacta de nuevo, se comprueba contra la fu
 
 **A2. Lectura** — por grupo de secciones, uno a la vez:
 - Lees tú cada sección por tramos (`offset`/`limit`) y extraes sus afirmaciones verificables (reglas, números, orden de pasos, excepciones) en ≤ 8 líneas por sección.
-- `lector` con la plantilla de despacho: TEMA = el grupo, FICHA = «auditar: confirmar o contradecir cada afirmación», BUSCA = una pregunta por afirmación («¿la fuente dice X?»), DOC ACTUAL = esas afirmaciones. Fuente densa o `--profundo` → `model: "sonnet"`, `effort: "medium"`.
+- `lector` con la plantilla de despacho: TEMA = el grupo, FICHA = «auditar: confirmar o contradecir cada afirmación», BUSCA = una pregunta por afirmación («¿la fuente dice X?»), DOC ACTUAL = esas afirmaciones. Fuente densa o `--profundo` → `effort: "max"`.
 - Las secciones `solo coherencia` se comprueban tú con Grep de sus términos clave en el resto de la doc válida.
 
 **A3. Corrección mínima**
@@ -188,7 +188,7 @@ HECHOS DEL LECTOR: <REGLAS del reporte del lector, literales | leído directo>
 - <archivos o carpetas que no se leen ni se tocan>
 
 ## Fuentes
-- <ruta — qué es — solo lectura sí/no — densa sí/no (lector en Sonnet)>
+- <ruta — qué es — solo lectura sí/no — densa sí/no (lector en Haiku max)>
 
 ## Precedencia
 - <qué manda si chocan>

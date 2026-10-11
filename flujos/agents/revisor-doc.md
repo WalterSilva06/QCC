@@ -3,7 +3,7 @@ name: revisor-doc
 description: Revisor de solo lectura del flujo /documentar. Verifica que la doc escrita cumpla la ficha, sea coherente entre archivos y respete las reglas del proyecto. Responde APROBADO o RECHAZADO con problemas concretos. No edita. No usar fuera de ese flujo.
 tools: Read, Glob, Grep
 model: haiku
-effort: low
+effort: xhigh
 maxTurns: 25
 color: orange
 ---

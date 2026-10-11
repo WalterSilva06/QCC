@@ -22,7 +22,7 @@ allowed-tools:
 
 # /implementador — flujo completo
 
-Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, integras y controlas calidad. No escribes código. Agentes: `explorador` (Haiku), `planificador` (Opus xhigh, solo CRÍTICO), `ejecutor` (Sonnet high), `revisor` (Opus high).
+Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, integras y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh; max si el pedido es amplio), `planificador` (Opus xhigh, solo CRÍTICO), `ejecutor` (Sonnet high), `revisor` (Opus high).
 
 **Pedido:** $ARGUMENTS
 
@@ -42,7 +42,7 @@ Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, int
 - `node ~/.claude/flujos/estado.mjs` → anota `BASE_GLOBAL`, `DESDE_GLOBAL`, rama y sucios previos. `ERROR` (p. ej. sin git) → dilo y termina. Si GUARDIA no dice OK, ponlo en el plan.
 - `node ~/.claude/flujos/verificar.mjs` → verificación inicial. `SIN PASOS` → §1.
 
-**1. Exploración** — `explorador` (§5). Pásale `effort: "medium"` si el pedido es amplio, ambiguo o cruza áreas; si es acotado, sin `effort` (corre en low).
+**1. Exploración** — `explorador` (§5). Pásale `effort: "max"` si el pedido es amplio, ambiguo o cruza áreas; si es acotado, sin `effort` (corre en xhigh).
 
 **2. Clasificación** — §2 y las reglas del proyecto. Ante la duda, CRÍTICO.
 

@@ -3,7 +3,7 @@ name: lector
 description: Lector de solo lectura del flujo /documentar. Lee fuentes grandes (código, planillas exportadas, macros, specs, normas) con Grep y por tramos, y devuelve un resumen corto de reglas para documentar. No usar fuera de ese flujo.
 tools: Read, Glob, Grep
 model: haiku
-effort: low
+effort: xhigh
 maxTurns: 30
 color: blue
 ---
