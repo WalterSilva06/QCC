@@ -139,19 +139,9 @@ function avisar($: EngineInterface, texto: string) {
  * nunca como argumento ni por un shell; `onPress` nunca rechaza.
  */
 async function abrirCarpeta($: EngineInterface): Promise<string> {
-  // DIAGNÓSTICO TEMPORAL: cada paso queda en el transcript.
-  const traza = (texto: string) => {
-    try {
-      $.ui.log(`[panel-uso carpeta] ${texto}`)
-    } catch {
-      // Sin traza no pasa nada.
-    }
-  }
-  traza('pulsado')
   try {
     const ruta = await $.session.root()
     const tipo = tipoDeRuta(ruta)
-    traza(`root=${JSON.stringify(ruta)} tipo=${tipo}`)
     if (tipo === null) {
       const texto = 'No se pudo abrir la carpeta: la ruta de la sesión no es válida.'
       avisar($, texto)
@@ -166,9 +156,7 @@ async function abrirCarpeta($: EngineInterface): Promise<string> {
     }
 
     const comando = comandoCarpeta(sistema)
-    traza(`corre ${JSON.stringify(comando)}`)
     const r = await $.process.run(comando, { cwd: ruta, timeoutMs: 15_000 })
-    traza(`exit=${r.exitCode} stdout=${JSON.stringify(r.stdout.trim())} stderr=${JSON.stringify(r.stderr.trim())}`)
     if (r.exitCode !== 0) {
       const texto = `No se pudo abrir la carpeta (${comando[0]} terminó con ${r.exitCode}).`
       avisar($, texto)
@@ -177,8 +165,7 @@ async function abrirCarpeta($: EngineInterface): Promise<string> {
     }
 
     return `Carpeta abierta: ${ruta}`
-  } catch (error) {
-    traza(`error: ${error instanceof Error ? error.message : String(error)}`)
+  } catch {
     avisar($, 'No se pudo abrir la carpeta.')
 
     return 'No se pudo abrir la carpeta.'

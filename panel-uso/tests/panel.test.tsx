@@ -283,7 +283,9 @@ const WINDOWS = [
   '-NoProfile',
   '-NonInteractive',
   '-Command',
-  '(New-Object -ComObject Shell.Application).Open((Get-Location).ProviderPath)',
+  '$s = New-Object -ComObject Shell.Application; $p = (Get-Location).ProviderPath; ' +
+    '@($s.Windows()) | Where-Object { -not $_.Visible -and $(try { $_.Document.Folder.Self.Path -eq $p } catch { $false }) } | ForEach-Object { $_.Quit() }; ' +
+    '$s.Open($p)',
 ]
 
 describe('carpeta', () => {
