@@ -1,6 +1,6 @@
 {
   "name": "panel-uso",
-  "version": "0.5.1",
-  "description": "Panel lateral con el contexto de la sesión, los límites de uso (5 horas y semana) con su reinicio, el esfuerzo actual, los tokens de la sesión y de la semana por modelo (con su versión) y esfuerzo, separando los subagentes, con una barra del % de cada fila, y un botón que abre la carpeta del proyecto",
+  "version": "0.6.2",
+  "description": "Panel lateral con el contexto de la sesión, los límites de uso (5 horas y semana) con su reinicio, el esfuerzo actual, los tokens de la sesión y de la semana (plegable con un botón) por modelo (con su versión) y esfuerzo, separando los subagentes, con una barra del % de cada fila, y un botón que abre la carpeta del proyecto",
   "types": "./types/index.d.ts"
 }

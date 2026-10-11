@@ -81,6 +81,8 @@ declare module 'claude-code' {
       semana: Semana | null
       /** Lo mismo que `semana`, solo con lo anotado por la sesión actual (desde su inicio). */
       sesion: Semana | null
+      /** «Esta semana» desplegada; se recuerda en el store con la clave `prefs:semana`. */
+      semanaAbierta: boolean
     }
   }
 }

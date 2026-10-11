@@ -37,7 +37,7 @@ Los dos tienen que terminar sin errores antes de dar algo por hecho. Los tests s
 2. **Contexto**: barra por categorías (como `/context`), lista de partes y «Lo más pesado». El botón **Precisar** (tecla `p`) cambia la estimación local por un conteo exacto con la API, que gasta una petición por herramienta y por archivo de memoria.
 3. **Límites de uso**: 5 horas, semanal y de gasto, con el % y la hora de reinicio.
 4. **Esfuerzo**: el de la última petición del hilo principal, o el de `settings.json` antes del primer turno.
-5. **Esta sesión** y **Esta semana**: tokens por modelo (familia y versión) y esfuerzo, con el total y la salida. Una fila es, por ejemplo, `Opus 5.5 high` (hilo principal) u `Opus 5.5 high · sub` (subagentes): se separan por origen. Debajo de cada fila va una barra con su % de la sección. El esfuerzo se muestra en inglés (`low`, `medium`, `high`, `xhigh`, `max`, o `—` si no hay).
+5. **Esta sesión** y **Esta semana**: tokens por modelo (familia y versión) y esfuerzo, con el total y la salida. Una fila es, por ejemplo, `Opus 5.5 high` (hilo principal) u `Opus 5.5 high · sub` (subagentes): se separan por origen. Debajo de cada fila va una barra con su % de la sección. El esfuerzo se muestra en inglés (`low`, `medium`, `high`, `xhigh`, `max`, o `—` si no hay). «Esta semana» arranca plegada (solo título y total); el botón **Ver / Ocultar** (tecla `s`) la despliega y el panel lo recuerda entre sesiones. Al pulsar «Ver» el panel se desplaza hasta «Esta semana» para que las filas queden a la vista. «Esta sesión» no se pliega.
 
 La vista `inline` (terminal angosta) es una sola línea: `ctx 42% · 5h 30% (en 2 h) · sem 12% · esfuerzo high`.
 
@@ -52,6 +52,7 @@ La vista `inline` (terminal angosta) es una sola línea: `ctx 42% · 5h 30% (en 
 - El formato es `hora (ms, redondeada a la hora) → clave → [entrada, salida, caché leída, caché escrita]`. La clave es `modelo|esfuerzo` para el hilo principal y `modelo|esfuerzo|sub` para los subagentes; los datos viejos (sin `|sub`) cuentan como principal.
 - «Esta semana» suma todas las sesiones desde el inicio de la ventana del límite semanal (`resetsAt − 7 días`), o desde 7 días atrás si no hay límite semanal.
 - Al abrir una sesión se borra lo que tenga más de 15 días (`RETENCION_MS`).
+- Si «Esta semana» está desplegada se guarda en `prefs:semana` (`true`/`false`). Esa clave está fuera del prefijo `uso:` a propósito, para que la poda y la suma de la semana no la lean como uso.
 - Las escrituras al store pasan por una cola (`enFila`), porque hilo principal y subagentes responden a la vez.
 - Un tick de 30 s mueve las cuentas regresivas y relee lo que anotaron otras terminales. No llama a ningún modelo.
 
@@ -61,7 +62,7 @@ La vista `inline` (terminal angosta) es una sola línea: `ctx 42% · 5h 30% (en 
 - Estilo: sin punto y coma, comillas simples, JSDoc breve en español y una línea en blanco antes de `return`.
 - Ningún hook del panel puede romper la sesión: las lecturas y escrituras van en `try/catch` y un fallo deja la sección como estaba.
 - Lo que dibuja el panel sale de atoms (`atom` / `read` / `update`). Cada valor nuevo se declara en `types/index.d.ts`, porque `claude plugin validate` lo exige.
-- Hotkeys en uso: `p` (Precisar) y `c` (Abrir carpeta).
+- Hotkeys en uso: `p` (Precisar), `c` (Abrir carpeta) y `s` (Ver / Ocultar «Esta semana»).
 - Con cada cambio visible se sube `version` en `plugin.json`.
 
 ## Trampas conocidas

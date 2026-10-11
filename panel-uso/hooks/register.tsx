@@ -25,6 +25,10 @@ import type { NivelEsfuerzo, Registro, Uso } from './semana'
 const PANEL = 'panel-uso'
 const COLUMNAS = 36
 const TICK_MS = 30_000
+const SCROLL_MS = 150
+
+/** `key` de la sección plegable «Esta semana», para apuntarle con `$.ui.scroll`. */
+const CLAVE_SEMANA = 'semana'
 
 const medida = atom({ plugin: 'panel-uso', key: 'medida' } as const, null)
 const esfuerzo = atom({ plugin: 'panel-uso', key: 'esfuerzo' } as const, null)
@@ -33,6 +37,10 @@ const desglose = atom({ plugin: 'panel-uso', key: 'desglose' } as const, null)
 const precisando = atom({ plugin: 'panel-uso', key: 'precisando' } as const, false)
 const semana = atom({ plugin: 'panel-uso', key: 'semana' } as const, null)
 const sesion = atom({ plugin: 'panel-uso', key: 'sesion' } as const, null)
+const semanaAbierta = atom({ plugin: 'panel-uso', key: 'semanaAbierta' } as const, false)
+
+/** Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. */
+const PREF_SEMANA = 'prefs:semana'
 
 // Las escrituras al store van en fila: el hilo principal y los subagentes responden a la vez.
 let cola: Promise<unknown> = Promise.resolve()
@@ -106,6 +114,43 @@ async function medirDesglose($: EngineInterface, detalle: 'summary' | 'full') {
     if (b !== undefined) await update($, desglose, () => aDesglose(b, detalle === 'full'))
   } catch {
     // Sin desglose el panel sigue con la barra simple.
+  }
+}
+
+/**
+ * Lleva «Esta semana» al borde de arriba de la ventana del panel, para que sus filas
+ * queden a la vista. Un fallo o un `{ deny }` no importan: el panel sigue como estaba.
+ */
+async function mostrarSemana($: EngineInterface) {
+  try {
+    await $.ui.scroll({ in: PANEL, to: { key: CLAVE_SEMANA }, block: 'start' })
+  } catch {
+    // Sin desplazamiento el usuario baja con la rueda.
+  }
+}
+
+/** Pliega o despliega «Esta semana» y lo recuerda entre sesiones. */
+async function alternarSemana($: EngineInterface) {
+  let abierta = false
+  await update($, semanaAbierta, antes => {
+    abierta = !antes
+
+    return abierta
+  })
+  try {
+    await $.store.set(PREF_SEMANA, abierta)
+  } catch {
+    // Sin store vale solo para esta sesión.
+  }
+  if (!abierta) return
+
+  // Las filas nuevas aún no se dibujaron: se espera un momento antes de desplazar.
+  try {
+    $.clock.after(SCROLL_MS, () => {
+      void mostrarSemana($)
+    })
+  } catch {
+    // Sin reloj no hay desplazamiento.
   }
 }
 
@@ -213,17 +258,41 @@ function abrir($: EngineInterface) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'uso',
-      description: 'Abre el panel de contexto, límites de uso y esfuerzo',
-    })
-
-    const uso = await $.session.usage()
-    await update($, medida, () => aMedida(uso.context, uso.rateLimits))
-    const inicial = await esfuerzoDeAjustes($)
-    await update($, esfuerzo, actual => actual ?? inicial)
-    await update($, ahora, () => 0)
-    await update($, precisando, () => false)
+    // Cada paso va aparte: si uno falla, la semana, el tick y el panel igual arrancan.
+    try {
+      await $.command.register({
+        name: 'uso',
+        description: 'Abre el panel de contexto, límites de uso y esfuerzo',
+      })
+    } catch {
+      // Sin el comando el panel se abre igual.
+    }
+    try {
+      const uso = await $.session.usage()
+      await update($, medida, () => aMedida(uso.context, uso.rateLimits))
+    } catch {
+      // Sin medida el panel dice que se mide tras la 1.ª respuesta.
+    }
+    try {
+      const inicial = await esfuerzoDeAjustes($)
+      await update($, esfuerzo, actual => actual ?? inicial)
+    } catch {
+      // Sin esfuerzo el panel muestra «—» hasta el primer turno.
+    }
+    try {
+      // La hora actual (no 0) cambia el valor del atom y obliga a redibujar tras un reload.
+      const t = await $.clock.now()
+      await update($, ahora, () => t)
+      await update($, precisando, () => false)
+    } catch {
+      // El tick de 30 s lo corrige.
+    }
+    try {
+      const guardada = await $.store.get(PREF_SEMANA)
+      await update($, semanaAbierta, () => guardada === true)
+    } catch {
+      // Sin store arranca plegada.
+    }
     await medirDesglose($, 'summary')
     try {
       await podarStore($)
@@ -237,6 +306,13 @@ export const register: Register = on => {
       void $.clock.now().then(t => update($, ahora, () => t))
       void releerSemana($)
     })
+
+    try {
+      // Tras `/reload-plugins` el panel puede seguir con el dibujo anterior y sus botones sin efecto.
+      $.ui.invalidate('ui.render')
+    } catch {
+      // Sin redibujo se corrige con el próximo cambio de estado.
+    }
 
     void abrir($)
 
@@ -311,6 +387,7 @@ export const register: Register = on => {
     const ocupado = await read($, precisando)
     const sem = await read($, semana)
     const ses = await read($, sesion)
+    const abierta = await read($, semanaAbierta)
     await read($, ahora)
     const t = await $.clock.now()
 
@@ -319,52 +396,72 @@ export const register: Register = on => {
     /**
      * Tokens por modelo y esfuerzo: la misma tabla para la sesión y la semana.
      * Bajo cada fila va su barra con el % de la sección (barra + % = ancho).
+     * Con `plegable`, plegada muestra solo el título, el total y el botón.
      */
-    const tabla = (titulo: string, prefijo: string, s: Semana | null, desde: string | null) => (
-      <Box flexDirection="column" marginTop={1}>
-        <Box>
-          <Box flexGrow={1}>
-            <Text bold>{titulo}</Text>
-          </Box>
-          {s !== null && s.total > 0 && <Text>{tokens(s.total)}</Text>}
-        </Box>
-        {s === null || s.filas.length === 0 ? (
-          <Text dimColor>sin respuestas anotadas todavía</Text>
-        ) : (
-          <Box flexDirection="column">
-            <Box>
-              <Box flexGrow={1}>
-                <Text dimColor>modelo · esfuerzo</Text>
-              </Box>
-              <Text dimColor>{'total'.padStart(7)}</Text>
-              <Text dimColor>{'salida'.padStart(7)}</Text>
-            </Box>
-            {s.filas.map(f => {
-              const parte = s.total > 0 ? (f.total / s.total) * 100 : 0
+    const tabla = (
+      titulo: string,
+      prefijo: string,
+      s: Semana | null,
+      desde: string | null,
+      plegable?: { abierta: boolean },
+    ) => {
+      const visible = plegable === undefined || plegable.abierta
 
-              return (
-                <Box key={`${prefijo}-${f.modelo}-${f.esfuerzo}-${f.origen}`} flexDirection="column">
-                  <Box>
-                    <Box flexGrow={1}>
-                      <Text wrap="truncate-end">{`${f.modelo} ${f.esfuerzo}${f.origen === 'subagente' ? ' · sub' : ''}`}</Text>
-                    </Box>
-                    <Text>{tokens(f.total).padStart(7)}</Text>
-                    <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
-                  </Box>
-                  <Box>
-                    <Text color="claude">{barra(parte, Math.max(1, ancho - 7))}</Text>
-                    <Text dimColor>{pct(parte).padStart(7)}</Text>
-                  </Box>
-                </Box>
-              )
-            })}
+      return (
+        <Box key={plegable === undefined ? undefined : CLAVE_SEMANA} flexDirection="column" marginTop={1}>
+          <Box>
+            <Box flexGrow={1}>
+              <Text bold>{titulo}</Text>
+            </Box>
+            {s !== null && s.total > 0 && <Text>{tokens(s.total)}</Text>}
+            {plegable !== undefined && <Text> </Text>}
+            {plegable !== undefined && (
+              <Button
+                key={`${prefijo}-plegar`}
+                hotkey="s"
+                label={plegable.abierta ? 'Ocultar' : 'Ver'}
+                onPress={() => alternarSemana($)}
+              />
+            )}
           </Box>
-        )}
-        {s !== null && (desde !== null || s.total > 0) && (
-          <Text dimColor>{[desde, s.total > 0 ? 'total incluye caché' : null].filter(Boolean).join(' · ')}</Text>
-        )}
-      </Box>
-    )
+          {!visible ? null : s === null || s.filas.length === 0 ? (
+            <Text dimColor>sin respuestas anotadas todavía</Text>
+          ) : (
+            <Box flexDirection="column">
+              <Box>
+                <Box flexGrow={1}>
+                  <Text dimColor>modelo · esfuerzo</Text>
+                </Box>
+                <Text dimColor>{'total'.padStart(7)}</Text>
+                <Text dimColor>{'salida'.padStart(7)}</Text>
+              </Box>
+              {s.filas.map(f => {
+                const parte = s.total > 0 ? (f.total / s.total) * 100 : 0
+
+                return (
+                  <Box key={`${prefijo}-${f.modelo}-${f.esfuerzo}-${f.origen}`} flexDirection="column">
+                    <Box>
+                      <Box flexGrow={1}>
+                        <Text wrap="truncate-end">{`${f.modelo} ${f.esfuerzo}${f.origen === 'subagente' ? ' · sub' : ''}`}</Text>
+                      </Box>
+                      <Text>{tokens(f.total).padStart(7)}</Text>
+                      <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
+                    </Box>
+                    <Box>
+                      <Text color="claude">{barra(parte, Math.max(1, ancho - 7))}</Text>
+                      <Text dimColor>{pct(parte).padStart(7)}</Text>
+                    </Box>
+                  </Box>
+                )
+              })}
+            </Box>
+          )}
+          {visible && s !== null && (desde !== null || s.total > 0) && (
+            <Text dimColor>{[desde, s.total > 0 ? 'total incluye caché' : null].filter(Boolean).join(' · ')}</Text>
+          )}
+        </Box>
+      )
+    }
 
     const limites = m?.limites ?? []
     const nivel = esf === null ? '—' : esf.nivel
@@ -512,6 +609,7 @@ export const register: Register = on => {
             : sem.registroDesde !== null && sem.registroDesde > sem.desde
               ? `anotado desde ${cuando(t, sem.registroDesde)}`
               : `desde ${cuando(t, sem.desde)}`,
+          { abierta },
         )}
       </Box>
     )

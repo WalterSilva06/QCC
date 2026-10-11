@@ -499,6 +499,7 @@ describe('semana', () => {
     await paso($, 'claude-opus-5-5', 'high')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 's-plegar' })
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
     expect(textos).toContain('Esta semana')
@@ -598,6 +599,7 @@ describe('semana', () => {
     ])
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 's-plegar' })
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
     const sem = textos.indexOf('Esta semana')
     expect(textos.slice(sem)).toContain('Opus 5.5 high')
@@ -618,6 +620,7 @@ describe('semana', () => {
     await paso($, 'claude-opus-5-5', 'medium')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 's-plegar' })
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
     const ses = textos.indexOf('Esta sesión')
     const sem = textos.indexOf('Esta semana')
@@ -646,6 +649,7 @@ describe('semana', () => {
     await paso($, 'claude-opus-5-5', 'medium')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 's-plegar' })
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
     const ses = textos.indexOf('Esta sesión')
     const sem = textos.indexOf('Esta semana')
@@ -663,6 +667,149 @@ describe('semana', () => {
     const k = textos.indexOf('Opus 5.5 medium', sem)
     expect(k).toBeGreaterThan(j)
     expect(textos.slice(k, k + 5)).toEqual(['Opus 5.5 medium', '   100k', '     2k', '█'.repeat(5) + '░'.repeat(20), '  20,0%'])
+    await ui.unmount()
+  })
+
+  test('«Esta semana» arranca plegada: título y total; el botón la despliega y lo guarda', async ($, on) => {
+    const h = String(inicioDeHora(AHORA))
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    const guardados = new Map<string, unknown>([
+      ['uso:otra', { [h]: { [clave('claude-sonnet-5-5', 'low')]: [400_000, 0, 0, 0] } }],
+    ])
+    on('store.get', (_$, e) => ({ value: guardados.get(e.key) }))
+    on('store.set', (_$, e) => {
+      guardados.set(e.key, e.value)
+
+      return { value: undefined }
+    })
+    on('store.delete', (_$, e) => {
+      guardados.delete(e.key)
+
+      return { value: undefined }
+    })
+    on('store.keys', () => ({ value: [...guardados.keys()] }))
+    on('session.id', () => ({ value: 's1' }))
+    motorResponde(on, 'claude-opus-5-5')
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'medium')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    let textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    let sem = textos.indexOf('Esta semana')
+    expect(sem).toBeGreaterThan(-1)
+    expect(textos[sem + 1]).toBe('500k')
+    expect(textos.slice(sem)).not.toContain('Sonnet 5.5 low')
+    expect(textos.slice(sem)).not.toContain('modelo · esfuerzo')
+    // «Esta sesión» no se pliega.
+    expect(textos.slice(0, sem)).toContain('Opus 5.5 medium')
+    expect((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label).toBe('Ver')
+
+    await ui.press({ key: 's-plegar' })
+    textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    sem = textos.indexOf('Esta semana')
+    expect(textos.slice(sem)).toContain('Sonnet 5.5 low')
+    expect((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label).toBe('Ocultar')
+    expect(guardados.get('prefs:semana')).toBe(true)
+
+    await ui.press({ key: 's-plegar' })
+    textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    expect(textos.slice(textos.indexOf('Esta semana'))).not.toContain('Sonnet 5.5 low')
+    expect(guardados.get('prefs:semana')).toBe(false)
+    await ui.unmount()
+  })
+
+  // El kit de pruebas no implementa el `$.ui.scroll` de un plugin (no hay ventana real ni
+  // hook que lo reciba): lo que sí se ve es la `key` a la que apunta y el `clock.after` que lo agenda.
+  test('al desplegar «Esta semana» se agenda el desplazamiento hasta su key; al plegar no', async ($, on) => {
+    const h = String(inicioDeHora(AHORA))
+    // Sin `mock.clock`: este test es el dueño de `clock.after` para ver cuánto se espera.
+    on('clock.now', () => ({ value: AHORA }))
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on, { 'uso:otra': { [h]: { [clave('claude-sonnet-5-5', 'low')]: [400_000, 0, 0, 0] } } })
+    on('session.id', () => ({ value: 's1' }))
+    const esperas: number[] = []
+    on('clock.after', (_$, e) => {
+      esperas.push(e.ms)
+
+      return { value: undefined }
+    })
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    // La sección plegable lleva la key a la que apunta el desplazamiento.
+    expect(await ui.find({ type: 'Box', key: 'semana' })).toBeDefined()
+    expect(esperas).toEqual([])
+
+    await ui.press({ key: 's-plegar' })
+    expect(esperas).toEqual([150])
+    expect((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label).toBe('Ocultar')
+
+    await ui.press({ key: 's-plegar' })
+    expect(esperas).toEqual([150])
+    expect((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label).toBe('Ver')
+    await ui.unmount()
+  })
+
+  test('si command.register falla en session.start, la semana y la preferencia se cargan igual', async ($, on) => {
+    const h = String(inicioDeHora(AHORA))
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on, {
+      'prefs:semana': true,
+      'uso:otra': { [h]: { [clave('claude-sonnet-5-5', 'low')]: [400_000, 0, 0, 0] } },
+    })
+    on('session.id', () => ({ value: 's1' }))
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.register', () => {
+      throw new Error('registro rechazado')
+    })
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    const abiertos: string[] = []
+    on('ui.open', (_$, e) => {
+      abiertos.push(e.id)
+
+      return { value: { isPlaced: true } }
+    })
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    const sem = textos.indexOf('Esta semana')
+    expect(textos.slice(sem)).toContain('Sonnet 5.5 low')
+    expect(textos[sem + 1]).toBe('400k')
+    expect((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label).toBe('Ocultar')
+    expect(abiertos).toEqual(['panel-uso'])
+    await ui.unmount()
+  })
+
+  test('al abrir sesión, «Esta semana» vuelve como se dejó; la preferencia no cuenta como uso', async ($, on) => {
+    const h = String(inicioDeHora(AHORA))
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on, {
+      'prefs:semana': true,
+      'uso:otra': { [h]: { [clave('claude-sonnet-5-5', 'low')]: [400_000, 0, 0, 0] } },
+    })
+    on('session.id', () => ({ value: 's1' }))
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    const sem = textos.indexOf('Esta semana')
+    expect(textos.slice(sem)).toContain('Sonnet 5.5 low')
+    expect(textos[sem + 1]).toBe('400k')
+    expect((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label).toBe('Ocultar')
     await ui.unmount()
   })
 
