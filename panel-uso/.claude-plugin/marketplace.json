@@ -1,0 +1,5 @@
+{
+  "name": "mods-locales",
+  "owner": { "name": "WalterSilva06" },
+  "plugins": [{ "name": "panel-uso", "source": "./" }]
+}

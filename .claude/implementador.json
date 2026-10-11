@@ -1,0 +1,6 @@
+{
+  "verificar": [
+    { "nombre": "validate", "cmd": "claude plugin validate panel-uso" },
+    { "nombre": "test", "cmd": "claude plugin test panel-uso" }
+  ]
+}
