@@ -3,7 +3,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
-import { aDesglose, barra, falta, pct, tokens, tono, tramos } from '../hooks/formato'
+import { aDesglose, barra, falta, pct, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
   anotar,
   clave,
@@ -114,6 +114,15 @@ describe('formato', () => {
     expect(falta(0, 27 * 3_600_000)).toBe('en 1 d 3 h')
     expect(falta(0, -1)).toBe('ya reinició')
     expect(pct(10.74)).toBe('10,7%')
+  })
+
+  test('totalConSalida: total y salida juntos; sin salida, solo el total', async () => {
+    expect(totalConSalida(14_400_000, 48_000)).toBe('14,4M · sal 48k')
+    expect(totalConSalida(500_000, 2_000)).toBe('500k · sal 2k')
+    expect(totalConSalida(1_000_000, 950)).toBe('1M · sal 950')
+    expect(totalConSalida(950, 120)).toBe('950 · sal 120')
+    expect(totalConSalida(96_200, 0)).toBe('96,2k')
+    expect(totalConSalida(0, 0)).toBe('0')
   })
 
   test('desglose: traduce, deja fuera lo diferido, libre y reserva al final', async () => {
@@ -709,7 +718,8 @@ describe('semana', () => {
     let textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
     let sem = textos.indexOf('Esta semana')
     expect(sem).toBeGreaterThan(-1)
-    expect(textos[sem + 1]).toBe('500k')
+    // Con 32 columnas «Esta semana» + total con salida + botón caben justo (ajustado: antes '500k').
+    expect(textos[sem + 1]).toBe('500k · sal 2k')
     expect(textos.slice(sem)).not.toContain('Sonnet 5.5 low')
     expect(textos.slice(sem)).not.toContain('modelo · esfuerzo')
     // «Esta sesión» no se pliega.
@@ -821,6 +831,135 @@ describe('semana', () => {
     expect(textos[sem + 1]).toBe('400k')
     expect((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label).toBe('Ocultar')
     await ui.unmount()
+  })
+
+  test('el encabezado de «Esta sesión» suma la salida de todas las filas (modelos, esfuerzos y subagentes)', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on)
+    on('session.id', () => ({ value: 's1' }))
+    motorResponde(on, 'claude-opus-5-5')
+    await $.session.measure(MEDIDA)
+
+    await paso($, 'claude-opus-5-5', 'medium')
+    await paso($, 'claude-opus-5-5', 'medium', 'agente-1')
+    await paso($, 'claude-opus-5-5', 'high')
+    await paso($, 'claude-opus-5-5', 'low', 'agente-2')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    const ses = textos.indexOf('Esta sesión')
+
+    // Cuatro respuestas de 100k con 2k de salida cada una.
+    expect(textos[ses + 1]).toBe('400k · sal 8k')
+    await ui.unmount()
+  })
+
+  /** Una semana de otra terminal: 530k en total, 130k de salida (más lo de este turno si lo hay). */
+  function motorSemana(on: On, abierta: boolean) {
+    const h = String(inicioDeHora(AHORA))
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on, {
+      ...(abierta ? { 'prefs:semana': true } : {}),
+      'uso:otra': { [h]: { [clave('claude-sonnet-5-5', 'low')]: [400_000, 130_000, 0, 0] } },
+    })
+    on('session.id', () => ({ value: 's1' }))
+  }
+
+  const conColumnas = (columnas: number) => ({ ...PANE, props: { ...PANE.props, bodyColumns: columnas } })
+
+  test('«Esta semana» ancha: la salida va en el encabezado, junto al botón', async ($, on) => {
+    motorSemana(on, false)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...conColumnas(40), surface: 'terminal' })
+    let textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    let sem = textos.indexOf('Esta semana')
+
+    expect(textos[sem + 1]).toBe('530k · sal 130k')
+    expect((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label).toBe('Ver')
+
+    // Desplegada sigue en el encabezado y el pie no la repite.
+    await ui.press({ key: 's-plegar' })
+    textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    sem = textos.indexOf('Esta semana')
+    expect(textos[sem + 1]).toBe('530k · sal 130k')
+    expect(textos.some(t => t.endsWith('total incluye caché'))).toBe(true)
+    expect(textos.some(t => t.startsWith('sal 130k'))).toBe(false)
+    await ui.unmount()
+  })
+
+  test('«Esta semana» justa: el encabezado queda con el total y la salida pasa al pie', async ($, on) => {
+    motorSemana(on, false)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...conColumnas(32), surface: 'terminal' })
+    let textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    let sem = textos.indexOf('Esta semana')
+
+    // Plegada y sin espacio: la salida no se muestra todavía.
+    expect(textos[sem + 1]).toBe('530k')
+    expect(textos.some(t => t.includes('sal 130k'))).toBe(false)
+
+    await ui.press({ key: 's-plegar' })
+    textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    sem = textos.indexOf('Esta semana')
+    expect(textos[sem + 1]).toBe('530k')
+    // El pie lleva la salida primero y sigue con lo de siempre («anotado desde …» · «total incluye caché»).
+    expect(textos.some(t => t.startsWith('sal 130k · ') && t.endsWith(' · total incluye caché'))).toBe(true)
+    await ui.unmount()
+  })
+
+  test('el límite del ancho: con 34 columnas cabe justo, con 33 la salida pasa al pie', async ($, on) => {
+    motorSemana(on, false)
+    await $.session.measure(MEDIDA)
+
+    // «Esta semana» (11) + «530k · sal 130k» (15) + espacio (1) + «[ Ver ]» (7) = 34.
+    const justo = await $.ui.mount({ ...conColumnas(34), surface: 'terminal' })
+    let textos = (await justo.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    expect(textos[textos.indexOf('Esta semana') + 1]).toBe('530k · sal 130k')
+    await justo.unmount()
+
+    const corto = await $.ui.mount({ ...conColumnas(33), surface: 'terminal' })
+    textos = (await corto.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    expect(textos[textos.indexOf('Esta semana') + 1]).toBe('530k')
+    await corto.unmount()
+  })
+
+  test('ninguna fila de encabezado supera el ancho, plegada o desplegada', async ($, on) => {
+    motorSemana(on, false)
+    motorResponde(on, 'claude-opus-5-5')
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'medium')
+
+    for (const columnas of [28, 32, 33, 34, 40, 80]) {
+      const ancho = Math.min(40, columnas)
+      const ui = await $.ui.mount({ ...conColumnas(columnas), surface: 'terminal' })
+
+      for (const titulo of ['Esta sesión', 'Esta semana']) {
+        for (const abierta of [false, true]) {
+          if (abierta !== ((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label === 'Ocultar')) {
+            await ui.press({ key: 's-plegar' })
+          }
+          const cabeceras = (await ui.findAll({ type: 'Box' }))
+            .map(b => b.text ?? '')
+            .filter(t => t.startsWith(titulo))
+            .sort((a, b) => a.length - b.length)
+          const cabecera = cabeceras[0] ?? ''
+          const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+          const total = textos[textos.indexOf(titulo) + 1] ?? ''
+          const boton = titulo === 'Esta semana' ? ` [ ${abierta ? 'Ocultar' : 'Ver'} ]` : ''
+
+          expect(cabecera.length).toBeGreaterThan(0)
+          expect(cabecera.length).toBeLessThanOrEqual(ancho)
+          expect(`${titulo}${total}${boton}`.length).toBeLessThanOrEqual(ancho)
+        }
+      }
+      await ui.unmount()
+    }
   })
 
   test('sin uso anotado lo dice', async ($, on) => {

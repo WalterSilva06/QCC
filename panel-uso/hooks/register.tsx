@@ -17,6 +17,7 @@ import {
   relleno,
   tokens,
   tono,
+  totalConSalida,
   tramos,
 } from './formato'
 import { PREFIJO, RETENCION_MS, anotar, clave, comoRegistro, etiquetaDia, inicioSemana, podar, resumir } from './semana'
@@ -401,6 +402,8 @@ export const register: Register = on => {
      * Tokens por modelo y esfuerzo: la misma tabla para la sesión y la semana.
      * Bajo cada fila va su barra con el % de la sección (barra + % = ancho).
      * Con `plegable`, plegada muestra solo el título, el total y el botón.
+     * El encabezado lleva el total y la salida; si con el botón no caben en `ancho`,
+     * queda solo el total y la salida pasa al pie.
      */
     const tabla = (
       titulo: string,
@@ -410,6 +413,12 @@ export const register: Register = on => {
       plegable?: { abierta: boolean },
     ) => {
       const visible = plegable === undefined || plegable.abierta
+      const label = plegable?.abierta ? 'Ocultar' : 'Ver'
+      const conSalida = s === null ? '' : totalConSalida(s.total, s.salida)
+      // Título + total con salida + espacio + botón `[ label ]` tienen que entrar en `ancho`.
+      const cabe =
+        plegable === undefined || titulo.length + conSalida.length + 1 + `[ ${label} ]`.length <= ancho
+      const salidaAlPie = !cabe && s !== null && s.salida > 0 ? `sal ${tokens(s.salida)}` : null
 
       return (
         <Box key={plegable === undefined ? undefined : CLAVE_SEMANA} flexDirection="column" marginTop={1}>
@@ -417,13 +426,13 @@ export const register: Register = on => {
             <Box flexGrow={1}>
               <Text bold>{titulo}</Text>
             </Box>
-            {s !== null && s.total > 0 && <Text>{tokens(s.total)}</Text>}
+            {s !== null && s.total > 0 && <Text>{cabe ? conSalida : tokens(s.total)}</Text>}
             {plegable !== undefined && <Text> </Text>}
             {plegable !== undefined && (
               <Button
                 key={`${prefijo}-plegar`}
                 hotkey="s"
-                label={plegable.abierta ? 'Ocultar' : 'Ver'}
+                label={label}
                 onPress={() => alternarSemana($)}
               />
             )}
@@ -473,7 +482,9 @@ export const register: Register = on => {
             </Box>
           )}
           {visible && s !== null && (desde !== null || s.total > 0) && (
-            <Text dimColor>{[desde, s.total > 0 ? 'total incluye caché' : null].filter(Boolean).join(' · ')}</Text>
+            <Text dimColor>
+              {[salidaAlPie, desde, s.total > 0 ? 'total incluye caché' : null].filter(Boolean).join(' · ')}
+            </Text>
           )}
         </Box>
       )

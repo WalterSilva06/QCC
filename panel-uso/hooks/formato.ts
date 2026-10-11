@@ -30,6 +30,13 @@ export function tokens(n: number): string {
   return String(Math.round(n))
 }
 
+/** El total con la salida al lado: «14,4M · sal 48k». Sin salida, solo el total. */
+export function totalConSalida(total: number, salida: number): string {
+  if (salida <= 0) return tokens(total)
+
+  return `${tokens(total)} · sal ${tokens(salida)}`
+}
+
 function decimal(x: number): string {
   const redondo = x >= 100 ? Math.round(x) : Math.round(x * 10) / 10
 
