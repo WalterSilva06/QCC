@@ -26,8 +26,12 @@ export const PREFIJO = 'uso:'
 /** Lo que tenga más de esto se borra al abrir una sesión. */
 export const RETENCION_MS = 15 * DIA
 
-export function clave(modelo: string, esfuerzo: NivelEsfuerzo): string {
-  return `${modelo}|${esfuerzo === undefined ? '' : String(esfuerzo)}`
+/**
+ * `modelo|esfuerzo` para el hilo principal (igual que los datos viejos) y
+ * `modelo|esfuerzo|sub` para un subagente.
+ */
+export function clave(modelo: string, esfuerzo: NivelEsfuerzo, subagente = false): string {
+  return `${modelo}|${esfuerzo === undefined ? '' : String(esfuerzo)}${subagente ? '|sub' : ''}`
 }
 
 export function inicioDeHora(t: number): number {
@@ -84,12 +88,22 @@ export function inicioSemana(limites: readonly { kind: string; resetsAt?: string
   return ahora - SEMANA
 }
 
-/** `claude-opus-5-5` → «Opus»; lo que no se reconoce sale tal cual. */
+/**
+ * `claude-opus-5-5` → «Opus 5.5»; `claude-opus-4-20250514` → «Opus 4» (una fecha de 8 dígitos
+ * no es versión menor); `claude-3-5-sonnet-20241022` → «Sonnet 3.5». Sin versión reconocible,
+ * solo la familia; sin familia, el id tal cual.
+ */
 export function familia(modelo: string): string {
   const m = /(opus|sonnet|haiku|fable)/i.exec(modelo)
   if (m?.[1] === undefined) return modelo
 
-  return m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()
+  const nombre = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()
+  const despues = /^[-_ ]?(\d{1,2})(?!\d)(?:[-.](\d{1,2})(?!\d))?/.exec(modelo.slice(m.index + m[1].length))
+  const antes = /(?:^|[-_ ])(\d{1,2})(?:[-.](\d{1,2}))?[-_ ]$/.exec(modelo.slice(0, m.index))
+  const v = despues ?? antes
+  if (v?.[1] === undefined) return nombre
+
+  return `${nombre} ${v[1]}${v[2] === undefined ? '' : `.${v[2]}`}`
 }
 
 /** `medium` → «medium»; vacío (modelo sin esfuerzo) → «—»; un número sale tal cual. */
@@ -114,11 +128,16 @@ export function resumir(registros: readonly Registro[], desde: number): Semana {
       if (h + HORA <= desde) continue
 
       for (const [k, c] of Object.entries(porClave)) {
-        const corte = k.lastIndexOf('|')
-        const modelo = familia(corte < 0 ? k : k.slice(0, corte))
-        const esfuerzo = nombreEsfuerzo(corte < 0 ? '' : k.slice(corte + 1))
-        const id = `${modelo}|${esfuerzo}`
-        const fila = filas.get(id) ?? { modelo, esfuerzo, total: 0, salida: 0 }
+        // `modelo|esfuerzo` (principal, también los datos viejos) o `modelo|esfuerzo|sub`.
+        const partes = k.split('|')
+        const subagente = partes.length >= 3 && partes[partes.length - 1] === 'sub'
+        if (subagente) partes.pop()
+        const nivel = partes.length > 1 ? (partes.pop() ?? '') : ''
+        const modelo = familia(partes.join('|'))
+        const esfuerzo = nombreEsfuerzo(nivel)
+        const origen = subagente ? 'subagente' : 'principal'
+        const id = `${modelo}|${esfuerzo}|${origen}`
+        const fila = filas.get(id) ?? { modelo, esfuerzo, origen, total: 0, salida: 0 }
         fila.total += c[0] + c[1] + c[2] + c[3]
         fila.salida += c[1]
         filas.set(id, fila)

@@ -48,12 +48,12 @@ function enFila<T>(trabajo: () => Promise<T>): Promise<T> {
  * Una clave por sesión: dos terminales abiertas no se pisan la misma clave.
  * Se cuenta todo lo que la API informó, hilo principal y subagentes.
  */
-async function anotarUso($: EngineInterface, modelo: string, nivel: NivelEsfuerzo, uso: Uso) {
+async function anotarUso($: EngineInterface, modelo: string, nivel: NivelEsfuerzo, subagente: boolean, uso: Uso) {
   await enFila(async () => {
     const k = `${PREFIJO}${await $.session.id()}`
     const t = await $.clock.now()
     const antes = comoRegistro(await $.store.get(k))
-    await $.store.set(k, anotar(antes, t, clave(modelo, nivel), uso))
+    await $.store.set(k, anotar(antes, t, clave(modelo, nivel, subagente), uso))
   })
   await releerSemana($)
 }
@@ -294,7 +294,7 @@ export const register: Register = on => {
     const r = yield* next(e)
     if (r.usage !== null) {
       try {
-        await anotarUso($, r.usage.model || e.model, e.effort, r.usage)
+        await anotarUso($, r.usage.model || e.model, e.effort, e.agentId !== undefined, r.usage)
       } catch {
         // Perder una cuenta es mejor que frenar la respuesta.
       }
@@ -343,10 +343,10 @@ export const register: Register = on => {
               const parte = s.total > 0 ? (f.total / s.total) * 100 : 0
 
               return (
-                <Box key={`${prefijo}-${f.modelo}-${f.esfuerzo}`} flexDirection="column">
+                <Box key={`${prefijo}-${f.modelo}-${f.esfuerzo}-${f.origen}`} flexDirection="column">
                   <Box>
                     <Box flexGrow={1}>
-                      <Text wrap="truncate-end">{`${f.modelo} ${f.esfuerzo}`}</Text>
+                      <Text wrap="truncate-end">{`${f.modelo} ${f.esfuerzo}${f.origen === 'subagente' ? ' · sub' : ''}`}</Text>
                     </Box>
                     <Text>{tokens(f.total).padStart(7)}</Text>
                     <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
@@ -489,13 +489,13 @@ export const register: Register = on => {
           })
         )}
 
-        <Box flexDirection="column" marginTop={1}>
+        {/* Una sola fila; el modelo se trunca para no saltar de línea en 36 columnas. */}
+        <Box marginTop={1}>
           <Text bold>Esfuerzo</Text>
-          <Text color="claude">{nivel}</Text>
+          <Text color="claude">{` ${nivel}`}</Text>
           {esf !== null && (
-            <Text dimColor>
-              {esf.modelo}
-              {esf.origen === 'ajustes' ? ' · según ajustes' : ''}
+            <Text dimColor wrap="truncate-end">
+              {` · ${esf.modelo}${esf.origen === 'ajustes' ? ' · según ajustes' : ''}`}
             </Text>
           )}
         </Box>

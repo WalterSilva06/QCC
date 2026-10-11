@@ -37,7 +37,7 @@ Los dos tienen que terminar sin errores antes de dar algo por hecho. Los tests s
 2. **Contexto**: barra por categorías (como `/context`), lista de partes y «Lo más pesado». El botón **Precisar** (tecla `p`) cambia la estimación local por un conteo exacto con la API, que gasta una petición por herramienta y por archivo de memoria.
 3. **Límites de uso**: 5 horas, semanal y de gasto, con el % y la hora de reinicio.
 4. **Esfuerzo**: el de la última petición del hilo principal, o el de `settings.json` antes del primer turno.
-5. **Esta sesión** y **Esta semana**: tokens por familia de modelo·esfuerzo (por ejemplo `Opus high`), con el total y la salida. Debajo de cada fila va una barra con su % de la sección. El esfuerzo se muestra en inglés (`low`, `medium`, `high`, `xhigh`, `max`, o `—` si no hay).
+5. **Esta sesión** y **Esta semana**: tokens por modelo (familia y versión) y esfuerzo, con el total y la salida. Una fila es, por ejemplo, `Opus 5.5 high` (hilo principal) u `Opus 5.5 high · sub` (subagentes): se separan por origen. Debajo de cada fila va una barra con su % de la sección. El esfuerzo se muestra en inglés (`low`, `medium`, `high`, `xhigh`, `max`, o `—` si no hay).
 
 La vista `inline` (terminal angosta) es una sola línea: `ctx 42% · 5h 30% (en 2 h) · sem 12% · esfuerzo high`.
 
@@ -49,7 +49,7 @@ La vista `inline` (terminal angosta) es una sola línea: `ctx 42% · 5h 30% (en 
 ### Datos
 
 - Cada respuesta de la API (hilo principal y subagentes) se anota en `$.store` con la clave `uso:<sessionId>`, una por sesión, para que dos terminales no se pisen.
-- El formato es `hora (ms, redondeada a la hora) → "modelo|esfuerzo" → [entrada, salida, caché leída, caché escrita]`.
+- El formato es `hora (ms, redondeada a la hora) → clave → [entrada, salida, caché leída, caché escrita]`. La clave es `modelo|esfuerzo` para el hilo principal y `modelo|esfuerzo|sub` para los subagentes; los datos viejos (sin `|sub`) cuentan como principal.
 - «Esta semana» suma todas las sesiones desde el inicio de la ventana del límite semanal (`resetsAt − 7 días`), o desde 7 días atrás si no hay límite semanal.
 - Al abrir una sesión se borra lo que tenga más de 15 días (`RETENCION_MS`).
 - Las escrituras al store pasan por una cola (`enFila`), porque hilo principal y subagentes responden a la vez.

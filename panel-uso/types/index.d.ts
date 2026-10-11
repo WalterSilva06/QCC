@@ -48,10 +48,12 @@ export type Desglose = {
 
 /** Los tokens de una familia de modelo con un esfuerzo, en la semana. */
 export type FilaSemana = {
-  /** «Opus», «Sonnet», «Haiku», «Fable», o el id tal cual si no se reconoce. */
+  /** Familia y versión: «Opus 5.5», «Sonnet 3.5», «Fable 5.1»; solo la familia sin versión, o el id tal cual si no se reconoce. */
   modelo: string
   /** «bajo», «medio», «alto», «muy alto», «máximo»; «—» para un modelo sin esfuerzo. */
   esfuerzo: string
+  /** Quién respondió: el hilo principal o un subagente. Las filas se separan por origen. */
+  origen: 'principal' | 'subagente'
   /** Entrada + salida + caché leída + caché escrita. */
   total: number
   salida: number

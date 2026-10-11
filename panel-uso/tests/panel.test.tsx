@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import { aDesglose, barra, falta, pct, tokens, tono, tramos } from '../hooks/formato'
-import { anotar, clave, comoRegistro, inicioDeHora, inicioSemana, podar, resumir } from '../hooks/semana'
+import { anotar, clave, comoRegistro, familia, inicioDeHora, inicioSemana, podar, resumir } from '../hooks/semana'
 import type { Registro } from '../hooks/semana'
 
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
@@ -425,11 +425,52 @@ describe('semana', () => {
     const s = resumir([r, { [String(h)]: { [clave('claude-haiku-5-5', undefined)]: [1, 1, 0, 0] } }], h - 86_400_000)
 
     expect(s.filas).toEqual([
-      { modelo: 'Opus', esfuerzo: 'medium', total: 200_000, salida: 4_000 },
-      { modelo: 'Sonnet', esfuerzo: 'low', total: 100_000, salida: 2_000 },
-      { modelo: 'Haiku', esfuerzo: '—', total: 2, salida: 1 },
+      { modelo: 'Opus 5.5', esfuerzo: 'medium', origen: 'principal', total: 200_000, salida: 4_000 },
+      { modelo: 'Sonnet 5.5', esfuerzo: 'low', origen: 'principal', total: 100_000, salida: 2_000 },
+      { modelo: 'Haiku 5.5', esfuerzo: '—', origen: 'principal', total: 2, salida: 1 },
     ])
     expect(s.total).toBe(300_002)
+  })
+
+  test('familia: familia y versión; una fecha de 8 dígitos no es versión menor', async () => {
+    expect(familia('claude-opus-5-5')).toBe('Opus 5.5')
+    expect(familia('claude-fable-5-1')).toBe('Fable 5.1')
+    expect(familia('claude-opus-4-20250514')).toBe('Opus 4')
+    expect(familia('claude-opus-4-1-20250805')).toBe('Opus 4.1')
+    expect(familia('claude-3-5-sonnet-20241022')).toBe('Sonnet 3.5')
+    expect(familia('claude-3-haiku-20240307')).toBe('Haiku 3')
+    expect(familia('claude-haiku')).toBe('Haiku')
+    expect(familia('claude-opus-20250514')).toBe('Opus')
+    expect(familia('gpt-raro')).toBe('gpt-raro')
+  })
+
+  test('clave: el hilo principal conserva modelo|esfuerzo; el subagente agrega |sub', async () => {
+    expect(clave('claude-opus-5-5', 'high')).toBe('claude-opus-5-5|high')
+    expect(clave('claude-opus-5-5', 'high', false)).toBe('claude-opus-5-5|high')
+    expect(clave('claude-opus-5-5', 'high', true)).toBe('claude-opus-5-5|high|sub')
+    expect(clave('claude-opus-5-5', undefined, true)).toBe('claude-opus-5-5||sub')
+  })
+
+  test('resumir: claves viejas de 2 partes son principal; |sub es subagente; esfuerzo vacío es «—»', async () => {
+    const h = inicioDeHora(AHORA)
+    const r: Registro = {
+      [String(h)]: {
+        'claude-opus-5-5|high': [10, 0, 0, 0],
+        'claude-opus-5-5|high|sub': [5, 0, 0, 0],
+        'claude-haiku-5-5|': [3, 0, 0, 0],
+        'claude-haiku-5-5||sub': [1, 0, 0, 0],
+        'claude-sonnet-4-20250514': [2, 0, 0, 0],
+      },
+    }
+    const s = resumir([r], h - 1)
+
+    expect(s.filas).toEqual([
+      { modelo: 'Opus 5.5', esfuerzo: 'high', origen: 'principal', total: 10, salida: 0 },
+      { modelo: 'Opus 5.5', esfuerzo: 'high', origen: 'subagente', total: 5, salida: 0 },
+      { modelo: 'Haiku 5.5', esfuerzo: '—', origen: 'principal', total: 3, salida: 0 },
+      { modelo: 'Sonnet 4', esfuerzo: '—', origen: 'principal', total: 2, salida: 0 },
+      { modelo: 'Haiku 5.5', esfuerzo: '—', origen: 'subagente', total: 1, salida: 0 },
+    ])
   })
 
   test('la semana es la ventana del límite semanal; sin él, 7 días atrás', async () => {
@@ -461,11 +502,106 @@ describe('semana', () => {
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
     expect(textos).toContain('Esta semana')
-    expect(textos).toContain('Opus medium')
-    expect(textos).toContain('Opus high')
-    expect(textos).toContain('   200k')
-    expect(textos.indexOf('Opus medium')).toBeLessThan(textos.indexOf('Opus high'))
+    expect(textos).toContain('Opus 5.5 medium')
+    expect(textos).toContain('Opus 5.5 medium · sub')
+    expect(textos).toContain('Opus 5.5 high')
+    expect(textos).toContain('   100k')
+    expect(textos.indexOf('Opus 5.5 medium')).toBeLessThan(textos.indexOf('Opus 5.5 high'))
     expect(textos.indexOf('Esfuerzo')).toBeLessThan(textos.indexOf('Esta semana'))
+    await ui.unmount()
+  })
+
+  test('esfuerzo: nivel y modelo salen en la misma fila que el título (turno)', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on)
+    on('session.id', () => ({ value: 's1' }))
+    motorResponde(on, 'claude-opus-5-5')
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const fila = await ui.find({ type: 'Box', text: /^Esfuerzo/ })
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+
+    expect(fila?.text).toBe('Esfuerzo high · claude-opus-5-5')
+    expect(textos).toContain('Esfuerzo')
+    // Nivel y modelo ya no son líneas sueltas: viven solo dentro de la fila.
+    expect(textos).not.toContain('high')
+    expect(textos).not.toContain('claude-opus-5-5')
+    await ui.unmount()
+  })
+
+  test('esfuerzo: con origen «ajustes» la misma fila agrega «según ajustes»', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on)
+    on('session.id', () => ({ value: 's1' }))
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: { effortLevel: 'xhigh' } }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const fila = await ui.find({ type: 'Box', text: /^Esfuerzo/ })
+
+    expect(fila?.text).toBe('Esfuerzo xhigh · claude-opus-5-5 · según ajustes')
+    await ui.unmount()
+  })
+
+  test('esfuerzo: sin dato la fila dice «Esfuerzo —»', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const fila = await ui.find({ type: 'Box', text: /^Esfuerzo/ })
+
+    expect(fila?.text).toBe('Esfuerzo —')
+    await ui.unmount()
+  })
+
+  test('turn.step con y sin agentId deja dos claves y dos filas en el panel', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    // Un store propio (igual al de `mock.store`) para poder leer lo que quedó anotado.
+    const guardados = new Map<string, unknown>()
+    on('store.get', (_$, e) => ({ value: guardados.get(e.key) }))
+    on('store.set', (_$, e) => {
+      guardados.set(e.key, e.value)
+
+      return { value: undefined }
+    })
+    on('store.delete', (_$, e) => {
+      guardados.delete(e.key)
+
+      return { value: undefined }
+    })
+    on('store.keys', () => ({ value: [...guardados.keys()] }))
+    on('session.id', () => ({ value: 's1' }))
+    motorResponde(on, 'claude-opus-5-5')
+    await $.session.measure(MEDIDA)
+
+    await paso($, 'claude-opus-5-5', 'high')
+    await paso($, 'claude-opus-5-5', 'high', 'agente-1')
+
+    const guardado = comoRegistro(guardados.get('uso:s1'))
+    expect(Object.keys(guardado[String(inicioDeHora(AHORA))] ?? {}).sort()).toEqual([
+      'claude-opus-5-5|high',
+      'claude-opus-5-5|high|sub',
+    ])
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    const sem = textos.indexOf('Esta semana')
+    expect(textos.slice(sem)).toContain('Opus 5.5 high')
+    expect(textos.slice(sem)).toContain('Opus 5.5 high · sub')
     await ui.unmount()
   })
 
@@ -489,11 +625,11 @@ describe('semana', () => {
     expect(ses).toBeGreaterThan(-1)
     expect(ses).toBeLessThan(sem)
     const deSesion = textos.slice(ses, sem)
-    expect(deSesion).toContain('Opus medium')
-    expect(deSesion).not.toContain('Sonnet low')
+    expect(deSesion).toContain('Opus 5.5 medium')
+    expect(deSesion).not.toContain('Sonnet 5.5 low')
     const deSemana = textos.slice(sem)
-    expect(deSemana).toContain('Opus medium')
-    expect(deSemana).toContain('Sonnet low')
+    expect(deSemana).toContain('Opus 5.5 medium')
+    expect(deSemana).toContain('Sonnet 5.5 low')
     await ui.unmount()
   })
 
@@ -515,18 +651,18 @@ describe('semana', () => {
     const sem = textos.indexOf('Esta semana')
 
     // Sesión: una sola fila, es el 100 % de su sección.
-    const i = textos.indexOf('Opus medium', ses)
+    const i = textos.indexOf('Opus 5.5 medium', ses)
     expect(i).toBeGreaterThan(ses)
     expect(i).toBeLessThan(sem)
-    expect(textos.slice(i, i + 5)).toEqual(['Opus medium', '   100k', '     2k', '█'.repeat(25), ' 100,0%'])
+    expect(textos.slice(i, i + 5)).toEqual(['Opus 5.5 medium', '   100k', '     2k', '█'.repeat(25), ' 100,0%'])
 
     // Semana: Sonnet 400k de 500k (80 %) y Opus 100k (20 %), cada barra bajo su fila.
-    const j = textos.indexOf('Sonnet low', sem)
+    const j = textos.indexOf('Sonnet 5.5 low', sem)
     expect(j).toBeGreaterThan(sem)
-    expect(textos.slice(j, j + 5)).toEqual(['Sonnet low', '   400k', '      0', '█'.repeat(20) + '░'.repeat(5), '  80,0%'])
-    const k = textos.indexOf('Opus medium', sem)
+    expect(textos.slice(j, j + 5)).toEqual(['Sonnet 5.5 low', '   400k', '      0', '█'.repeat(20) + '░'.repeat(5), '  80,0%'])
+    const k = textos.indexOf('Opus 5.5 medium', sem)
     expect(k).toBeGreaterThan(j)
-    expect(textos.slice(k, k + 5)).toEqual(['Opus medium', '   100k', '     2k', '█'.repeat(5) + '░'.repeat(20), '  20,0%'])
+    expect(textos.slice(k, k + 5)).toEqual(['Opus 5.5 medium', '   100k', '     2k', '█'.repeat(5) + '░'.repeat(20), '  20,0%'])
     await ui.unmount()
   })
 
