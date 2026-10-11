@@ -96,6 +96,20 @@ export type ActividadFila = {
 /** La actividad por id de fila (`Opus 5.5|high|principal`, igual al de las filas de `Semana`). */
 export type Actividad = Record<string, ActividadFila>
 
+/** El flujo `/implementador`, `/implementador-ligero` o `/documentar` de la sesión y dónde va. */
+export type Flujo = {
+  /** La skill que lo inició. */
+  nombre: 'implementador' | 'implementador-ligero' | 'documentar'
+  /** `auditar`: `/documentar` con pedido de auditoría (otros pasos); `null` en el resto. */
+  variante: 'auditar' | null
+  /** Índice del paso actual dentro de los pasos de su flujo (0 es Preflight). */
+  paso: number
+  /** Ya salió algún agente `ejecutor`: distingue la verificación del Preflight de la final. */
+  ejecuto: boolean
+  /** `en curso`, o cómo terminó: `completo`, `detenido` (CIERRE … DETENIDO) o `interrumpido`. */
+  estado: 'en curso' | 'completo' | 'detenido' | 'interrumpido'
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'panel-uso': {
@@ -111,6 +125,10 @@ declare module 'claude-code' {
       semanaAbierta: boolean
       /** Qué filas de «Esta sesión» tienen una petición en curso o esperan a otra; solo de esta terminal. */
       actividad: Actividad
+      /** El flujo `/implementador`, `/implementador-ligero` o `/documentar` en curso o ya terminado; `null` si la sesión no inició ninguno. */
+      flujo: Flujo | null
+      /** La sección «Flujo» desplegada; se recuerda en el store con la clave `prefs:flujo`. */
+      flujoAbierto: boolean
     }
   }
 }

@@ -4,7 +4,7 @@ Herramientas personales para Claude Code, en dos partes separadas.
 
 | Parte | Carpeta | Qué es | Documentación |
 |---|---|---|---|
-| Mod | `panel-uso/` | Panel lateral con el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Comando `/uso`. | [MODS.md](MODS.md) |
+| Mod | `panel-uso/` | Panel lateral con el contexto de la sesión, los límites de uso, el esfuerzo, el consumo de tokens y el paso del flujo en curso. Comando `/uso`. | [MODS.md](MODS.md) |
 | Flujos | `flujos/` | Los flujos `/implementador`, `/implementador-ligero` y `/documentar`, con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
 
 ## Instalar

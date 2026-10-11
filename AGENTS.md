@@ -30,6 +30,7 @@ panel-uso/
   hooks/semana.ts                 puro: registro de tokens por hora, resumen por modelo·esfuerzo
   hooks/formato.ts                puro: barras, cifras, tiempos, desglose del contexto
   hooks/carpeta.ts                puro: validar la ruta y elegir el comando que abre la carpeta
+  hooks/flujo.ts                  puro: qué flujo corre y en qué paso, a partir de los eventos
   types/index.d.ts                tipos y contrato de $.state (PluginState['panel-uso'])
   tests/panel.test.tsx            único archivo de tests
 ```

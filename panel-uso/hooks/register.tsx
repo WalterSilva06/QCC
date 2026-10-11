@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
 
-import type { Actividad, Esfuerzo, Medida, Semana } from '../types'
+import type { Actividad, Esfuerzo, Flujo, Medida, Semana } from '../types'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
+import { avanzar, iniciarFlujo, nodos, resumenFlujo, senalAlTerminar, senalDeHerramienta, terminarFlujo } from './flujo'
 import {
   aDesglose,
   barra,
@@ -56,12 +57,20 @@ const semana = atom({ plugin: 'panel-uso', key: 'semana' } as const, null)
 const sesion = atom({ plugin: 'panel-uso', key: 'sesion' } as const, null)
 const semanaAbierta = atom({ plugin: 'panel-uso', key: 'semanaAbierta' } as const, false)
 const actividad = atom({ plugin: 'panel-uso', key: 'actividad' } as const, {})
+const flujo = atom({ plugin: 'panel-uso', key: 'flujo' } as const, null)
+const flujoAbierto = atom({ plugin: 'panel-uso', key: 'flujoAbierto' } as const, false)
 
 /** Color del ■ de cada fila de «Esta sesión» según su actividad. */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
 
 /** Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. */
 const PREF_SEMANA = 'prefs:semana'
+
+/** Igual que `PREF_SEMANA`: la sección «Flujo» desplegada o plegada. */
+const PREF_FLUJO = 'prefs:flujo'
+
+/** Color del glifo de «Terminado» según cómo terminó el flujo. */
+const COLOR_FIN = { completo: 'success', detenido: 'warning', interrumpido: 'error' } as const
 
 // Las escrituras al store van en fila: el hilo principal y los subagentes responden a la vez.
 let cola: Promise<unknown> = Promise.resolve()
@@ -185,6 +194,33 @@ async function alternarSemana($: EngineInterface) {
     })
   } catch {
     // Sin reloj no hay desplazamiento.
+  }
+}
+
+/**
+ * Cambia el flujo en curso. Nunca rechaza: un fallo del panel no puede frenar
+ * una skill, una herramienta ni el fin de un turno.
+ */
+async function marcarFlujo($: EngineInterface, cambio: (f: Flujo | null) => Flujo | null) {
+  try {
+    await update($, flujo, cambio)
+  } catch {
+    // Sin seguimiento la sección queda como estaba.
+  }
+}
+
+/** Pliega o despliega «Flujo» y lo recuerda entre sesiones. */
+async function alternarFlujo($: EngineInterface) {
+  let abierta = false
+  await update($, flujoAbierto, antes => {
+    abierta = !antes
+
+    return abierta
+  })
+  try {
+    await $.store.set(PREF_FLUJO, abierta)
+  } catch {
+    // Sin store vale solo para esta sesión.
   }
 }
 
@@ -332,6 +368,13 @@ export const register: Register = on => {
     } catch {
       // Sin store arranca plegada.
     }
+    try {
+      // `flujo` no se vacía aquí: un `/reload-plugins` a mitad de flujo no lo pierde.
+      const guardada = await $.store.get(PREF_FLUJO)
+      await update($, flujoAbierto, () => guardada === true)
+    } catch {
+      // Sin store arranca plegada.
+    }
     await medirDesglose($, 'summary')
     try {
       await podarStore($)
@@ -385,6 +428,8 @@ export const register: Register = on => {
     } catch {
       // No puede frenar el cierre.
     }
+    // Cualquier razón: el flujo de esta sesión no sigue en la que viene.
+    await marcarFlujo($, () => null)
     if (e.reason === 'clear') {
       try {
         await update($, medida, m => (m === null ? null : { ventana: m.ventana, limites: m.limites }))
@@ -441,7 +486,7 @@ export const register: Register = on => {
     return r
   })
 
-  // El turno del hilo principal terminó: ninguna fila espera ya una herramienta.
+  // El turno del hilo principal terminó: ninguna fila espera ya una herramienta y el flujo, si había, cierra.
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
       try {
@@ -449,9 +494,34 @@ export const register: Register = on => {
       } catch {
         // La espera caduca sola a los 30 min.
       }
+      await marcarFlujo($, f => terminarFlujo(f, e.reason, e.answer))
     }
 
     return next(e)
+  })
+
+  // Solo observa: el texto de la skill pasa tal cual.
+  on('skill.prompt', async ($, e, next) => {
+    const nuevo = iniciarFlujo(e.skill, e.text)
+    if (nuevo !== null) await marcarFlujo($, () => nuevo)
+
+    return next(e)
+  })
+
+  // Solo observa: la herramienta corre y su resultado vuelve tal cual (un error de `next` no se traga).
+  on('tool.call', async ($, e, next) => {
+    const s = senalDeHerramienta(e.tool, e as unknown as Record<string, unknown>, e.agentId)
+    if (s === null) return next(e)
+
+    await marcarFlujo($, f => avanzar(f, s))
+
+    const fin = senalAlTerminar(s)
+    if (fin === null) return next(e)
+
+    const r = await next(e)
+    await marcarFlujo($, f => avanzar(f, fin))
+
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {
@@ -464,6 +534,8 @@ export const register: Register = on => {
     const ses = await read($, sesion)
     const abierta = await read($, semanaAbierta)
     const act = await read($, actividad)
+    const fl = await read($, flujo)
+    const flAbierto = await read($, flujoAbierto)
     await read($, ahora)
     const t = await $.clock.now()
 
@@ -589,6 +661,41 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Box marginBottom={1}>
           <Button key="carpeta" hotkey="c" label="Abrir carpeta" onPress={() => abrirCarpeta($)} />
+        </Box>
+        <Box key="flujo" flexDirection="column" marginBottom={1}>
+          <Box>
+            <Box flexGrow={1}>
+              <Text bold>Flujo</Text>
+            </Box>
+            <Button key="flujo-plegar" hotkey="f" label={flAbierto ? 'Ocultar' : 'Ver'} onPress={() => alternarFlujo($)} />
+          </Box>
+          <Text dimColor wrap="truncate-end">
+            {resumenFlujo(fl)}
+          </Text>
+          {flAbierto &&
+            fl !== null &&
+            nodos(fl).flatMap((n, i, todos) => {
+              const glifo =
+                n.estado === 'pasado'
+                  ? { texto: '✓ ', color: 'success' as const }
+                  : n.estado === 'pendiente'
+                    ? { texto: '○ ', color: undefined }
+                    : i === todos.length - 1 && fl.estado !== 'en curso'
+                      ? { texto: '● ', color: COLOR_FIN[fl.estado] }
+                      : { texto: '▸ ', color: 'claude' as const }
+
+              return [
+                ...(i > 0 ? [<Text key={`flujo-sep-${i}`} dimColor>│</Text>] : []),
+                <Box key={`flujo-${i}`}>
+                  <Text color={glifo.color} dimColor={n.estado === 'pendiente'}>
+                    {glifo.texto}
+                  </Text>
+                  <Text bold={n.estado === 'actual'} dimColor={n.estado === 'pendiente'} wrap="truncate-end">
+                    {n.etiqueta}
+                  </Text>
+                </Box>,
+              ]
+            })}
         </Box>
         <Box>
           <Box flexGrow={1}>

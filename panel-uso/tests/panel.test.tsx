@@ -3,6 +3,19 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
+import {
+  PASOS,
+  PASOS_AUDITAR,
+  avanzar,
+  iniciarFlujo,
+  nodos,
+  pasosDe,
+  resumenFlujo,
+  senalAlTerminar,
+  senalDeHerramienta,
+  terminarFlujo,
+} from '../hooks/flujo'
+import type { Senal } from '../hooks/flujo'
 import { aDesglose, barra, falta, pct, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
   ESPERA_MAX_MS,
@@ -23,7 +36,7 @@ import {
   terminarPeticion,
 } from '../hooks/semana'
 import type { Cuentas, Registro } from '../hooks/semana'
-import type { Actividad } from '../types'
+import type { Actividad, Flujo } from '../types'
 
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
 
@@ -1314,6 +1327,298 @@ describe('actividad (puro)', () => {
   })
 })
 
+describe('flujo (puro)', () => {
+  const estado = (modo: 'preflight' | 'base' | 'cambios' | 'diff'): Senal => ({ tipo: 'estado', modo })
+  const verificar: Senal = { tipo: 'verificar' }
+  const agente = (nombre: string): Senal => ({ tipo: 'agente', nombre })
+  const agenteFin = (nombre: string): Senal => ({ tipo: 'agente-fin', nombre })
+  const pregunta = (plan: boolean): Senal => ({ tipo: 'pregunta', plan })
+  const escritura = (destino: 'mapa' | 'reglas' | 'doc'): Senal => ({ tipo: 'escritura', destino })
+
+  /** Inicia el flujo y devuelve el paso en que queda tras cada señal. */
+  function pasos(skill: string, senales: Senal[], texto = ''): number[] {
+    let f = iniciarFlujo(skill, texto)
+    const vistos: number[] = []
+
+    for (const s of senales) {
+      f = avanzar(f, s)
+      vistos.push(f?.paso ?? -1)
+    }
+
+    return vistos
+  }
+
+  const bash = (command: string) => senalDeHerramienta('Bash', { command }, undefined)
+  const doc = (f: Flujo | null) => (f ? `${f.estado}:${f.paso}` : 'null')
+
+  test('iniciarFlujo: solo las tres skills (con o sin / y prefijo); auditar por el pedido', async () => {
+    const base = { paso: 0, ejecuto: false, estado: 'en curso' }
+
+    expect(iniciarFlujo('implementador', '')).toEqual({ ...base, nombre: 'implementador', variante: null })
+    expect(iniciarFlujo('/implementador-ligero', '')).toEqual({ ...base, nombre: 'implementador-ligero', variante: null })
+    expect(iniciarFlujo('claude-config:implementador', '')).toEqual({ ...base, nombre: 'implementador', variante: null })
+    expect(iniciarFlujo('/mi-plugin:documentar', '')).toEqual({ ...base, nombre: 'documentar', variante: null })
+    expect(iniciarFlujo('documentar', '**Pedido:**   auditar la guía')).toEqual({ ...base, nombre: 'documentar', variante: 'auditar' })
+    expect(iniciarFlujo('documentar', '**Pedido:** auditoría')).toEqual({ ...base, nombre: 'documentar', variante: null })
+    expect(iniciarFlujo('documentar', '**Pedido:** documentar el panel')).toEqual({ ...base, nombre: 'documentar', variante: null })
+    // Auditar solo existe en documentar.
+    expect(iniciarFlujo('implementador', '**Pedido:** auditar')?.variante).toBeNull()
+    expect(iniciarFlujo('simplify', '')).toBeNull()
+    expect(iniciarFlujo('/implementador:otra', '')).toBeNull()
+    expect(iniciarFlujo('', '')).toBeNull()
+  })
+
+  test('senalDeHerramienta: estado.mjs con sus opciones, verificar.mjs, ~ y $HOME, y no un cat', async () => {
+    expect(bash('node ~/.claude/flujos/estado.mjs')).toEqual(estado('preflight'))
+    expect(bash('node ~/.claude/flujos/estado.mjs --base')).toEqual(estado('base'))
+    expect(bash('node "$HOME/.claude/flujos/estado.mjs" --cambios')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/flujos/estado.mjs --diff 2>&1')).toEqual(estado('diff'))
+    expect(bash('cd repo && node ~/.claude/flujos/estado.mjs --base')).toEqual(estado('base'))
+    expect(bash('node ~/.claude/flujos/verificar.mjs')).toEqual(verificar)
+    expect(bash('node "$HOME/.claude/flujos/verificar.mjs"')).toEqual(verificar)
+    // Si aparecen los dos, manda estado.
+    expect(bash('node ~/.claude/flujos/verificar.mjs && node ~/.claude/flujos/estado.mjs --cambios')).toEqual(estado('cambios'))
+
+    // Casos negativos: leer el script no es correrlo, y una opción dentro de una ruta no cuenta.
+    expect(bash('cat ~/.claude/flujos/estado.mjs')).toBeNull()
+    expect(bash('cat ~/.claude/flujos/verificar.mjs | node')).toBeNull()
+    expect(bash('node ~/.claude/flujos/otro.mjs')).toBeNull()
+    expect(bash('node ~/.claude/flujos/mi-estado.mjs')).toBeNull()
+    expect(bash('node x.mjs | cat estado.mjs')).toBeNull()
+    expect(bash('node ~/.claude/flujos/estado.mjs --basement')).toEqual(estado('preflight'))
+    expect(bash('node ~/--base/.claude/flujos/estado.mjs')).toEqual(estado('preflight'))
+    expect(bash('ls')).toBeNull()
+    expect(senalDeHerramienta('Bash', {}, undefined)).toBeNull()
+    expect(senalDeHerramienta('Bash', { command: 3 }, undefined)).toBeNull()
+  })
+
+  test('senalDeHerramienta: Agent, AskUserQuestion (header Plan), Edit/Write (mapa, reglas, doc) y nada de un subagente', async () => {
+    expect(senalDeHerramienta('Agent', { subagent_type: 'explorador' }, undefined)).toEqual(agente('explorador'))
+    expect(senalDeHerramienta('Agent', { subagent_type: '' }, undefined)).toBeNull()
+    expect(senalDeHerramienta('Agent', { prompt: 'x' }, undefined)).toBeNull()
+
+    expect(senalDeHerramienta('AskUserQuestion', { questions: [{ header: 'Plan' }] }, undefined)).toEqual(pregunta(true))
+    expect(senalDeHerramienta('AskUserQuestion', { questions: [{ header: 'Otra' }, { header: ' plan ' }] }, undefined)).toEqual(pregunta(true))
+    expect(senalDeHerramienta('AskUserQuestion', { questions: [{ header: 'Planes' }] }, undefined)).toEqual(pregunta(false))
+    expect(senalDeHerramienta('AskUserQuestion', {}, undefined)).toEqual(pregunta(false))
+
+    const rutas: [string, 'mapa' | 'reglas' | 'doc'][] = [
+      ['D:\\repo\\.claude\\documentar\\cobertura.md', 'mapa'],
+      ['/repo/.claude/documentar.md', 'reglas'],
+      ['D:\\repo\\.claude\\documentar.md', 'reglas'],
+      ['/repo/MODS.md', 'doc'],
+      ['/repo/.claude/documentar/otra.md', 'doc'],
+    ]
+    for (const [file_path, destino] of rutas) {
+      expect(senalDeHerramienta('Edit', { file_path }, undefined)).toEqual(escritura(destino))
+      expect(senalDeHerramienta('Write', { file_path }, undefined)).toEqual(escritura(destino))
+    }
+
+    expect(senalDeHerramienta('Read', { file_path: '/repo/MODS.md' }, undefined)).toBeNull()
+    expect(senalDeHerramienta('Grep', {}, undefined)).toBeNull()
+
+    // Lo que hace un subagente no mueve el flujo.
+    expect(senalDeHerramienta('Bash', { command: 'node ~/.claude/flujos/estado.mjs' }, 'agente-1')).toBeNull()
+    expect(senalDeHerramienta('Agent', { subagent_type: 'ejecutor' }, 'agente-1')).toBeNull()
+    expect(senalDeHerramienta('Edit', { file_path: '/repo/a.ts' }, 'agente-1')).toBeNull()
+    expect(senalDeHerramienta('AskUserQuestion', { questions: [{ header: 'Plan' }] }, 'agente-1')).toBeNull()
+  })
+
+  test('senalAlTerminar: solo el explorador', async () => {
+    expect(senalAlTerminar(agente('explorador'))).toEqual(agenteFin('explorador'))
+    expect(senalAlTerminar(agente('planificador'))).toBeNull()
+    expect(senalAlTerminar(agenteFin('explorador'))).toBeNull()
+    expect(senalAlTerminar(verificar)).toBeNull()
+  })
+
+  test('implementador CRÍTICO: de Preflight a Cierre con ciclo de corrección y revisión integral', async () => {
+    const subtarea = [estado('base'), agente('ejecutor'), estado('cambios'), agente('revisor')]
+    const secuencia = [
+      estado('preflight'),
+      verificar,
+      agente('explorador'),
+      agenteFin('explorador'),
+      agente('planificador'),
+      pregunta(true),
+      ...subtarea,
+      ...subtarea,
+      verificar,
+      agente('revisor'),
+      estado('cambios'),
+      verificar,
+    ]
+
+    expect(pasos('implementador', secuencia)).toEqual([0, 0, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
+  })
+
+  test('implementador NORMAL: sin planificador salta de Clasificación a Aprobación', async () => {
+    expect(
+      pasos('implementador', [estado('preflight'), agente('explorador'), agenteFin('explorador'), pregunta(true), estado('base')]),
+    ).toEqual([0, 1, 2, 4, 5])
+    // Una pregunta que no es el plan no mueve nada; el fin de otro agente tampoco.
+    expect(pasos('implementador', [agente('explorador'), pregunta(false), agenteFin('planificador')])).toEqual([1, 1, 1])
+    // El fin del explorador solo cuenta desde Exploración.
+    expect(pasos('implementador', [estado('base'), agenteFin('explorador')])).toEqual([5, 5])
+    expect(pasos('implementador', [estado('diff')])).toEqual([0])
+  })
+
+  test('verificación final ROJA: la corrección vuelve a Ejecución y la nueva verificación a Verificación final', async () => {
+    const secuencia = [
+      estado('base'),
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+      estado('base'),
+      agente('ejecutor'),
+      agente('revisor'),
+      verificar,
+      estado('cambios'),
+      verificar,
+    ]
+
+    expect(pasos('implementador', secuencia)).toEqual([5, 5, 5, 6, 5, 5, 5, 6, 7, 7])
+  })
+
+  test('implementador-ligero: sin explorador, rechazo y cierre', async () => {
+    const secuencia = [
+      pregunta(true),
+      agente('ejecutor'),
+      estado('cambios'),
+      agente('revisor'),
+      agente('ejecutor'),
+      agente('revisor'),
+      estado('cambios'),
+      verificar,
+      agente('planificador'),
+    ]
+
+    expect(pasos('implementador-ligero', secuencia)).toEqual([4, 5, 5, 6, 5, 6, 7, 7, 7])
+    expect(pasos('implementador-ligero', [verificar, estado('preflight'), agente('explorador'), agenteFin('explorador')])).toEqual([0, 0, 1, 2])
+    expect(pasos('implementador-ligero', [agente('planificador'), pregunta(false)])).toEqual([0, 0])
+  })
+
+  test('documentar: Ficha, Lectura, Escritura, Revisión y Cierre; el mapa antes de la revisión no avanza; las reglas no cuentan', async () => {
+    const secuencia = [
+      estado('preflight'),
+      pregunta(false),
+      agente('lector'),
+      escritura('mapa'),
+      escritura('reglas'),
+      escritura('doc'),
+      escritura('reglas'),
+      agente('revisor-doc'),
+      escritura('doc'),
+      escritura('mapa'),
+    ]
+
+    expect(pasos('documentar', secuencia)).toEqual([0, 2, 3, 3, 3, 4, 4, 5, 4, 4])
+    // Tras la revisión, el mapa lleva al Cierre.
+    expect(pasos('documentar', [pregunta(true), agente('lector'), escritura('doc'), agente('revisor-doc'), escritura('mapa')])).toEqual([2, 3, 4, 5, 6])
+    // Ya pasada la Ficha, otra pregunta no retrocede; lo ajeno al flujo tampoco lo mueve.
+    expect(pasos('documentar', [agente('lector'), pregunta(false), verificar, agente('ejecutor'), estado('base')])).toEqual([3, 3, 3, 3, 3])
+    // Una pregunta en Preflight lleva a Ficha; en Modo también.
+    expect(pasos('documentar', [pregunta(false), pregunta(false)])).toEqual([2, 2])
+  })
+
+  test('documentar auditar: mismos pasos con sus nombres', async () => {
+    const f = iniciarFlujo('documentar', '**Pedido:** auditar')
+
+    expect(f?.variante).toBe('auditar')
+    expect(pasos('documentar', [pregunta(false), agente('lector'), escritura('doc'), agente('revisor-doc'), escritura('mapa')], '**Pedido:** auditar')).toEqual([
+      2, 3, 4, 5, 6,
+    ])
+    expect(PASOS_AUDITAR).toEqual(['Preflight', 'Modo', 'Plan de auditoría', 'Lectura', 'Corrección', 'Revisión', 'Cierre'])
+    expect(PASOS.documentar).toEqual(['Preflight', 'Modo', 'Ficha', 'Lectura', 'Escritura', 'Revisión', 'Cierre'])
+    expect(PASOS.implementador).toEqual(['Preflight', 'Exploración', 'Clasificación', 'Plan', 'Aprobación', 'Ejecución', 'Verificación final', 'Cierre'])
+    expect(PASOS['implementador-ligero']).toEqual(['Preflight', 'Exploración', 'Escalado', 'Plan breve', 'Aprobación', 'Ejecución', 'Revisión', 'Cierre'])
+    expect(pasosDe(f as Flujo)).toBe(PASOS_AUDITAR)
+    expect(pasosDe(iniciarFlujo('documentar', '') as Flujo)).toBe(PASOS.documentar)
+    expect(resumenFlujo(avanzar(avanzar(f, pregunta(false)), agente('lector')))).toBe('/documentar auditar · Lectura')
+  })
+
+  test('sin flujo o terminado: ninguna señal lo cambia ni lo revive', async () => {
+    const senales: Senal[] = [
+      estado('preflight'),
+      estado('base'),
+      estado('cambios'),
+      verificar,
+      agente('explorador'),
+      agente('ejecutor'),
+      pregunta(true),
+      escritura('doc'),
+    ]
+
+    for (const s of senales) expect(avanzar(null, s)).toBeNull()
+
+    for (const razon of ['answer', 'abort', 'error']) {
+      const f = terminarFlujo({ ...(iniciarFlujo('implementador', '') as Flujo), paso: 5 }, razon, 'listo')
+
+      for (const s of senales) expect(avanzar(f, s)).toEqual(f)
+    }
+  })
+
+  test('terminarFlujo: completo, detenido por CIERRE … DETENIDO, interrumpido; idempotente', async () => {
+    const f: Flujo = { nombre: 'implementador', variante: null, paso: 6, ejecuto: true, estado: 'en curso' }
+
+    expect(terminarFlujo(f, 'answer', 'CIERRE · todo listo')).toEqual({ ...f, estado: 'completo' })
+    expect(terminarFlujo(f, 'answer', undefined)).toEqual({ ...f, estado: 'completo' })
+    expect(terminarFlujo(f, 'answer', 'Resumen\nCIERRE · subtarea 2 — DETENIDO\nmás texto')).toEqual({ ...f, estado: 'detenido' })
+    // El DETENIDO debe ir en la misma línea que CIERRE.
+    expect(terminarFlujo(f, 'answer', 'CIERRE · listo\nDETENIDO')).toEqual({ ...f, estado: 'completo' })
+    expect(terminarFlujo(f, 'abort', 'CIERRE · x — DETENIDO')).toEqual({ ...f, estado: 'interrumpido' })
+    expect(terminarFlujo(f, 'error')).toEqual({ ...f, estado: 'interrumpido' })
+    expect(terminarFlujo(null, 'answer', 'x')).toBeNull()
+
+    const detenido = terminarFlujo(f, 'answer', 'CIERRE · x — DETENIDO')
+    expect(terminarFlujo(detenido, 'abort')).toEqual(detenido)
+    expect(terminarFlujo(detenido, 'answer', 'CIERRE · ok')).toEqual(detenido)
+    expect(doc(terminarFlujo(f, 'abort'))).toBe('interrumpido:6')
+  })
+
+  test('nodos y resumenFlujo: pasado, actual, pendiente y Terminado al final', async () => {
+    const f: Flujo = { nombre: 'implementador', variante: null, paso: 5, ejecuto: true, estado: 'en curso' }
+    const lista = nodos(f)
+
+    expect(lista.map(n => n.etiqueta)).toEqual([...PASOS.implementador, 'Terminado'])
+    expect(lista.map(n => n.estado)).toEqual([
+      'pasado', 'pasado', 'pasado', 'pasado', 'pasado', 'actual', 'pendiente', 'pendiente', 'pendiente',
+    ])
+    expect(resumenFlujo(f)).toBe('/implementador · Ejecución')
+
+    const completo = terminarFlujo(f, 'answer', 'CIERRE · ok') as Flujo
+    expect(nodos(completo).map(n => n.estado)).toEqual([
+      'pasado', 'pasado', 'pasado', 'pasado', 'pasado', 'pasado', 'pendiente', 'pendiente', 'actual',
+    ])
+    expect(nodos(completo).at(-1)?.etiqueta).toBe('Terminado')
+    expect(resumenFlujo(completo)).toBe('/implementador · Terminado')
+
+    const ligero = terminarFlujo({ ...f, nombre: 'implementador-ligero', paso: 7 }, 'answer', 'CIERRE · x — DETENIDO') as Flujo
+    expect(nodos(ligero).at(-1)).toEqual({ etiqueta: 'Terminado · detenido', estado: 'actual' })
+    expect(nodos(ligero).filter(n => n.estado === 'pasado')).toHaveLength(8)
+    expect(resumenFlujo(ligero)).toBe('/implementador-ligero · Terminado · detenido')
+
+    const cortado = terminarFlujo({ ...f, nombre: 'documentar', variante: 'auditar', paso: 3 }, 'abort') as Flujo
+    expect(nodos(cortado).at(-1)?.etiqueta).toBe('Terminado · interrumpido')
+    expect(resumenFlujo(cortado)).toBe('/documentar auditar · Terminado · interrumpido')
+
+    expect(resumenFlujo({ ...f, nombre: 'documentar', variante: 'auditar', paso: 3 })).toBe('/documentar auditar · Lectura')
+    expect(resumenFlujo(null)).toBe('sin flujo en esta sesión')
+  })
+
+  test('las funciones no mutan el flujo que reciben', async () => {
+    const f: Flujo = Object.freeze({ nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso' })
+
+    const a = avanzar(f, agente('ejecutor'))
+    expect(a).toEqual({ ...f, paso: 5, ejecuto: true })
+    expect(a).not.toBe(f)
+    expect(avanzar(f, estado('diff'))).toEqual(f)
+    expect(terminarFlujo(f, 'answer', 'CIERRE · x — DETENIDO')?.estado).toBe('detenido')
+    expect(nodos(f)).toHaveLength(9)
+    expect(resumenFlujo(f)).toBe('/implementador · Aprobación')
+    expect(f).toEqual({ nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso' })
+  })
+})
+
 type Ui = Awaited<ReturnType<Engine['ui']['mount']>>
 
 /** Deja correr las promesas pendientes del motor de prueba (la petición en curso avanza hasta su compuerta). */
@@ -1513,6 +1818,293 @@ describe('actividad en el panel', () => {
     abrir()
     await enCurso
     expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
+    await ui.unmount()
+  })
+})
+
+/** El store de prueba con su contenido a la vista: devuelve el mapa para leer lo que el panel guardó. */
+function motorStore(on: On, inicial: Record<string, unknown> = {}) {
+  const guardados = new Map<string, unknown>(Object.entries(inicial))
+  on('store.get', (_$, e) => ({ value: guardados.get(e.key) }))
+  on('store.set', (_$, e) => {
+    guardados.set(e.key, e.value)
+
+    return { value: undefined }
+  })
+  on('store.delete', (_$, e) => {
+    guardados.delete(e.key)
+
+    return { value: undefined }
+  })
+  on('store.keys', () => ({ value: [...guardados.keys()] }))
+
+  return guardados
+}
+
+/** Lo que el panel dibuja de «Flujo» abierta en `/implementador · Ejecución`, texto por texto. */
+const FLUJO_EJECUCION = [
+  'Flujo',
+  '/implementador · Ejecución',
+  '✓ ',
+  'Preflight',
+  '│',
+  '✓ ',
+  'Exploración',
+  '│',
+  '✓ ',
+  'Clasificación',
+  '│',
+  '✓ ',
+  'Plan',
+  '│',
+  '✓ ',
+  'Aprobación',
+  '│',
+  '▸ ',
+  'Ejecución',
+  '│',
+  '○ ',
+  'Verificación final',
+  '│',
+  '○ ',
+  'Cierre',
+  '│',
+  '○ ',
+  'Terminado',
+]
+
+describe('flujo en el panel', () => {
+  /** El motor bajo los plugins: la skill y el turno responden tal cual; `Agent` espera su compuerta y puede fallar. */
+  function motorFlujo(on: On) {
+    const llamadas: string[] = []
+    const compuertas = new Map<string, Promise<void>>()
+    const fallan = new Set<string>()
+    on('skill.prompt', (_$, e) => ({ text: e.text }))
+    on('tool.call', async (_$, e) => {
+      llamadas.push(e.tool)
+      if (e.tool === 'Agent') {
+        await compuertas.get(e.subagent_type ?? '')
+        if (fallan.has(e.subagent_type ?? '')) throw new Error('explorador caído')
+      }
+
+      return { result: 'listo' }
+    })
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+
+    /** Cierra la compuerta del agente `nombre`; devuelve cómo abrirla. */
+    function detener(nombre: string): () => void {
+      let abrir: () => void = () => undefined
+      compuertas.set(nombre, new Promise<void>(r => (abrir = r)))
+
+      return abrir
+    }
+
+    return { llamadas, detener, fallan }
+  }
+
+  function preparar(on: On, pedidos: string[] = [], inicial: Record<string, unknown> = {}) {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on, pedidos)
+    on('session.id', () => ({ value: 's1' }))
+    const guardados = motorStore(on, inicial)
+
+    return { ...motorFlujo(on), guardados }
+  }
+
+  const textosDe = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+
+  /** Los `n` textos que empiezan en el título «Flujo». */
+  const desdeFlujo = async (ui: Ui, n: number) => {
+    const textos = await textosDe(ui)
+    const i = textos.indexOf('Flujo')
+
+    return textos.slice(i, i + n)
+  }
+
+  const bash = ($: Engine, command: string) => $.tool.call({ tool: 'Bash', command })
+  const agente = ($: Engine, subagent_type: string) =>
+    $.tool.call({ tool: 'Agent', subagent_type, description: 'prueba', prompt: 'prueba' })
+  const respuesta = (answer: string, extra: { reason?: 'answer' | 'aborted'; agentId?: string } = {}) => ({
+    reason: extra.reason ?? 'answer',
+    answer,
+    durationMs: 10,
+    isAborted: extra.reason === 'aborted',
+    turnId: 't',
+    ...(extra.agentId === undefined ? {} : { agentId: extra.agentId }),
+  })
+
+  test('«Flujo» arranca plegada y sin flujo: tecla f, Ver/Ocultar y prefs:flujo', async ($, on) => {
+    const { guardados } = preparar(on)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const boton = await ui.find({ type: 'Button', key: 'flujo-plegar' })
+    expect(boton?.props.hotkey).toBe('f')
+    expect(boton?.props.label).toBe('Ver')
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])
+
+    await ui.press({ key: 'flujo-plegar' })
+    expect((await ui.find({ type: 'Button', key: 'flujo-plegar' }))?.props.label).toBe('Ocultar')
+    expect(guardados.get('prefs:flujo')).toBe(true)
+
+    await ui.press({ key: 'flujo-plegar' })
+    expect((await ui.find({ type: 'Button', key: 'flujo-plegar' }))?.props.label).toBe('Ver')
+    expect(guardados.get('prefs:flujo')).toBe(false)
+    await ui.unmount()
+  })
+
+  test('al abrir sesión, «Flujo» vuelve como se dejó', async ($, on) => {
+    preparar(on, [], { 'prefs:flujo': true })
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+
+    // Un /reload-plugins a mitad de flujo repite session.start: el flujo sigue ahí.
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await ui.find({ type: 'Button', key: 'flujo-plegar' }))?.props.label).toBe('Ocultar')
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Preflight'])
+    expect(await textosDe(ui)).toContain('Preflight')
+    await ui.unmount()
+  })
+
+  test('/implementador de punta a punta: el diagrama marca cada paso y termina en Terminado', async ($, on) => {
+    const pedidos: string[] = []
+    preparar(on, pedidos)
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+    const antes = pedidos.length
+
+    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** algo' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await agente($, 'explorador')
+    await $.tool.call({
+      tool: 'AskUserQuestion',
+      questions: [
+        {
+          question: '¿Apruebas el plan?',
+          header: 'Plan',
+          options: [
+            { label: 'Sí', description: 'Ejecutar' },
+            { label: 'No', description: 'Detener' },
+          ],
+          multiSelect: false,
+        },
+      ],
+    })
+    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+
+    expect(await desdeFlujo(ui, FLUJO_EJECUCION.length)).toEqual(FLUJO_EJECUCION)
+
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    const tramo = await desdeFlujo(ui, FLUJO_EJECUCION.length)
+    expect(tramo.slice(0, 2)).toEqual(['Flujo', '/implementador · Terminado'])
+    expect(tramo.slice(-2)).toEqual(['● ', 'Terminado'])
+    expect(tramo.slice(2, 4)).toEqual(['✓ ', 'Preflight'])
+    // Nada del flujo llama al modelo ni a $.session.usage.
+    expect(pedidos).toHaveLength(antes)
+    await ui.unmount()
+  })
+
+  test('mientras corre el explorador el paso es Exploración; al volver, Clasificación', async ($, on) => {
+    const motor = preparar(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Preflight'])
+
+    const abrir = motor.detener('explorador')
+    const corriendo = agente($, 'explorador')
+    await esperar()
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración'])
+
+    abrir()
+    await corriendo
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Clasificación'])
+    await ui.unmount()
+  })
+
+  test('skill.prompt y tool.call pasan intactos: mismo texto y mismo resultado', async ($, on) => {
+    const motor = preparar(on)
+
+    const texto = '**Pedido:** auditar la guía\n\nsegunda línea'
+    expect(await $.skill.prompt({ skill: 'documentar', text: texto })).toEqual({ text: texto })
+    expect(await $.skill.prompt({ skill: 'simplify', text: 'otra' })).toEqual({ text: 'otra' })
+
+    const resultados = [
+      await bash($, 'node ~/.claude/flujos/estado.mjs'),
+      await bash($, 'ls'),
+      await agente($, 'explorador'),
+      await agente($, 'planificador'),
+    ]
+    expect(resultados.map(r => r.result)).toEqual(['listo', 'listo', 'listo', 'listo'])
+    expect(motor.llamadas).toEqual(['Bash', 'Bash', 'Agent', 'Agent'])
+  })
+
+  test('si el explorador falla, el error llega intacto y el paso queda en Exploración', async ($, on) => {
+    const motor = preparar(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    motor.fallan.add('explorador')
+    const error = await agente($, 'explorador').then(
+      () => null,
+      (err: unknown) => err,
+    )
+
+    // El kit convierte el fallo del motor de abajo en su propio error: el hook del panel no lo envuelve ni lo traga.
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toMatch(/panel/i)
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración'])
+    await ui.unmount()
+  })
+
+  test('turn.complete de un subagente no termina el flujo; uno abortado muestra Terminado · interrumpido', async ($, on) => {
+    preparar(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO', { agentId: 'agente-1' }))
+    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Preflight')
+
+    await $.turn.complete(respuesta('', { reason: 'aborted' }))
+    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Terminado · interrumpido')
+    const arbol = await ui.findAll({})
+    const i = arbol.findIndex(n => n.type === 'Text' && n.text === 'Terminado · interrumpido')
+    expect(arbol.slice(0, i).reverse().find(n => n.type === 'Text' && n.text === '● ')?.props.color).toBe('error')
+    await ui.unmount()
+  })
+
+  test('fuera de un flujo, estado.mjs y los agentes no crean ninguno; otra skill tampoco', async ($, on) => {
+    preparar(on)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await agente($, 'explorador')
+    await $.skill.prompt({ skill: 'simplify', text: '' })
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])
+    await ui.unmount()
+  })
+
+  test('session.end borra el flujo', async ($, on) => {
+    preparar(on)
+    on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+    await $.skill.prompt({ skill: 'documentar', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect((await desdeFlujo(ui, 2))[1]).toBe('/documentar · Preflight')
+
+    await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])
     await ui.unmount()
   })
 })

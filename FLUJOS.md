@@ -10,6 +10,8 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 | `/implementador-ligero` | `<qué cambiar, idealmente con los archivos> \| continuar` | Cambios acotados: plan breve con aprobación, un ejecutor y una revisión independiente. Si el cambio resulta crítico, se detiene y deriva a `/implementador`. |
 | `/documentar` | `consultar <duda o idea> \| <tema> [--directo] [--profundo] \| auditar <archivo.md> [--profundo] \| siguiente \| estado` | Documentar un proyecto o carpeta, con o sin git: acuerda una ficha antes de escribir, lee las fuentes grandes con un agente lector, escribe en `.md` en la raíz y lleva un mapa de cobertura. |
 
+El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes, del header «Plan» de las preguntas de aprobación, de las opciones de `estado.mjs` y de la línea «CIERRE ·» del cierre. Si cambia alguno de esos nombres, opciones o textos, hay que actualizar `panel-uso/hooks/flujo.ts`.
+
 ## Instalación
 
 El repo es la fuente de verdad: los flujos se editan en `flujos/` y después se instalan.
