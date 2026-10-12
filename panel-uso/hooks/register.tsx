@@ -99,8 +99,8 @@ const COLOR_FIN = { completo: 'success', detenido: 'warning', interrumpido: 'err
 /** Color del tramo de subagentes en las barras de «Esta semana»; distinto de `claude` y de los de estado. */
 const COLOR_SUB = 'suggestion'
 
-/** Color del tramo del hilo principal durante un flujo en las barras de «Esta sesión» y «Esta semana». */
-const COLOR_FLUJO = 'success'
+/** Color del tramo del hilo principal durante un flujo en las barras de «Esta sesión» y «Esta semana»; el mismo que el revisor-plan, distinto de `claude`, `suggestion` y los de estado. */
+const COLOR_FLUJO = 'pink_FOR_SUBAGENTS_ONLY'
 
 /** Columnas de las cifras de cada fila: total (7) + salida (7). */
 const COLUMNAS_CIFRAS = 14

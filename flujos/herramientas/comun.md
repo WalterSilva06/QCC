@@ -26,7 +26,7 @@ La foto es un commit suelto: no toca el índice ni el árbol del usuario. Si est
 
 ## 2. Clasificación
 
-CRÍTICO si se cumple **cualquiera** (cita los números en el plan). Ante la duda, CRÍTICO. Las rutas y ejemplos concretos de cada criterio están en las reglas del proyecto, si existen.
+CRÍTICO si se cumple **cualquiera** (cita los números en el plan; en `/implementador`, si no aplica ninguno, escribe «sin criterios»). Ante la duda, CRÍTICO. Las rutas y ejemplos concretos de cada criterio están en las reglas del proyecto, si existen.
 
 1. **Seguridad y acceso:** permisos, roles, autorización, RLS/policies/grants, validación de entrada en fronteras, secretos, rate limit, clientes con privilegios elevados.
 2. **Auth y sesión:** login, registro, recuperación, tokens, cookies, OAuth, redirecciones de login.
@@ -39,7 +39,7 @@ CRÍTICO si se cumple **cualquiera** (cita los números en el plan). Ante la dud
 9. **Irreversible:** borra datos, renombra columnas o APIs, o contradice una decisión registrada del proyecto (CLAUDE.md, ADRs).
 10. **Sin red:** lógica de negocio sin tests que el cambio altera.
 
-NORMAL: lo demás (copy o estilos de una pantalla, componente aislado, función pura con tests, documentación, tests nuevos, refactor local sin cambio de contrato).
+NORMAL: lo demás (copy o estilos de una pantalla, componente aislado, función pura con tests, documentación, tests nuevos, refactor local sin cambio de contrato). Solo lo usa `/implementador-ligero`: en `/implementador` todo cambio sigue el mismo camino y la clasificación solo cita los criterios que aplican, o «sin criterios».
 
 Límites del ligero: ≤ 3 subtareas, ≤ 6 archivos en total (tests incluidos) y ningún criterio CRÍTICO.
 
@@ -47,7 +47,7 @@ Límites del ligero: ≤ 3 subtareas, ≤ 6 archivos en total (tests incluidos) 
 
 ```
 PLAN · <título>
-Clasificación: CRÍTICO (#n, #m) | NORMAL — <por qué, una línea>
+Clasificación: CRÍTICO (#n, #m | sin criterios) | NORMAL (solo /implementador-ligero) — <por qué, una línea>
 Objetivo: <verificable, 1–2 líneas>
 Fuera de alcance: <lo que no se toca>
 Base: <rama>@<HEAD> · sucios previos: <lista | ninguno> · verificación inicial: VERDE | ROJA (<qué falla>) | SIN PASOS
@@ -63,7 +63,7 @@ S2 · …
 
 Verificación final: verificar.mjs <+ revisión integral, si aplica>
 Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>
-Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planificador Opus high | · planificador Sonnet high> <· revisión del plan Sonnet high, solo CRÍTICO>
+Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planificador Opus high | · planificador Sonnet high> <· revisión del plan Sonnet high (/implementador)>
 ```
 
 - Subtareas pequeñas: ≤ 4 archivos de código más sus tests, cada una verificable sola, en orden de dependencia (migración → tipos → servidor → UI → docs).
@@ -99,10 +99,10 @@ PISTAS: <archivos o símbolos ya conocidos | ninguna>
 ```
 Dos o tres si el pedido toca más de un área (p. ej. código y tests, flujos y panel, código y documentación): parte por carpeta o capa, no por pregunta, para que las áreas no se solapen. Uno solo si es de una sola área o, en el flujo completo, si el pedido nombra los archivos; sin una división natural, uno. Máximo tres. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`, con su propia ÁREA y sus propias preguntas BUSCA, sin repetir las de otro. Nunca en segundo plano. En fork mode, solo uno.
 
-**Planificador** (solo CRÍTICO, flujo completo) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
+**Planificador** (siempre, flujo completo) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
 ```
 PEDIDO: <literal>
-CLASIFICACIÓN: CRÍTICO — <criterios #n y por qué>
+CLASIFICACIÓN: CRÍTICO — <criterios #n y por qué | sin criterios>
 BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
 EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo que no aplica>
 PLAN VIGENTE: <solo al re-planificar: el plan aprobado, completo>
@@ -118,10 +118,10 @@ EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo qu
 ```
 Responde con el plan breve o con `ESCALAR: …`.
 
-**Revisor del plan** (solo CRÍTICO, flujo completo) — `subagent_type: "revisor-plan"`, `description: "Revisar plan <tema>"`
+**Revisor del plan** (siempre, flujo completo) — `subagent_type: "revisor-plan"`, `description: "Revisar plan <tema>"`
 ```
 PEDIDO: <literal>
-CLASIFICACIÓN: CRÍTICO — <criterios #n y por qué>
+CLASIFICACIÓN: CRÍTICO — <criterios #n y por qué | sin criterios>
 BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
 EXPLORACIÓN: <reporte fusionado de §6, el mismo que recibió el planificador>
 PLAN: <el plan completo, con tus completados menores y las PREGUNTAS del planificador si las hay>
@@ -158,7 +158,7 @@ SUCIOS PREVIOS (no son del flujo): <lista | ninguno>
 VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cuenta)
 ```
 
-**Revisión integral** (completo, CRÍTICO con ≥ 2 subtareas) — como el revisor, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y `ENFOQUE: <uno de los de abajo>`.
+**Revisión integral** (flujo completo, con ≥ 2 subtareas) — como el revisor, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y `ENFOQUE: <uno de los de abajo>`.
 Se reparte en hasta 3 revisores en paralelo, uno por enfoque aplicable, sin repetir ninguno:
 - **contratos, tipos y documentación:** cadena de llamadas, tipos, datos de punta a punta, compatibilidad con lo ya persistido, y que lo documentado coincida con el código y las convenciones del proyecto.
 - **tests:** ninguno borrado ni debilitado; los adaptados siguen fallando si falta lo que comprueban.

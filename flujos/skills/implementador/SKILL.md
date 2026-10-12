@@ -22,7 +22,7 @@ allowed-tools:
 
 # /implementador — flujo completo
 
-Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, integras y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh, 2 o 3 en paralelo si hay más de un área; max solo para un área muy grande), `planificador` (Opus high, solo CRÍTICO), `revisor-plan` (Sonnet high, solo CRÍTICO, una vez), `ejecutor` (Sonnet high), `revisor` (Opus high; en la revisión integral, hasta 3 en paralelo).
+Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, integras y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh, 2 o 3 en paralelo si hay más de un área; max solo para un área muy grande), `planificador` (Opus high), `revisor-plan` (Sonnet high, una vez), `ejecutor` (Sonnet high), `revisor` (Opus high; en la revisión integral, hasta 3 en paralelo).
 
 **Pedido:** $ARGUMENTS
 
@@ -44,29 +44,26 @@ Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, int
 
 **1. Exploración** — `explorador` (§5): 2 o 3 en paralelo si el pedido toca más de un área, partidos por carpeta o capa sin solaparse; uno solo si nombra los archivos o es de una sola área (§5). A cada uno, sin `effort` (corre en xhigh); `effort: "max"` solo a un área muy grande, nunca a todos a la vez. Con varios, fusiona los reportes (§6) antes de clasificar.
 
-**2. Clasificación** — §2 y las reglas del proyecto. Ante la duda, CRÍTICO.
+**2. Clasificación** — cita los criterios de §2 y de las reglas del proyecto que aplican, o «sin criterios». Los usan el plan y la revisión integral. No hay otro camino: todo pedido sigue los pasos 3 a 6 tal cual.
 
 **3. Plan** (§3)
-- CRÍTICO → `planificador` (§5). Si trae PREGUNTAS, van arriba del plan. Revisa que cumpla §3 (archivos explícitos, «hecho cuando» verificable, reversión) y completa tú lo menor.
-- **Revisión del plan (solo CRÍTICO, una vez):** con el plan entregado y lo menor completado, despacha `revisor-plan` (§5) antes de la aprobación (paso 4).
-  - NORMAL: no se despacha.
+- `planificador` (§5). Si trae PREGUNTAS, van arriba del plan. Revisa que cumpla §3 (archivos explícitos, «hecho cuando» verificable, reversión) y completa tú lo menor.
+- **Revisión del plan (una vez):** con el plan entregado y lo menor completado, despacha `revisor-plan` (§5) antes de la aprobación (paso 4).
   - Fork mode: no se despacha; anótalo en el mensaje de aprobación como «revisión del plan omitida (fork mode)».
   - Falla o vuelve sin VEREDICTO claro: una repetición; si sigue igual, se sigue sin ella avisando «revisión del plan no disponible». No cuenta como ciclo.
   - `APROBADO` → paso 4.
   - `AJUSTAR` → no se relanza al planificador ni al `revisor-plan`. Aplicas tú lo menor o aditivo y muestras qué cambió. Lo que cambia el enfoque (contratos, tipos o datos de varias subtareas, o el reparto de archivos entre ellas) no lo rediseñas: va tal cual bajo el plan, en «Revisión del plan: para decidir», y lo decide el usuario en la aprobación (si pide ajustar por «Other», rige el re-plan único del paso 4).
   - En el mensaje de aprobación, una línea: `Revisión del plan: APROBADO | AJUSTAR (n corregidos por el orquestador, m para decidir) | omitida (<motivo>)`.
   - No se repite tras el re-plan del paso 4.
-- NORMAL → lo escribes tú, leyendo lo mínimo.
 
 **4. Aprobación** — muestra el plan completo y llama a AskUserQuestion: pregunta «¿Apruebas el plan?», header «Plan», opciones «Aprobar» y «Cancelar»; los ajustes llegan por «Other».
 - Cancelar → terminas sin tocar nada.
 - Ajustes → por defecto los aplicas tú, sin planificador. Lo aditivo (una subtarea más, texto o formato, un límite añadido o quitado, otro orden) lo escribes en el plan y muestras solo lo que cambió y qué sigue igual. Re-planificas **una vez** solo si el ajuste cambia el enfoque de lo ya planificado (contratos, tipos o datos de subtareas existentes, o el reparto de archivos entre ellas): pasas PLAN VIGENTE y solo el ajuste (§5), y el planificador devuelve solo las subtareas afectadas. Vuelves a preguntar.
 
 **5. Ejecución**, una subtarea a la vez
-- CRÍTICO, por subtarea: `estado.mjs --base` → `ejecutor` → `estado.mjs --cambios` → `revisor` de esa subtarea → hasta **2 ciclos** de corrección.
-- NORMAL, por subtarea: `estado.mjs --base` → `ejecutor` → `estado.mjs --cambios`. Con todas hechas, un `revisor` sobre el cambio completo (`BASE_GLOBAL`, permitidos = unión) → hasta **2 ciclos**.
+- Por subtarea: `estado.mjs --base` → `ejecutor` → `estado.mjs --cambios` → `revisor` de esa subtarea → hasta **2 ciclos** de corrección.
 - Un tercer rechazo en el mismo punto → DETENIDO.
 
-**6. Verificación final** — tu `verificar.mjs`. ROJO → 1 ciclo (corrección + revisión). CRÍTICO con ≥ 2 subtareas → revisión integral (§5): hasta 3 revisores en paralelo, uno por enfoque aplicable (§5), hasta 1 ciclo.
+**6. Verificación final** — tu `verificar.mjs`. ROJO → 1 ciclo (corrección + revisión). Con ≥ 2 subtareas → revisión integral (§5): hasta 3 revisores en paralelo, uno por enfoque aplicable (§5), hasta 1 ciclo.
 
 **7. Cierre** — §7.

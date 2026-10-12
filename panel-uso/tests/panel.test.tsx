@@ -3268,7 +3268,7 @@ describe('flujo en el panel', () => {
     expect(hora['claude-opus-5-5|high|sub']).toEqual(una)
   })
 
-  test('Esta sesión y Esta semana pintan en success el tramo del orquestador; lo de fuera del flujo sigue en claude', async ($, on) => {
+  test('Esta sesión y Esta semana pintan en pink_FOR_SUBAGENTS_ONLY el tramo del orquestador; lo de fuera del flujo sigue en claude', async ($, on) => {
     const h = String(inicioDeHora(AHORA))
     preparar(on, [], { 'uso:otra': { [h]: { [clave('claude-sonnet-5-5', 'low')]: [400_000, 0, 0, 0] } } })
     on('turn.step', async function* (_$, e) {
@@ -3317,7 +3317,7 @@ describe('flujo en el panel', () => {
     expect(deSub).toEqual([['suggestion', '█'.repeat(8) + '░'.repeat(17)]])
     expect(principal).toEqual([
       ['claude', '█'.repeat(9)],
-      ['success', '█'.repeat(8)],
+      ['pink_FOR_SUBAGENTS_ONLY', '█'.repeat(8)],
       ['claude', '░'.repeat(8)],
     ])
 
@@ -3326,7 +3326,7 @@ describe('flujo en el panel', () => {
     expect(semana).toEqual([
       [
         ['claude', '█'.repeat(3)],
-        ['success', '█'.repeat(4)],
+        ['pink_FOR_SUBAGENTS_ONLY', '█'.repeat(4)],
         ['suggestion', '█'.repeat(4)],
         ['claude', '░'.repeat(14)],
       ],
@@ -3334,13 +3334,13 @@ describe('flujo en el panel', () => {
     const sonnet = await tramosDe('Esta semana', null, t => t.trimEnd() === 'Sonnet 5.5 low')
     expect(sonnet).toEqual([[['claude', '█'.repeat(14) + '░'.repeat(11)]]])
 
-    // Tras el cierre, lo nuevo del hilo principal va en claude: el tramo verde no crece.
+    // Tras el cierre, lo nuevo del hilo principal va en claude: el tramo del orquestador no crece.
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
     await paso($, 'claude-opus-5-5', 'high')
     const tras = await tramosDe('Esta sesión', 'Esta semana', opus)
     expect(tras.find(f => f[0]?.[0] !== 'suggestion')).toEqual([
       ['claude', '█'.repeat(13)],
-      ['success', '█'.repeat(6)],
+      ['pink_FOR_SUBAGENTS_ONLY', '█'.repeat(6)],
       ['claude', '░'.repeat(6)],
     ])
     await ui.unmount()
@@ -4279,12 +4279,12 @@ describe('flujo en el panel', () => {
     const filas = await filasDeSesion(ui)
     const haiku = filas.filter(f => f.etiqueta === 'Haiku  5.5 high')
     expect(haiku).toHaveLength(2)
-    // El hilo principal responde con el flujo en curso: su barra empieza en `success` (el tramo del flujo), no en `claude`.
-    expect(haiku.map(f => f.barra).sort()).toEqual(['success', 'suggestion'])
+    // El hilo principal responde con el flujo en curso: su barra empieza en `pink_FOR_SUBAGENTS_ONLY` (el tramo del orquestador), no en `claude`.
+    expect(haiku.map(f => f.barra).sort()).toEqual(['pink_FOR_SUBAGENTS_ONLY', 'suggestion'])
     expect(haiku.find(f => f.barra === 'suggestion')?.cuadrados).toBe(3)
-    expect(haiku.find(f => f.barra === 'success')?.cuadrados).toBe(1)
+    expect(haiku.find(f => f.barra === 'pink_FOR_SUBAGENTS_ONLY')?.cuadrados).toBe(1)
     expect(filas.some(f => f.etiqueta.includes('sub'))).toBe(false)
-    expect(filas.find(f => f.etiqueta.startsWith('Sonnet'))?.barra).toBe('success')
+    expect(filas.find(f => f.etiqueta.startsWith('Sonnet'))?.barra).toBe('pink_FOR_SUBAGENTS_ONLY')
 
     abrir.A()
     abrir.B()

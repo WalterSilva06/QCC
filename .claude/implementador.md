@@ -10,7 +10,7 @@ CRÍTICO, además de lo que diga `comun.md` §2:
 - **#7 Frontera de ejecución:** los hooks que envuelven `next` en `panel-uso/hooks/register.tsx` (`tool.call`, `turn.step`, `turn.complete`, `skill.prompt`). Un fallo ahí frena una petición al modelo o una herramienta.
 - **#1 y #5 Los flujos mismos:** `flujos/herramientas/guardia.mjs` (seguridad), y `estado.mjs`, `verificar.mjs`, las skills y los agentes (los usan todos los proyectos del usuario, no solo este).
 
-NORMAL: textos, colores y anchos del panel, funciones puras de `formato.ts` y `semana.ts` con tests, MODS.md, README, AGENTS.md.
+NORMAL (solo decide qué puede ir por `/implementador-ligero`): textos, colores y anchos del panel, funciones puras de `formato.ts` y `semana.ts` con tests, MODS.md, README, AGENTS.md.
 
 ## Cómo buscar
 
