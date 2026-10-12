@@ -52,11 +52,13 @@ export type FilaSemana = {
   modelo: string
   /** «bajo», «medio», «alto», «muy alto», «máximo»; «—» para un modelo sin esfuerzo. */
   esfuerzo: string
-  /** Quién respondió: el hilo principal o un subagente. Las filas se separan por origen. */
+  /** Quién respondió: el hilo principal o un subagente. En «Esta sesión» las filas se separan por origen; en «Esta semana» vienen unidas (origen 'principal'). */
   origen: 'principal' | 'subagente'
   /** Entrada + salida + caché leída + caché escrita. */
   total: number
   salida: number
+  /** Tokens de subagente dentro de `total`; solo lo pone `unirOrigenes` («Esta semana»). */
+  sub?: number
 }
 
 /** Los tokens de un día local. */
@@ -108,6 +110,14 @@ export type Flujo = {
   ejecuto: boolean
   /** `en curso`, o cómo terminó: `completo`, `detenido` (CIERRE … DETENIDO) o `interrumpido`. */
   estado: 'en curso' | 'completo' | 'detenido' | 'interrumpido'
+  /** Hora (ms) en que empezó el flujo. */
+  inicio: number
+  /** Hora (ms) en que empezó el tramo abierto del paso actual. */
+  desde: number
+  /** Ms acumulados por índice de paso, sin contar el tramo abierto; falta el paso que nunca se visitó. */
+  tiempos: Record<number, number>
+  /** Hora (ms) en que terminó; `null` mientras está en curso. */
+  fin: number | null
 }
 
 declare module 'claude-code' {

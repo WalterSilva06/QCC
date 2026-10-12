@@ -8,7 +8,9 @@ import { avanzar, iniciarFlujo, nodos, resumenFlujo, senalAlTerminar, senalDeHer
 import {
   aDesglose,
   barra,
+  barraPartida,
   cuando,
+  duracion,
   falta,
   marcador,
   nombreCorto,
@@ -36,6 +38,7 @@ import {
   limpiarPendientes,
   podar,
   resumir,
+  unirOrigenes,
   terminarPeticion,
 } from './semana'
 import type { NivelEsfuerzo, Registro, Uso } from './semana'
@@ -71,6 +74,9 @@ const PREF_FLUJO = 'prefs:flujo'
 
 /** Color del glifo de «Terminado» según cómo terminó el flujo. */
 const COLOR_FIN = { completo: 'success', detenido: 'warning', interrumpido: 'error' } as const
+
+/** Color del tramo de subagentes en las barras de «Esta semana»; distinto de `claude` y de los de estado. */
+const COLOR_SUB = 'suggestion'
 
 // Las escrituras al store van en fila: el hilo principal y los subagentes responden a la vez.
 let cola: Promise<unknown> = Promise.resolve()
@@ -113,7 +119,7 @@ async function releerSemana($: EngineInterface) {
       registros.push(r)
       if (k === propia) deEsta = r
     }
-    await update($, semana, () => resumir(registros, inicioSemana(m?.limites ?? [], t), t))
+    await update($, semana, () => unirOrigenes(resumir(registros, inicioSemana(m?.limites ?? [], t), t)))
     await update($, sesion, () => resumir([deEsta], 0))
   } catch {
     // Sin store la sección queda como estaba.
@@ -198,12 +204,13 @@ async function alternarSemana($: EngineInterface) {
 }
 
 /**
- * Cambia el flujo en curso. Nunca rechaza: un fallo del panel no puede frenar
- * una skill, una herramienta ni el fin de un turno.
+ * Cambia el flujo en curso con la hora actual (para el tiempo de cada paso). Nunca rechaza:
+ * un fallo del panel no puede frenar una skill, una herramienta ni el fin de un turno.
  */
-async function marcarFlujo($: EngineInterface, cambio: (f: Flujo | null) => Flujo | null) {
+async function marcarFlujo($: EngineInterface, cambio: (f: Flujo | null, t: number) => Flujo | null) {
   try {
-    await update($, flujo, cambio)
+    const t = await $.clock.now()
+    await update($, flujo, f => cambio(f, t))
   } catch {
     // Sin seguimiento la sección queda como estaba.
   }
@@ -494,7 +501,7 @@ export const register: Register = on => {
       } catch {
         // La espera caduca sola a los 30 min.
       }
-      await marcarFlujo($, f => terminarFlujo(f, e.reason, e.answer))
+      await marcarFlujo($, (f, t) => terminarFlujo(f, e.reason, e.answer, t))
     }
 
     return next(e)
@@ -502,8 +509,7 @@ export const register: Register = on => {
 
   // Solo observa: el texto de la skill pasa tal cual.
   on('skill.prompt', async ($, e, next) => {
-    const nuevo = iniciarFlujo(e.skill, e.text)
-    if (nuevo !== null) await marcarFlujo($, () => nuevo)
+    await marcarFlujo($, (f, t) => iniciarFlujo(e.skill, e.text, t) ?? f)
 
     return next(e)
   })
@@ -513,13 +519,13 @@ export const register: Register = on => {
     const s = senalDeHerramienta(e.tool, e as unknown as Record<string, unknown>, e.agentId)
     if (s === null) return next(e)
 
-    await marcarFlujo($, f => avanzar(f, s))
+    await marcarFlujo($, (f, t) => avanzar(f, s, t))
 
     const fin = senalAlTerminar(s)
     if (fin === null) return next(e)
 
     const r = await next(e)
-    await marcarFlujo($, f => avanzar(f, fin))
+    await marcarFlujo($, (f, t) => avanzar(f, fin, t))
 
     return r
   })
@@ -544,6 +550,29 @@ export const register: Register = on => {
     // Fila de un día: etiqueta (6) + espacio (1) + barra + total (7) = `ancho`.
     const anchoBarraDia = Math.max(1, ancho - 6 - 1 - 7)
     const maxDia = (s: Semana) => Math.max(1, ...s.dias.map(x => x.total))
+
+    /** La barra de una fila con subagentes: un `Text` por tramo (principal, subagente y vacío), sin los vacíos. */
+    const barraConSub = (parte: number, sub: number, anchoBarra: number) => {
+      const b = barraPartida(parte, sub, anchoBarra)
+
+      return [
+        b.principal !== '' && (
+          <Text key="principal" color="claude">
+            {b.principal}
+          </Text>
+        ),
+        b.sub !== '' && (
+          <Text key="sub" color={COLOR_SUB}>
+            {b.sub}
+          </Text>
+        ),
+        b.vacio !== '' && (
+          <Text key="vacio" color="claude">
+            {b.vacio}
+          </Text>
+        ),
+      ]
+    }
 
     /**
      * Tokens por modelo y esfuerzo: la misma tabla para la sesión y la semana.
@@ -611,7 +640,11 @@ export const register: Register = on => {
                       <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
                     </Box>
                     <Box>
-                      <Text color="claude">{barra(parte, Math.max(1, ancho - 7))}</Text>
+                      {(f.sub ?? 0) > 0 ? (
+                        barraConSub(parte, ((f.sub ?? 0) / s.total) * 100, Math.max(1, ancho - 7))
+                      ) : (
+                        <Text color={f.origen === 'subagente' ? COLOR_SUB : 'claude'}>{barra(parte, Math.max(1, ancho - 7))}</Text>
+                      )}
                       <Text dimColor>{pct(parte).padStart(7)}</Text>
                     </Box>
                   </Box>
@@ -670,11 +703,11 @@ export const register: Register = on => {
             <Button key="flujo-plegar" hotkey="f" label={flAbierto ? 'Ocultar' : 'Ver'} onPress={() => alternarFlujo($)} />
           </Box>
           <Text dimColor wrap="truncate-end">
-            {resumenFlujo(fl)}
+            {resumenFlujo(fl, t)}
           </Text>
           {flAbierto &&
             fl !== null &&
-            nodos(fl).flatMap((n, i, todos) => {
+            nodos(fl, t).flatMap((n, i, todos) => {
               const glifo =
                 n.estado === 'pasado'
                   ? { texto: '✓ ', color: 'success' as const }
@@ -687,12 +720,15 @@ export const register: Register = on => {
               return [
                 ...(i > 0 ? [<Text key={`flujo-sep-${i}`} dimColor>│</Text>] : []),
                 <Box key={`flujo-${i}`}>
-                  <Text color={glifo.color} dimColor={n.estado === 'pendiente'}>
-                    {glifo.texto}
-                  </Text>
-                  <Text bold={n.estado === 'actual'} dimColor={n.estado === 'pendiente'} wrap="truncate-end">
-                    {n.etiqueta}
-                  </Text>
+                  <Box flexGrow={1}>
+                    <Text color={glifo.color} dimColor={n.estado === 'pendiente'}>
+                      {glifo.texto}
+                    </Text>
+                    <Text bold={n.estado === 'actual'} dimColor={n.estado === 'pendiente'} wrap="truncate-end">
+                      {n.etiqueta}
+                    </Text>
+                  </Box>
+                  {n.ms !== undefined && <Text dimColor>{` ${duracion(n.ms)}`}</Text>}
                 </Box>,
               ]
             })}

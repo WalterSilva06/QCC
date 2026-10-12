@@ -14,6 +14,17 @@ export function barra(porcentaje: number, ancho: number): string {
   return '█'.repeat(lleno) + '░'.repeat(ancho - lleno)
 }
 
+/**
+ * Una barra como `barra`, con las celdas llenas repartidas entre la parte principal y la de
+ * subagente. `parte` y `sub` son porcentajes de la sección (0-100); `sub` nunca pasa de lo lleno.
+ */
+export function barraPartida(parte: number, sub: number, ancho: number): { principal: string, sub: string, vacio: string } {
+  const llenas = Math.min(Math.max(Math.round((Math.min(Math.max(parte, 0), 100) / 100) * ancho), 0), ancho)
+  const celdasSub = Math.min(Math.max(Math.round((sub / 100) * ancho), 0), llenas)
+
+  return { principal: '█'.repeat(llenas - celdasSub), sub: '█'.repeat(celdasSub), vacio: '░'.repeat(ancho - llenas) }
+}
+
 /** Color de tema según cuánto se usó: verde, ámbar o rojo. */
 export function tono(porcentaje: number): 'success' | 'warning' | 'error' {
   if (porcentaje >= 85) return 'error'
@@ -43,20 +54,39 @@ function decimal(x: number): string {
   return String(redondo).replace('.', ',')
 }
 
+/** Un lapso de al menos 1 min en días, horas y minutos: «2 h 10 min», «1 d 3 h», «45 min». */
+function armar(ms: number): string {
+  const d = Math.floor(ms / DIA)
+  const h = Math.floor((ms % DIA) / HORA)
+  const m = Math.floor((ms % HORA) / MINUTO)
+
+  if (d > 0) return h > 0 ? `${d} d ${h} h` : `${d} d`
+  if (h > 0) return m > 0 ? `${h} h ${m} min` : `${h} h`
+
+  return `${m} min`
+}
+
 /** Cuánto falta para `hasta`: «en 2 h 10 min», «en 1 d 3 h», «en 45 min». */
 export function falta(desde: number, hasta: number): string {
   const ms = hasta - desde
   if (ms <= 0) return 'ya reinició'
   if (ms < MINUTO) return 'en menos de 1 min'
 
-  const d = Math.floor(ms / DIA)
-  const h = Math.floor((ms % DIA) / HORA)
-  const m = Math.floor((ms % HORA) / MINUTO)
+  return `en ${armar(ms)}`
+}
 
-  if (d > 0) return h > 0 ? `en ${d} d ${h} h` : `en ${d} d`
-  if (h > 0) return m > 0 ? `en ${h} h ${m} min` : `en ${h} h`
+/** Cuánto duró algo: «0 s», «45 s», «3 min 20 s», «1 h 20 min». Lo negativo cuenta como 0. */
+export function duracion(ms: number): string {
+  const total = Math.max(ms, 0)
 
-  return `en ${m} min`
+  if (total >= HORA) return armar(total)
+
+  const min = Math.floor(total / MINUTO)
+  const s = Math.floor((total % MINUTO) / 1000)
+
+  if (min === 0) return `${s} s`
+
+  return s > 0 ? `${min} min ${s} s` : `${min} min`
 }
 
 const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb']

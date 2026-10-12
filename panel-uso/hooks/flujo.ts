@@ -1,6 +1,7 @@
 // Flujo `/implementador`, `/implementador-ligero` o `/documentar` en curso. Puro: sin `$`, para poder probarlo solo.
 
 import type { Flujo } from '../types'
+import { duracion } from './formato'
 
 /** Lo que una herramienta o un agente hace y que mueve el flujo de paso. */
 export type Senal =
@@ -11,8 +12,12 @@ export type Senal =
   | { tipo: 'agente-fin'; nombre: string }
   | { tipo: 'escritura'; destino: 'mapa' | 'reglas' | 'doc' }
 
-/** Un paso del flujo tal como se dibuja: ya pasado, el actual o por venir. */
-export type Nodo = { etiqueta: string; estado: 'pasado' | 'actual' | 'pendiente' }
+/**
+ * Un paso del flujo tal como se dibuja: ya pasado, el actual o por venir.
+ * `ms` es su tiempo: el de los pasados que se visitaron, el en curso del actual y el total en «Terminado».
+ * Falta en los saltados, en los pendientes y cuando no se pasó la hora `t`.
+ */
+export type Nodo = { etiqueta: string; estado: 'pasado' | 'actual' | 'pendiente'; ms?: number }
 
 /** Los pasos de cada flujo, en orden. */
 export const PASOS: Record<Flujo['nombre'], readonly string[]> = {
@@ -33,9 +38,9 @@ export function pasosDe(f: Flujo): readonly string[] {
 
 /**
  * Flujo nuevo si `skill` es una de las tres (con o sin `/` y con o sin prefijo `plugin:`); `null` si no.
- * La variante `auditar` solo existe en `documentar`, cuando el pedido lo dice.
+ * La variante `auditar` solo existe en `documentar`, cuando el pedido lo dice. `t` es la hora (ms) de inicio.
  */
-export function iniciarFlujo(skill: string, texto: string): Flujo | null {
+export function iniciarFlujo(skill: string, texto: string, t = 0): Flujo | null {
   const nombre = skill.trim().replace(/^\//, '').split(':').pop() ?? ''
 
   if (!SKILLS.includes(nombre)) return null
@@ -48,6 +53,10 @@ export function iniciarFlujo(skill: string, texto: string): Flujo | null {
     paso: 0,
     ejecuto: false,
     estado: 'en curso',
+    inicio: t,
+    desde: t,
+    tiempos: {},
+    fin: null,
   }
 }
 
@@ -189,49 +198,98 @@ function cambioDeDocumentacion(f: Flujo, s: Senal): Cambio {
 }
 
 /**
- * El flujo después de la señal `s`. Devuelve un flujo nuevo; si no hay flujo o ya terminó,
- * lo devuelve tal cual (una señal tardía no lo revive).
+ * `f` con los campos de tiempo completos. El atom `flujo` sobrevive a `/reload-plugins`, así que puede traer
+ * la forma anterior (0.9.3: sin `inicio`, `desde`, `tiempos` ni `fin`): ahí el flujo empieza en `t` (0 sin ella).
+ * Un flujo completo vuelve tal cual.
  */
-export function avanzar(f: Flujo | null, s: Senal): Flujo | null {
-  if (!f || f.estado !== 'en curso') return f
+function completar(f: Flujo, t?: number): Flujo {
+  const viejo: Partial<Pick<Flujo, 'inicio' | 'desde' | 'tiempos' | 'fin'>> = f
 
-  const cambio = f.nombre === 'documentar' ? cambioDeDocumentacion(f, s) : cambioDeImplementacion(f, s)
+  if (viejo.inicio !== undefined && viejo.desde !== undefined && viejo.tiempos !== undefined && viejo.fin !== undefined) return f
 
-  return { ...f, ...cambio }
+  const base = viejo.inicio ?? viejo.desde ?? t ?? 0
+
+  return { ...f, inicio: base, desde: viejo.desde ?? base, tiempos: viejo.tiempos ?? {}, fin: viejo.fin ?? null }
+}
+
+/** Los tiempos de `f` con el tramo abierto hasta `t` sumado al paso actual. */
+function tiemposHasta(f: Flujo, t: number): Flujo['tiempos'] {
+  return { ...f.tiempos, [f.paso]: (f.tiempos[f.paso] ?? 0) + Math.max(t - f.desde, 0) }
 }
 
 /**
- * Cierra el flujo. Con `answer`, `detenido` si la respuesta trae `CIERRE · … — DETENIDO` y `completo` si no;
- * cualquier otra razón lo deja `interrumpido`. El paso no cambia. Un flujo ya terminado queda igual.
+ * El flujo después de la señal `s`, a la hora `t` (ms; sin ella, la del tramo abierto: no suma tiempo).
+ * Si el paso cambia, suma el tramo al paso que deja y abre otro; volver a un paso ya visitado acumula.
+ * Devuelve un flujo nuevo; si no hay flujo o ya terminó, lo devuelve tal cual (una señal tardía no lo revive).
  */
-export function terminarFlujo(f: Flujo | null, razon: string, respuesta?: string): Flujo | null {
-  if (!f || f.estado !== 'en curso') return f
+export function avanzar(actual: Flujo | null, s: Senal, t?: number): Flujo | null {
+  if (!actual || actual.estado !== 'en curso') return actual
 
-  if (razon !== 'answer') return { ...f, estado: 'interrumpido' }
+  const f = completar(actual, t)
+  const cambio = f.nombre === 'documentar' ? cambioDeDocumentacion(f, s) : cambioDeImplementacion(f, s)
 
-  return { ...f, estado: /CIERRE · [^\n]*— DETENIDO/.test(respuesta ?? '') ? 'detenido' : 'completo' }
+  if (cambio.paso === undefined || cambio.paso === f.paso) return { ...f, ...cambio }
+
+  const ahora = t ?? f.desde
+
+  return { ...f, ...cambio, tiempos: tiemposHasta(f, ahora), desde: ahora }
 }
 
-/** Los pasos del flujo más un último nodo «Terminado», cada uno pasado, actual o pendiente. */
-export function nodos(f: Flujo): Nodo[] {
+/**
+ * Cierra el flujo a la hora `t` (ms; sin ella, la del tramo abierto) y cierra también el tramo del paso actual.
+ * Con `answer`, `detenido` si la respuesta trae `CIERRE · … — DETENIDO` y `completo` si no;
+ * cualquier otra razón lo deja `interrumpido`. El paso no cambia. Un flujo ya terminado queda igual.
+ */
+export function terminarFlujo(actual: Flujo | null, razon: string, respuesta?: string, t?: number): Flujo | null {
+  if (!actual || actual.estado !== 'en curso') return actual
+
+  const f = completar(actual, t)
+  const ahora = t ?? f.desde
+  const cierre = { tiempos: tiemposHasta(f, ahora), desde: ahora, fin: ahora }
+
+  if (razon !== 'answer') return { ...f, ...cierre, estado: 'interrumpido' }
+
+  return { ...f, ...cierre, estado: /CIERRE · [^\n]*— DETENIDO/.test(respuesta ?? '') ? 'detenido' : 'completo' }
+}
+
+/**
+ * Los pasos del flujo más un último nodo «Terminado», cada uno pasado, actual o pendiente.
+ * Con la hora `t` (ms) cada nodo trae su `ms`; sin ella, ninguno.
+ */
+export function nodos(actual: Flujo, t?: number): Nodo[] {
+  const f = completar(actual, t)
   const pasos = pasosDe(f)
   const enCurso = f.estado === 'en curso'
-  const lista: Nodo[] = pasos.map((etiqueta, i) => ({
-    etiqueta,
-    estado: enCurso ? (i < f.paso ? 'pasado' : i === f.paso ? 'actual' : 'pendiente') : i <= f.paso ? 'pasado' : 'pendiente',
-  }))
-  const final = f.estado === 'detenido' ? 'Terminado · detenido' : f.estado === 'interrumpido' ? 'Terminado · interrumpido' : 'Terminado'
+  const lista: Nodo[] = pasos.map((etiqueta, i) => {
+    const estado = enCurso ? (i < f.paso ? 'pasado' : i === f.paso ? 'actual' : 'pendiente') : i <= f.paso ? 'pasado' : 'pendiente'
+    const nodo: Nodo = { etiqueta, estado }
 
-  lista.push({ etiqueta: final, estado: enCurso ? 'pendiente' : 'actual' })
+    if (t === undefined || estado === 'pendiente') return nodo
+
+    const acumulado = f.tiempos[i]
+
+    if (estado === 'actual') return { ...nodo, ms: (acumulado ?? 0) + Math.max(t - f.desde, 0) }
+
+    return acumulado === undefined ? nodo : { ...nodo, ms: acumulado }
+  })
+  const final = f.estado === 'detenido' ? 'Terminado · detenido' : f.estado === 'interrumpido' ? 'Terminado · interrumpido' : 'Terminado'
+  const terminado: Nodo = { etiqueta: final, estado: enCurso ? 'pendiente' : 'actual' }
+
+  lista.push(t === undefined || f.fin === null ? terminado : { ...terminado, ms: Math.max(f.fin - f.inicio, 0) })
 
   return lista
 }
 
-/** Una línea con el flujo y dónde va: `/implementador · Ejecución`; `sin flujo en esta sesión` si no hay. */
-export function resumenFlujo(f: Flujo | null): string {
-  if (!f) return 'sin flujo en esta sesión'
+/**
+ * Una línea con el flujo y dónde va: `/implementador · Ejecución`; `sin flujo en esta sesión` si no hay.
+ * Con la hora `t` (ms) agrega el tiempo total al final: `/implementador · Ejecución · 3 min 20 s`.
+ */
+export function resumenFlujo(sinCompletar: Flujo | null, t?: number): string {
+  if (!sinCompletar) return 'sin flujo en esta sesión'
 
-  const actual = nodos(f).find(n => n.estado === 'actual')
+  const f = completar(sinCompletar, t)
+  const actual = nodos(f, t).find(n => n.estado === 'actual')
+  const total = t === undefined ? '' : ` · ${duracion((f.fin ?? t) - f.inicio)}`
 
-  return `/${f.nombre}${f.variante === 'auditar' ? ' auditar' : ''} · ${actual?.etiqueta ?? ''}`
+  return `/${f.nombre}${f.variante === 'auditar' ? ' auditar' : ''} · ${actual?.etiqueta ?? ''}${total}`
 }

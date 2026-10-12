@@ -203,6 +203,25 @@ export function resumir(registros: readonly Registro[], desde: number, ahora?: n
   }
 }
 
+/**
+ * Junta las filas del mismo modelo y esfuerzo (principal y subagentes) en una sola, de origen
+ * `principal`, y las reordena por total. Los totales, los días y las fechas no cambian.
+ */
+export function unirOrigenes(s: Semana): Semana {
+  const unidas = new Map<string, FilaSemana>()
+
+  for (const f of s.filas) {
+    const id = `${f.modelo}|${f.esfuerzo}`
+    const fila = unidas.get(id) ?? { modelo: f.modelo, esfuerzo: f.esfuerzo, origen: 'principal', total: 0, salida: 0, sub: 0 }
+    fila.total += f.total
+    fila.salida += f.salida
+    if (f.origen === 'subagente') fila.sub = (fila.sub ?? 0) + f.total
+    unidas.set(id, fila)
+  }
+
+  return { ...s, filas: [...unidas.values()].sort((a, b) => b.total - a.total) }
+}
+
 /** Cuánto vale una espera (respuesta que pidió una herramienta) antes de darla por perdida: 30 min. */
 export const ESPERA_MAX_MS = 30 * 60_000
 
