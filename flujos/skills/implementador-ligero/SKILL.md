@@ -22,7 +22,7 @@ allowed-tools:
 
 # /implementador-ligero — flujo ligero
 
-Eres el **orquestador** (Sonnet, esfuerzo high): planificas tú (no hay planificador), delegas y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh, opcional, 2 o 3 en paralelo si hay más de un área), `ejecutor` (Sonnet high), `revisor` (Opus, en este flujo en medium). Aquí solo el explorador (Haiku) corre en xhigh.
+Eres el **orquestador** (Sonnet, esfuerzo high): delegas y controlas calidad. No escribes código. Agentes: `explorador` (Haiku, en este flujo en high, siempre), `planificador-ligero` (Sonnet high, siempre), `ejecutor` (Sonnet high), `revisor` (Opus, en este flujo en medium).
 
 **Pedido:** $ARGUMENTS
 
@@ -41,13 +41,13 @@ Eres el **orquestador** (Sonnet, esfuerzo high): planificas tú (no hay planific
 - Si tu herramienta Agent no tiene el parámetro `run_in_background`, fork mode está activo: AskUserQuestion «Seguir igual» / «Cancelar» (se arregla con `"CLAUDE_CODE_FORK_SUBAGENT": "0"` en `env` de `~/.claude/settings.json` y reiniciando Claude Code).
 - `node ~/.claude/flujos/estado.mjs` → anota `BASE_GLOBAL`, `DESDE_GLOBAL`, rama y sucios previos. `ERROR` (p. ej. sin git) → dilo y termina. Luego `node ~/.claude/flujos/verificar.mjs` → verificación inicial (`SIN PASOS` → §1).
 
-**1. Exploración, solo si hace falta** — si el pedido nombra los archivos, léelos tú (lo justo para planificar) y no lances explorador. Si no, `explorador` (§5) **sin** `effort` (corre en xhigh): 2 o 3 en paralelo si el pedido toca más de un área, partidos por carpeta o capa sin solaparse; uno solo si es de una sola área (§5). Con varios, fusiona los reportes (§6).
+**1. Exploración** — corre siempre, aunque el pedido nombre los archivos (esos archivos van en PISTAS). `explorador` (§5) con **`effort: "high"`** (obligatorio en este flujo): uno solo si el pedido es de una sola área, 2 o 3 en paralelo si toca varias, partidos por carpeta o capa sin solaparse (§5). Con varios, fusiona los reportes (§6).
 
-**2. Escalado** — si se cumple cualquier criterio CRÍTICO de §2 (o de las reglas del proyecto), o el plan no cabe en los límites del ligero, DETENTE: di qué criterio aplica y recomienda `/implementador <mismo pedido>`. No sigues ni tocas nada.
+**2. Escalado** — si se cumple cualquier criterio CRÍTICO de §2 (o de las reglas del proyecto), o lo explorado no cabe en los límites del ligero, DETENTE: di qué criterio aplica y recomienda `/implementador <mismo pedido>`. No sigues ni tocas nada.
 
-**3. Plan breve** — formato §3, corto.
+**3. Plan breve** — siempre con `planificador-ligero` (§5). Si responde `ESCALAR`, DETENTE como en el paso 2. Sus PREGUNTAS van arriba del plan. Revisa que cumpla §3 y los límites (si no caben, DETENTE como en el paso 2); lo menor lo completas tú.
 
-**4. Aprobación** — muestra el plan completo y llama a AskUserQuestion: «¿Apruebas el plan?», header «Plan», «Aprobar» / «Cancelar»; los ajustes llegan por «Other», los aplicas tú y vuelves a preguntar.
+**4. Aprobación** — muestra el plan completo y llama a AskUserQuestion: «¿Apruebas el plan?», header «Plan», «Aprobar» / «Cancelar»; los ajustes llegan por «Other», los aplicas tú, sin volver a llamar al planificador, y vuelves a preguntar.
 
 **5. Ejecución** — **un** `ejecutor` con todas las subtareas en orden (§5, varias subtareas), con `BASE_GLOBAL`. Después, `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<unión>"`.
 

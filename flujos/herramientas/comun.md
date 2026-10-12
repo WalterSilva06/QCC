@@ -1,6 +1,6 @@
 # Reglas comunes de /implementador y /implementador-ligero
 
-Fuente única, a nivel usuario (`~/.claude/flujos/comun.md`): las dos skills la inyectan y el planificador la lee. Sirve para cualquier proyecto con git. Lo propio de cada proyecto vive en el proyecto:
+Fuente única, a nivel usuario (`~/.claude/flujos/comun.md`): las dos skills la inyectan y los planificadores (`planificador`, `planificador-ligero`) la leen. Sirve para cualquier proyecto con git. Lo propio de cada proyecto vive en el proyecto:
 
 - **`.claude/implementador.md`** (reglas del proyecto, opcional): rutas y ejemplos de cada criterio CRÍTICO, infraestructura de tests, qué va a «Queda para ti», archivos que no se leen, riesgos típicos para el planificador y motivos de rechazo para el revisor. **Si dice algo distinto de este archivo, manda el del proyecto.**
 - **`.claude/implementador.json`** (opcional): `verificar` (comandos de verificación, en orden) y `guardia` (archivos protegidos, secretos, migraciones inmutables, scripts y comandos negados). Ejemplo comentado en `~/.claude/flujos/config.ejemplo.md`.
@@ -63,7 +63,7 @@ S2 · …
 
 Verificación final: verificar.mjs <+ revisión integral, si aplica>
 Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>
-Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planificador Opus xhigh>
+Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planificador Opus xhigh | · planificador Sonnet high>
 ```
 
 - Subtareas pequeñas: ≤ 4 archivos de código más sus tests, cada una verificable sola, en orden de dependencia (migración → tipos → servidor → UI → docs).
@@ -76,7 +76,7 @@ Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planific
 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
 - **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno y se conservan el modelo y el esfuerzo de la skill; en segundo plano se pierden. Nunca pases `model` ni `isolation`; `effort`, solo donde tu skill lo indica.
-- Solo los agentes `explorador`, `planificador`, `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración (de 1 a 3 exploradores en paralelo, §5) y en la revisión integral (hasta 2 revisores en paralelo, §5).
+- Solo los agentes `explorador`, `planificador`, `planificador-ligero`, `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración (de 1 a 3 exploradores en paralelo, §5) y en la revisión integral (hasta 2 revisores en paralelo, §5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5). Nunca la conversación ni el razonamiento de otro agente. Al revisor no le pasas nada del reporte del ejecutor.
 - Preguntas al usuario solo con AskUserQuestion (aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
 - Sin plan aprobado no se despacha ningún ejecutor. Si el plan cambia a mitad de camino, se vuelve a aprobar.
@@ -97,7 +97,7 @@ PEDIDO: <literal del usuario>
 BUSCA: <2–5 preguntas concretas de su área: archivos, tests, acoplamientos, datos>
 PISTAS: <archivos o símbolos ya conocidos | ninguna>
 ```
-Dos o tres si el pedido toca más de un área (p. ej. código y tests, flujos y panel, código y documentación): parte por carpeta o capa, no por pregunta, para que las áreas no se solapen. Uno solo si el pedido nombra los archivos o es de una sola área; sin una división natural, uno. Máximo tres. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`, con su propia ÁREA y sus propias preguntas BUSCA, sin repetir las de otro. Nunca en segundo plano. En fork mode, solo uno.
+Dos o tres si el pedido toca más de un área (p. ej. código y tests, flujos y panel, código y documentación): parte por carpeta o capa, no por pregunta, para que las áreas no se solapen. Uno solo si es de una sola área o, en el flujo completo, si el pedido nombra los archivos; sin una división natural, uno. Máximo tres. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`, con su propia ÁREA y sus propias preguntas BUSCA, sin repetir las de otro. Nunca en segundo plano. En fork mode, solo uno.
 
 **Planificador** (solo CRÍTICO, flujo completo) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
 ```
@@ -108,6 +108,15 @@ EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo qu
 PLAN VIGENTE: <solo al re-planificar: el plan aprobado, completo>
 AJUSTES DEL USUARIO: <solo al re-planificar: solo el ajuste>
 ```
+
+**Planificador ligero** (siempre, flujo ligero) — `subagent_type: "planificador-ligero"`, `description: "Planificar <tema>"`
+```
+PEDIDO: <literal>
+CLASIFICACIÓN: NORMAL — <por qué no aplica ningún criterio CRÍTICO, una línea>
+BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
+EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo que no aplica>
+```
+Responde con el plan breve o con `ESCALAR: …`.
 
 **Ejecutor** — antes, `estado.mjs --base` → `BASE_Sn`, `DESDE_Sn`. `subagent_type: "ejecutor"`, `description: "Sn: <título>"`
 ```

@@ -31,6 +31,6 @@ node flujos/instalar.mjs --forzar     pisa la copia instalada aunque sea más nu
 ## Pendiente de confirmar
 
 - Uso detallado de cada comando (pasos, opciones y qué devuelve). Se documenta en una corrida aparte de `/documentar`.
-- Agentes de los flujos (`explorador`, `planificador`, `ejecutor`, `revisor`, `lector`, `revisor-doc`): qué hace cada uno y en qué flujo entra.
+- Agentes de los flujos (`explorador`, `planificador`, `planificador-ligero`, `ejecutor`, `revisor`, `lector`, `revisor-doc`): qué hace cada uno y en qué flujo entra.
 - Herramientas (`estado.mjs`, `verificar.mjs`, `guardia.mjs`): opciones y qué bloquea la guardia.
 - Configuración: formato de `.claude/implementador.json` y de `.claude/documentar.md`.
