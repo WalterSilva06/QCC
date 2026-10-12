@@ -39,7 +39,7 @@ claude plugin install panel-uso@mods-locales
    - De qué eventos sale cada paso, siempre en el hilo principal (los subagentes no mueven el flujo):
      - Empieza con el `skill.prompt` de una de las tres skills (con o sin prefijo de plugin).
      - `Preflight`: el comando `node …estado.mjs` sin opciones, o `verificar.mjs` antes de que haya corrido un `ejecutor`.
-     - `Exploración`: el agente `explorador`. Cuando el explorador vuelve se marca `Clasificación` (`/implementador`) o `Escalado` (`/implementador-ligero`).
+     - `Exploración`: el agente `explorador`. Pueden correr varios exploradores a la vez: cuando vuelven todos los que estaban en vuelo se marca `Clasificación` (`/implementador`) o `Escalado` (`/implementador-ligero`). Un explorador que falla cuenta como vuelto; si fallan todos, el paso queda en `Exploración`. Lanzar otro mientras corren no reinicia el tiempo del paso.
      - `Plan`: el agente `planificador` (solo en `/implementador`); `Aprobación`: una pregunta (`AskUserQuestion`) con header «Plan».
      - `Ejecución`: `estado.mjs --base`, el agente `ejecutor`, o el agente `revisor` en `/implementador` antes de la verificación final.
      - `Revisión` (`/implementador-ligero`): el agente `revisor`.
@@ -89,7 +89,7 @@ Además de las [convenciones generales](AGENTS.md#convenciones):
 - **Windows: `$.process.run` lanza los procesos con la ventana oculta** y no hay opción para cambiarlo. `explorer.exe <carpeta>` hereda esa bandera: abre una ventana invisible y termina con exit 1. Por eso `carpeta.ts` usa PowerShell con `Shell.Application.Open`, que le pide la ventana al Explorador que ya corre. Antes cierra las ventanas **ocultas** de esa carpeta, porque `Open` reutilizaría una de ellas y no se vería nada. No es un problema de permisos ni de la terminal: pasa igual en Warp que en otras.
 - La ruta del proyecto nunca va como argumento de un proceso ni por un shell. Va solo como `cwd`, y antes se valida con `tipoDeRuta`.
 - El `exitCode` del comando de Windows sí sirve como señal de error: si es distinto de 0, el botón avisa con un toast.
-- Los hooks de observación (`skill.prompt`, `tool.call`, `turn.complete`) solo leen el evento y devuelven `next(e)` sin cambiarlo; en `tool.call` el panel solo espera a `next` para el `explorador`, y un error de la herramienta sigue su camino. `claude plugin validate` avisa «gating hook without .catch: tool.call»: es esperable. Según la referencia del motor, un hook que lanza se salta y la herramienta corre igual.
+- Los hooks de observación (`skill.prompt`, `tool.call`, `turn.complete`) solo leen el evento y devuelven `next(e)` sin cambiarlo; en `tool.call` el panel solo espera a `next` para el `explorador` y descuenta su vuelta aunque falle, y un error de la herramienta sigue su camino. `claude plugin validate` avisa «gating hook without .catch: tool.call»: es esperable. Según la referencia del motor, un hook que lanza se salta y la herramienta corre igual.
 
 ## Pendiente de confirmar
 

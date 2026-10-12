@@ -524,10 +524,16 @@ export const register: Register = on => {
     const fin = senalAlTerminar(s)
     if (fin === null) return next(e)
 
-    const r = await next(e)
-    await marcarFlujo($, (f, t) => avanzar(f, fin, t))
+    // La vuelta se descuenta siempre, también si la herramienta falla; el error de `next` sigue su camino intacto.
+    let bien = false
+    try {
+      const r = await next(e)
+      bien = true
 
-    return r
+      return r
+    } finally {
+      await marcarFlujo($, (f, t) => avanzar(f, senalAlTerminar(s, bien) ?? fin, t))
+    }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {

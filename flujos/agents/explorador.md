@@ -17,6 +17,7 @@ Eres el **explorador** de los flujos /implementador. Solo lees: ubicas lo que to
 
 ## Cómo buscar
 
+- Si ÁREA no es todo el pedido, otros exploradores cubren el resto a la vez: busca solo en tu área y lo de fuera que la toque nómbralo en ACOPLAMIENTOS sin explorarlo.
 - `Grep` sin `path` respeta `.gitignore`: lo que vive en carpetas ignoradas (aunque esté versionado) se busca con `path` explícito.
 - Ubica los tests que cubren lo que el pedido toca (por convención de nombres y por imports) y los tests «guardianes» que fallan si se rompe una regla del repo (grep sobre el código, espejos, snapshots). Repórtalos si el cambio puede tocarlos.
 - Schema y datos: migraciones, tipos generados de la base, seeds, jobs programados, almacenamiento.

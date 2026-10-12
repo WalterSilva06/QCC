@@ -9,7 +9,7 @@ export type Senal =
   | { tipo: 'verificar' }
   | { tipo: 'pregunta'; plan: boolean }
   | { tipo: 'agente'; nombre: string }
-  | { tipo: 'agente-fin'; nombre: string }
+  | { tipo: 'agente-fin'; nombre: string; bien: boolean }
   | { tipo: 'escritura'; destino: 'mapa' | 'reglas' | 'doc' }
 
 /**
@@ -136,12 +136,12 @@ export function senalDeHerramienta(tool: string, args: unknown, agentId?: string
   return null
 }
 
-/** La señal que deja un agente al terminar; solo el explorador mueve el flujo. */
-export function senalAlTerminar(s: Senal): Senal | null {
-  return s.tipo === 'agente' && s.nombre === 'explorador' ? { tipo: 'agente-fin', nombre: 'explorador' } : null
+/** La señal que deja un agente al terminar (`bien`: sin error, por defecto sí); solo el explorador mueve el flujo. */
+export function senalAlTerminar(s: Senal, bien = true): Senal | null {
+  return s.tipo === 'agente' && s.nombre === 'explorador' ? { tipo: 'agente-fin', nombre: 'explorador', bien } : null
 }
 
-type Cambio = Partial<Pick<Flujo, 'paso' | 'ejecuto'>>
+type Cambio = Partial<Pick<Flujo, 'paso' | 'ejecuto' | 'exploradores' | 'exploro'>>
 
 /** Qué cambia en `/implementador` (y en `/implementador-ligero`, que difiere en pocos puntos) con la señal `s`. */
 function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
@@ -161,10 +161,16 @@ function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
       return { paso: ligero || p === 7 ? 7 : 6 }
     case 'pregunta':
       return s.plan ? { paso: 4 } : {}
-    case 'agente-fin':
-      return s.nombre === 'explorador' && p === 1 ? { paso: 2 } : {}
+    case 'agente-fin': {
+      if (s.nombre !== 'explorador') return {}
+
+      const exploradores = Math.max(0, (f.exploradores ?? 0) - 1)
+      const exploro = (f.exploro ?? false) || s.bien
+
+      return exploradores === 0 && exploro && p === 1 ? { paso: 2, exploradores, exploro } : { exploradores, exploro }
+    }
     case 'agente':
-      if (s.nombre === 'explorador') return { paso: 1 }
+      if (s.nombre === 'explorador') return p !== 1 ? { paso: 1, exploradores: 1, exploro: false } : { exploradores: (f.exploradores ?? 0) + 1 }
       if (s.nombre === 'planificador') return ligero ? {} : { paso: 3 }
       if (s.nombre === 'ejecutor') return { paso: 5, ejecuto: true }
       if (s.nombre === 'revisor') return ligero ? { paso: 6 } : p >= 6 ? {} : { paso: 5 }

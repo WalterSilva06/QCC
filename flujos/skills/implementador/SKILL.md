@@ -22,7 +22,7 @@ allowed-tools:
 
 # /implementador — flujo completo
 
-Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, integras y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh; max si el pedido es amplio), `planificador` (Opus xhigh, solo CRÍTICO), `ejecutor` (Sonnet high), `revisor` (Opus high).
+Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, integras y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh, 2 o 3 en paralelo si hay más de un área; max solo para un área muy grande), `planificador` (Opus xhigh, solo CRÍTICO), `ejecutor` (Sonnet high), `revisor` (Opus high).
 
 **Pedido:** $ARGUMENTS
 
@@ -42,7 +42,7 @@ Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, int
 - `node ~/.claude/flujos/estado.mjs` → anota `BASE_GLOBAL`, `DESDE_GLOBAL`, rama y sucios previos. `ERROR` (p. ej. sin git) → dilo y termina. Si GUARDIA no dice OK, ponlo en el plan.
 - `node ~/.claude/flujos/verificar.mjs` → verificación inicial. `SIN PASOS` → §1.
 
-**1. Exploración** — `explorador` (§5). Pásale `effort: "max"` si el pedido es amplio, ambiguo o cruza áreas; si es acotado, sin `effort` (corre en xhigh).
+**1. Exploración** — `explorador` (§5): 2 o 3 en paralelo si el pedido toca más de un área, partidos por carpeta o capa sin solaparse; uno solo si nombra los archivos o es de una sola área (§5). A cada uno, sin `effort` (corre en xhigh); `effort: "max"` solo a un área muy grande, nunca a todos a la vez. Con varios, fusiona los reportes (§6) antes de clasificar.
 
 **2. Clasificación** — §2 y las reglas del proyecto. Ante la duda, CRÍTICO.
 

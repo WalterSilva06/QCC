@@ -108,6 +108,10 @@ export type Flujo = {
   paso: number
   /** Ya salió algún agente `ejecutor`: distingue la verificación del Preflight de la final. */
   ejecuto: boolean
+  /** Exploradores en vuelo (salieron y aún no vuelven); si falta, 0. */
+  exploradores?: number
+  /** Algún explorador de la tanda en curso volvió sin error; si falta, `false`. */
+  exploro?: boolean
   /** `en curso`, o cómo terminó: `completo`, `detenido` (CIERRE … DETENIDO) o `interrumpido`. */
   estado: 'en curso' | 'completo' | 'detenido' | 'interrumpido'
   /** Hora (ms) en que empezó el flujo. */

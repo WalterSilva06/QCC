@@ -1492,7 +1492,7 @@ describe('flujo (puro)', () => {
   const estado = (modo: 'preflight' | 'base' | 'cambios' | 'diff'): Senal => ({ tipo: 'estado', modo })
   const verificar: Senal = { tipo: 'verificar' }
   const agente = (nombre: string): Senal => ({ tipo: 'agente', nombre })
-  const agenteFin = (nombre: string): Senal => ({ tipo: 'agente-fin', nombre })
+  const agenteFin = (nombre: string, bien = true): Senal => ({ tipo: 'agente-fin', nombre, bien })
   const pregunta = (plan: boolean): Senal => ({ tipo: 'pregunta', plan })
   const escritura = (destino: 'mapa' | 'reglas' | 'doc'): Senal => ({ tipo: 'escritura', destino })
 
@@ -1599,6 +1599,7 @@ describe('flujo (puro)', () => {
 
   test('senalAlTerminar: solo el explorador', async () => {
     expect(senalAlTerminar(agente('explorador'))).toEqual(agenteFin('explorador'))
+    expect(senalAlTerminar(agente('explorador'), false)).toEqual(agenteFin('explorador', false))
     expect(senalAlTerminar(agente('planificador'))).toBeNull()
     expect(senalAlTerminar(agenteFin('explorador'))).toBeNull()
     expect(senalAlTerminar(verificar)).toBeNull()
@@ -1949,6 +1950,110 @@ describe('flujo (puro)', () => {
     expect(terminarFlujo(viejo, 'aborted')?.estado).toBe('interrumpido')
     expect(viejo).not.toHaveProperty('tiempos')
   })
+
+  test('varios exploradores: Exploración hasta que vuelve el último, en cualquier orden', async () => {
+    const A = agente('explorador')
+    const F = agenteFin('explorador')
+
+    expect(pasos('implementador', [estado('preflight'), A, A, A, F, F, F])).toEqual([0, 1, 1, 1, 1, 1, 2])
+    expect(pasos('implementador', [A, A, F, A, F, F])).toEqual([1, 1, 1, 1, 1, 2])
+    expect(pasos('implementador-ligero', [A, A, F, F])).toEqual([1, 1, 1, 2])
+  })
+
+  test('varios exploradores: el tiempo de Exploración corre desde el primero hasta que vuelve el último, una sola vez', async () => {
+    const A = agente('explorador')
+    const F = agenteFin('explorador')
+    const tramo = (x: Flujo | null) => ({ paso: x?.paso, desde: x?.desde, tiempos: x?.tiempos })
+
+    let f = iniciarFlujo('implementador', '', 0)
+
+    for (const t of [1_000, 3_000, 4_000]) {
+      f = avanzar(f, A, t)
+      expect(tramo(f)).toEqual({ paso: 1, desde: 1_000, tiempos: { 0: 1_000 } })
+    }
+
+    for (const t of [10_000, 12_000]) {
+      f = avanzar(f, F, t)
+      expect(tramo(f)).toEqual({ paso: 1, desde: 1_000, tiempos: { 0: 1_000 } })
+    }
+
+    f = avanzar(f, F, 15_000)
+    expect(tramo(f)).toEqual({ paso: 2, desde: 15_000, tiempos: { 0: 1_000, 1: 14_000 } })
+  })
+
+  test('exploradores que fallan: cuentan como vueltos; si fallan todos queda en Exploración; relanzar lo destraba', async () => {
+    const A = agente('explorador')
+    const F = agenteFin('explorador')
+    const M = agenteFin('explorador', false)
+
+    expect(pasos('implementador', [A, A, F, M])).toEqual([1, 1, 1, 2])
+    expect(pasos('implementador', [A, A, M, F])).toEqual([1, 1, 1, 2])
+    expect(pasos('implementador', [A, A, M, M, A, F])).toEqual([1, 1, 1, 1, 1, 2])
+    expect(pasos('implementador', [A, M])).toEqual([1, 1])
+  })
+
+  test('el contador de exploradores nunca es negativo y una tanda nueva lo reinicia', async () => {
+    const A = agente('explorador')
+    const F = agenteFin('explorador')
+
+    // Un fin de más no deja el contador bajo cero.
+    let g = iniciarFlujo('implementador', '')
+    for (const s of [A, F, F]) g = avanzar(g, s)
+    expect(g).toMatchObject({ paso: 2, exploradores: 0, exploro: true })
+
+    // Desde otro paso, un explorador abre una tanda nueva: reinicia el contador y `exploro`.
+    const f: Flujo = {
+      nombre: 'implementador',
+      variante: null,
+      paso: 3,
+      ejecuto: false,
+      exploradores: 2,
+      exploro: true,
+      estado: 'en curso',
+      inicio: 0,
+      desde: 0,
+      tiempos: {},
+      fin: null,
+    }
+    const nueva = avanzar(f, A)
+    expect(nueva).toMatchObject({ paso: 1, exploradores: 1, exploro: false })
+    expect(avanzar(nueva, F)).toMatchObject({ paso: 2, exploradores: 0, exploro: true })
+
+    // Otro agente no toca el contador.
+    expect(avanzar(f, agenteFin('planificador'))).toEqual(f)
+
+    // Un flujo congelado no se muta.
+    const congelado: Flujo = Object.freeze({ ...f, tiempos: Object.freeze({}) })
+    expect(() => avanzar(congelado, A, 1_000)).not.toThrow()
+    expect(() => avanzar(congelado, F, 1_000)).not.toThrow()
+    expect(congelado).toEqual(f)
+  })
+
+  test('un flujo con la forma 0.9.4 (sin exploradores ni exploro) no lanza: su explorador en vuelo, al volver, pasa a Clasificación', async () => {
+    const viejo: Flujo = {
+      nombre: 'implementador',
+      variante: null,
+      paso: 1,
+      ejecuto: false,
+      estado: 'en curso',
+      inicio: 0,
+      desde: 1_000,
+      tiempos: { 0: 1_000 },
+      fin: null,
+    }
+
+    const vuelto = avanzar(viejo, agenteFin('explorador'), 5_000)
+    expect(vuelto).toMatchObject({ paso: 2, exploradores: 0, tiempos: { 0: 1_000, 1: 4_000 } })
+    expect(Number.isNaN(vuelto?.exploradores)).toBe(false)
+    expect(avanzar(viejo, agente('explorador'), 2_000)).toMatchObject({ paso: 1, exploradores: 1 })
+
+    // La forma 0.9.3 en Exploración: al volver su explorador pasa a Clasificación.
+    const v093 = { nombre: 'implementador', variante: null, paso: 1, ejecuto: false, estado: 'en curso' } as unknown as Flujo
+    expect(avanzar(v093, agenteFin('explorador'), 5_000)?.paso).toBe(2)
+
+    expect(() => nodos(viejo, 3_000)).not.toThrow()
+    expect(() => resumenFlujo(viejo, 3_000)).not.toThrow()
+  })
 })
 
 type Ui = Awaited<ReturnType<Engine['ui']['mount']>>
@@ -2223,8 +2328,11 @@ describe('flujo en el panel', () => {
     on('tool.call', async (_$, e) => {
       llamadas.push(e.tool)
       if (e.tool === 'Agent') {
-        await compuertas.get(e.subagent_type ?? '')
-        if (fallan.has(e.subagent_type ?? '')) throw new Error('explorador caído')
+        // La compuerta y el fallo se piden por tipo de agente o por `description` (para distinguir exploradores en paralelo).
+        const tipo = e.subagent_type ?? ''
+        const descripcion = String((e as unknown as Record<string, unknown>).description ?? '')
+        await (compuertas.get(tipo) ?? compuertas.get(descripcion))
+        if (fallan.has(tipo) || fallan.has(descripcion)) throw new Error('explorador caído')
       }
 
       return { result: 'listo' }
@@ -2268,8 +2376,8 @@ describe('flujo en el panel', () => {
   }
 
   const bash = ($: Engine, command: string) => $.tool.call({ tool: 'Bash', command })
-  const agente = ($: Engine, subagent_type: string) =>
-    $.tool.call({ tool: 'Agent', subagent_type, description: 'prueba', prompt: 'prueba' })
+  const agente = ($: Engine, subagent_type: string, description = 'prueba') =>
+    $.tool.call({ tool: 'Agent', subagent_type, description, prompt: 'prueba' })
   const respuesta = (answer: string, extra: { reason?: 'answer' | 'aborted'; agentId?: string } = {}) => ({
     reason: extra.reason ?? 'answer',
     answer,
@@ -2467,6 +2575,111 @@ describe('flujo en el panel', () => {
     // El kit convierte el fallo del motor de abajo en su propio error: el hook del panel no lo envuelve ni lo traga.
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).not.toMatch(/panel/i)
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    await ui.unmount()
+  })
+
+  test('tres exploradores en paralelo: el paso sigue en Exploración hasta que vuelve el último, en cualquier orden', async ($, on) => {
+    const motor = preparar(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const abrirA = motor.detener('A')
+    const abrirB = motor.detener('B')
+    const abrirC = motor.detener('C')
+    const a = agente($, 'explorador', 'A')
+    const b = agente($, 'explorador', 'B')
+    const c = agente($, 'explorador', 'C')
+    await esperar()
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+
+    abrirB()
+    await b
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+
+    abrirA()
+    await a
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+
+    abrirC()
+    await c
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Clasificación · 0 s'])
+    await ui.unmount()
+  })
+
+  test('con /implementador-ligero, dos exploradores en paralelo: Escalado cuando vuelve el segundo', async ($, on) => {
+    const motor = preparar(on)
+    await $.skill.prompt({ skill: 'implementador-ligero', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const abrirA = motor.detener('A')
+    const abrirB = motor.detener('B')
+    const a = agente($, 'explorador', 'A')
+    const b = agente($, 'explorador', 'B')
+    await esperar()
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador-ligero · Exploración · 0 s'])
+
+    abrirA()
+    await a
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador-ligero · Exploración · 0 s'])
+
+    abrirB()
+    await b
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador-ligero · Escalado · 0 s'])
+    await ui.unmount()
+  })
+
+  test('si uno de varios exploradores falla, su error llega intacto y al volver el último el paso pasa a Clasificación', async ($, on) => {
+    const motor = preparar(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const abrirA = motor.detener('A')
+    const abrirB = motor.detener('B')
+    motor.fallan.add('B')
+    const a = agente($, 'explorador', 'A')
+    const b = agente($, 'explorador', 'B').then(
+      () => null,
+      (err: unknown) => err,
+    )
+    await esperar()
+
+    abrirA()
+    await a
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+
+    // B es el último en volver y vuelve con error: cuenta como vuelto y el paso avanza.
+    abrirB()
+    const error = await b
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toMatch(/panel/i)
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Clasificación · 0 s'])
+    await ui.unmount()
+  })
+
+  test('si fallan todos los exploradores en paralelo, el paso queda en Exploración', async ($, on) => {
+    const motor = preparar(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const abrirA = motor.detener('A')
+    const abrirB = motor.detener('B')
+    motor.fallan.add('A')
+    motor.fallan.add('B')
+    const falla = (p: Promise<unknown>) =>
+      p.then(
+        () => null,
+        (err: unknown) => err,
+      )
+    const a = falla(agente($, 'explorador', 'A'))
+    const b = falla(agente($, 'explorador', 'B'))
+    await esperar()
+
+    abrirA()
+    abrirB()
+    expect(await a).toBeInstanceOf(Error)
+    expect(await b).toBeInstanceOf(Error)
     expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
     await ui.unmount()
   })

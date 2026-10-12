@@ -76,7 +76,7 @@ Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planific
 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
 - **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno y se conservan el modelo y el esfuerzo de la skill; en segundo plano se pierden. Nunca pases `model` ni `isolation`; `effort`, solo donde tu skill lo indica.
-- Solo los agentes `explorador`, `planificador`, `ejecutor` y `revisor`. Uno a la vez.
+- Solo los agentes `explorador`, `planificador`, `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración: de 1 a 3 exploradores en paralelo (§5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5). Nunca la conversación ni el razonamiento de otro agente. Al revisor no le pasas nada del reporte del ejecutor.
 - Preguntas al usuario solo con AskUserQuestion (aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
 - Sin plan aprobado no se despacha ningún ejecutor. Si el plan cambia a mitad de camino, se vuelve a aprobar.
@@ -90,19 +90,21 @@ Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planific
 
 Llena los `<…>` y no agregues nada más. Todas con `run_in_background: false`.
 
-**Explorador** — `subagent_type: "explorador"`, `description: "Explorar <tema>"`
+**Explorador** — `subagent_type: "explorador"`, `description: "Explorar <tema | área>"`
 ```
 PEDIDO: <literal del usuario>
-BUSCA: <2–5 preguntas concretas: archivos, tests, acoplamientos, datos>
+ÁREA: <todo el pedido | la parte que le toca a este explorador>
+BUSCA: <2–5 preguntas concretas de su área: archivos, tests, acoplamientos, datos>
 PISTAS: <archivos o símbolos ya conocidos | ninguna>
 ```
+Dos o tres si el pedido toca más de un área (p. ej. código y tests, flujos y panel, código y documentación): parte por carpeta o capa, no por pregunta, para que las áreas no se solapen. Uno solo si el pedido nombra los archivos o es de una sola área; sin una división natural, uno. Máximo tres. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`, con su propia ÁREA y sus propias preguntas BUSCA, sin repetir las de otro. Nunca en segundo plano. En fork mode, solo uno.
 
 **Planificador** (solo CRÍTICO, flujo completo) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
 ```
 PEDIDO: <literal>
 CLASIFICACIÓN: CRÍTICO — <criterios #n y por qué>
 BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
-EXPLORACIÓN: <reporte del explorador, sin lo que no aplica>
+EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo que no aplica>
 AJUSTES DEL USUARIO: <solo al re-planificar>
 ```
 
@@ -140,7 +142,7 @@ VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cue
 
 ## 6. Después de cada agente
 
-- **Explorador:** si sus DUDAS cambian el plan, resuélvelas leyendo tú (poco) o llévalas al plan como pregunta.
+- **Explorador(es):** con varios, vuelven todos en el mismo turno; fusiónalos en un solo reporte con ARCHIVOS, TESTS, ACOPLAMIENTOS, DATOS y DUDAS, sin duplicados (la misma `ruta:línea` una vez) y con las contradicciones como DUDA. Si uno falla o vuelve sin reporte, sigue con los demás y lee poco su área o relanza ese solo, una vez. Si sus DUDAS cambian el plan, resuélvelas leyendo tú (poco) o llévalas al plan como pregunta.
 - **Ejecutor:** siempre `estado.mjs --cambios <BASE_Sn> --desde <DESDE_Sn> --permitidos "<…>"`.
   - `ALCANCE: FUERA` → AskUserQuestion: «Aceptar» (amplía el alcance) / «Restaurar» (corrección que deja esos archivos como en la base) / «Detener».
   - `ESTADO: BLOQUEADO` o `NECESITA_ALCANCE` → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / detener. No cuenta como ciclo.

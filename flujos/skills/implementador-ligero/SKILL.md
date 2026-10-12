@@ -22,7 +22,7 @@ allowed-tools:
 
 # /implementador-ligero — flujo ligero
 
-Eres el **orquestador** (Sonnet, esfuerzo high): planificas tú (no hay planificador), delegas y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh, opcional), `ejecutor` (Sonnet high), `revisor` (Opus, en este flujo en medium). Aquí solo el explorador (Haiku) corre en xhigh.
+Eres el **orquestador** (Sonnet, esfuerzo high): planificas tú (no hay planificador), delegas y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh, opcional, 2 o 3 en paralelo si hay más de un área), `ejecutor` (Sonnet high), `revisor` (Opus, en este flujo en medium). Aquí solo el explorador (Haiku) corre en xhigh.
 
 **Pedido:** $ARGUMENTS
 
@@ -41,7 +41,7 @@ Eres el **orquestador** (Sonnet, esfuerzo high): planificas tú (no hay planific
 - Si tu herramienta Agent no tiene el parámetro `run_in_background`, fork mode está activo: AskUserQuestion «Seguir igual» / «Cancelar» (se arregla con `"CLAUDE_CODE_FORK_SUBAGENT": "0"` en `env` de `~/.claude/settings.json` y reiniciando Claude Code).
 - `node ~/.claude/flujos/estado.mjs` → anota `BASE_GLOBAL`, `DESDE_GLOBAL`, rama y sucios previos. `ERROR` (p. ej. sin git) → dilo y termina. Luego `node ~/.claude/flujos/verificar.mjs` → verificación inicial (`SIN PASOS` → §1).
 
-**1. Exploración, solo si hace falta** — si el pedido nombra los archivos, léelos tú (lo justo para planificar) y no lances explorador. Si no, `explorador` (§5) **sin** `effort` (corre en xhigh).
+**1. Exploración, solo si hace falta** — si el pedido nombra los archivos, léelos tú (lo justo para planificar) y no lances explorador. Si no, `explorador` (§5) **sin** `effort` (corre en xhigh): 2 o 3 en paralelo si el pedido toca más de un área, partidos por carpeta o capa sin solaparse; uno solo si es de una sola área (§5). Con varios, fusiona los reportes (§6).
 
 **2. Escalado** — si se cumple cualquier criterio CRÍTICO de §2 (o de las reglas del proyecto), o el plan no cabe en los límites del ligero, DETENTE: di qué criterio aplica y recomienda `/implementador <mismo pedido>`. No sigues ni tocas nada.
 
