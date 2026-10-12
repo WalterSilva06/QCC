@@ -26,6 +26,17 @@ export function barraPartida(parte: number, sub: number, ancho: number): { princ
 }
 
 /**
+ * Como `barraPartida`, con un tramo más: las celdas del hilo principal durante un flujo, que salen de
+ * `principal`. `flujo` es un porcentaje de la sección (0-100) y nunca pasa de lo que queda en `principal`.
+ */
+export function barraTramos(parte: number, flujo: number, sub: number, ancho: number): { principal: string, flujo: string, sub: string, vacio: string } {
+  const b = barraPartida(parte, sub, ancho)
+  const celdasFlujo = Math.min(Math.max(Math.round((flujo / 100) * ancho), 0), b.principal.length)
+
+  return { principal: b.principal.slice(celdasFlujo), flujo: '█'.repeat(celdasFlujo), sub: b.sub, vacio: b.vacio }
+}
+
+/**
  * Las etiquetas de las filas en columnas separadas por un espacio: familia, versión (si alguna la
  * tiene) y esfuerzo, cada una rellenada al más largo. Todas salen del mismo largo; si pasa de `ancho`
  * (mínimo 1), cada una se recorta por el final con «…» y se rellena hasta `ancho`.

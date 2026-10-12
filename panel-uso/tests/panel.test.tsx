@@ -7,6 +7,7 @@ import {
   PASOS,
   PASOS_AUDITAR,
   abrirEspera,
+  abreTanda,
   anotarFilaExplorador,
   avanzar,
   baseDeUso,
@@ -25,7 +26,7 @@ import {
   terminarFlujo,
 } from '../hooks/flujo'
 import type { Senal } from '../hooks/flujo'
-import { aDesglose, barra, barraPartida, duracion, etiquetasAlineadas, falta, pct, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
+import { aDesglose, barra, barraPartida, barraTramos, duracion, etiquetasAlineadas, falta, pct, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
   ESPERA_MAX_MS,
   anotar,
@@ -183,6 +184,30 @@ describe('formato', () => {
         expect(b.principal.length + b.sub.length + b.vacio.length).toBe(ancho)
         expect(b.sub.length).toBeLessThanOrEqual(ancho - b.vacio.length)
         expect(b.principal + b.sub + b.vacio).toBe(barra(parte, ancho))
+      }
+    }
+  })
+
+  test('barraTramos: el tramo del flujo sale de lo principal; el de subagentes y la barra no cambian', async () => {
+    const ancho = 10
+
+    expect(barraTramos(50, 20, 20, ancho)).toEqual({ principal: '█', flujo: '██', sub: '██', vacio: '░░░░░' })
+    expect(barraTramos(50, 0, 0, ancho)).toEqual({ principal: '█████', flujo: '', sub: '', vacio: '░░░░░' })
+    expect(barraTramos(50, 50, 0, ancho)).toEqual({ principal: '', flujo: '█████', sub: '', vacio: '░░░░░' })
+    // El flujo nunca pasa de lo que queda en principal.
+    expect(barraTramos(50, 40, 20, ancho)).toEqual({ principal: '', flujo: '███', sub: '██', vacio: '░░░░░' })
+
+    for (const parte of [0, 3, 14, 50, 77, 100, 130, -5]) {
+      for (const flujo of [0, 4, 20, 50, 100, 250, -10]) {
+        for (const sub of [0, 4, 20, 50]) {
+          const t = barraTramos(parte, flujo, sub, ancho)
+          const p = barraPartida(parte, sub, ancho)
+
+          expect(t.principal + t.flujo + t.sub + t.vacio).toBe(barra(parte, ancho))
+          expect(t.sub).toBe(p.sub)
+          expect(t.vacio).toBe(p.vacio)
+          if (flujo === 0) expect(t.principal).toBe(p.principal)
+        }
       }
     }
   })
@@ -654,6 +679,52 @@ describe('semana', () => {
     expect(s.filas).toHaveLength(3)
     expect(s.filas[1]?.total).toBe(8)
     expect(unirOrigenes({ ...s, filas: [], total: 0, salida: 0 }).filas).toEqual([])
+  })
+
+  test('clave: el hilo principal durante un flujo lleva el prefijo flujo|; el subagente no', async () => {
+    expect(clave('claude-opus-5-5', 'high', false, true)).toBe('flujo|claude-opus-5-5|high')
+    expect(clave('claude-opus-5-5', undefined, false, true)).toBe('flujo|claude-opus-5-5|')
+    expect(clave('claude-opus-5-5', 'high', true, true)).toBe('claude-opus-5-5|high|sub')
+  })
+
+  test('resumir: flujo|… es principal con su parte en flujo; las filas sin flujo no llevan el campo', async () => {
+    const h = inicioDeHora(AHORA)
+    const r: Registro = {
+      [String(h)]: {
+        'claude-opus-5-5|high': [10, 0, 0, 0],
+        'flujo|claude-opus-5-5|high': [6, 1, 0, 0],
+        'flujo|claude-haiku-5-5|': [2, 0, 0, 0],
+        'claude-opus-5-5|high|sub': [5, 0, 0, 0],
+      },
+    }
+    const s = resumir([r], h - 1)
+
+    expect(s.filas).toEqual([
+      { modelo: 'Opus 5.5', esfuerzo: 'high', origen: 'principal', total: 17, salida: 1, flujo: 7 },
+      { modelo: 'Opus 5.5', esfuerzo: 'high', origen: 'subagente', total: 5, salida: 0 },
+      { modelo: 'Haiku 5.5', esfuerzo: '—', origen: 'principal', total: 2, salida: 0, flujo: 2 },
+    ])
+    // Así lo suma una terminal sin recargar: la familia de la clave con prefijo sale igual.
+    expect(familia('flujo|claude-opus-5-5')).toBe('Opus 5.5')
+  })
+
+  test('unirOrigenes: suma flujo por modelo·esfuerzo y solo lo pone si lo hay', async () => {
+    const h = inicioDeHora(AHORA)
+    const r: Registro = {
+      [String(h)]: {
+        'claude-opus-5-5|high': [10, 2, 0, 0],
+        'flujo|claude-opus-5-5|high': [4, 1, 0, 0],
+        'claude-opus-5-5|high|sub': [5, 1, 0, 0],
+        'claude-sonnet-5-5|low': [12, 4, 0, 0],
+      },
+    }
+    const u = unirOrigenes(resumir([r], h - 1, AHORA))
+    const opus = u.filas.find(f => f.modelo === 'Opus 5.5')
+    const sonnet = u.filas.find(f => f.modelo === 'Sonnet 5.5')
+
+    expect(opus).toEqual({ modelo: 'Opus 5.5', esfuerzo: 'high', origen: 'principal', total: 23, salida: 4, sub: 6, flujo: 5 })
+    expect(sonnet).not.toHaveProperty('flujo')
+    expect(sonnet?.total).toBe(16)
   })
 
   test('la semana es la ventana del límite semanal; sin él, 7 días atrás', async () => {
@@ -1708,10 +1779,14 @@ describe('flujo (puro)', () => {
     expect(senalDeHerramienta('AskUserQuestion', { questions: [{ header: 'Plan' }] }, 'agente-1')).toBeNull()
   })
 
-  test('senalAlTerminar: solo el explorador', async () => {
+  test('senalAlTerminar: el explorador y el revisor', async () => {
     expect(senalAlTerminar(agente('explorador'))).toEqual(agenteFin('explorador'))
     expect(senalAlTerminar(agente('explorador'), false)).toEqual(agenteFin('explorador', false))
+    expect(senalAlTerminar(agente('revisor'))).toEqual(agenteFin('revisor'))
+    expect(senalAlTerminar(agente('revisor'), false)).toEqual(agenteFin('revisor', false))
     expect(senalAlTerminar(agente('planificador'))).toBeNull()
+    expect(senalAlTerminar(agente('ejecutor'))).toBeNull()
+    expect(senalAlTerminar(agente('revisor-plan'))).toBeNull()
     expect(senalAlTerminar(agenteFin('explorador'))).toBeNull()
     expect(senalAlTerminar(verificar)).toBeNull()
   })
@@ -1734,6 +1809,39 @@ describe('flujo (puro)', () => {
     ]
 
     expect(pasos('implementador', secuencia)).toEqual([0, 0, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
+  })
+
+  test('revisor-plan en Plan: no mueve el paso ni cuenta como plan o revisión; un revisor en Plan sigue yendo a Ejecución', async () => {
+    const secuencia = [
+      estado('preflight'),
+      agente('explorador'),
+      agenteFin('explorador'),
+      agente('planificador'),
+      agente('revisor-plan'),
+      pregunta(true),
+    ]
+
+    expect(pasos('implementador', secuencia)).toEqual([0, 1, 2, 3, 3, 4])
+
+    const f: Flujo = {
+      nombre: 'implementador',
+      variante: null,
+      paso: 3,
+      ejecuto: false,
+      planes: 1,
+      estado: 'en curso',
+      inicio: 0,
+      desde: 0,
+      tiempos: {},
+      fin: null,
+    }
+
+    // Ni al lanzarse ni al volver cambia nada: ni el paso, ni `planes`, ni `revisiones`.
+    expect(avanzar(f, agente('revisor-plan'), 1_000)).toEqual(f)
+    expect(avanzar(f, agenteFin('revisor-plan'), 1_000)).toEqual(f)
+
+    // El `revisor` de verdad, desde Plan, pasa a Ejecución y se cuenta ahí.
+    expect(avanzar(f, agente('revisor'), 1_000)).toMatchObject({ paso: 5, revisiones: { 5: 1 } })
   })
 
   test('implementador NORMAL: sin planificador salta de Clasificación a Aprobación', async () => {
@@ -2537,6 +2645,90 @@ describe('flujo (puro)', () => {
     expect(congeladas).toEqual([fila])
   })
 
+  test('revisores en vuelo: suben al lanzar, bajan al volver sin mover el paso y no bajan de 0', async () => {
+    const base = { ...(iniciarFlujo('implementador', '', 0) as Flujo), paso: 6 }
+
+    let f: Flujo = base
+
+    for (let i = 0; i < 3; i++) f = avanzar(f, agente('revisor'), 0) as Flujo
+
+    expect(f.revisores).toBe(3)
+    expect(f.revisiones).toEqual({ 6: 3 })
+    expect(f.paso).toBe(6)
+
+    for (let i = 0; i < 3; i++) f = avanzar(f, agenteFin('revisor'), 0) as Flujo
+
+    expect(f.revisores).toBe(0)
+    expect(f.paso).toBe(6)
+
+    // Un cuarto fin no baja de 0: el flujo queda igual.
+    expect(avanzar(f, agenteFin('revisor'), 0)).toEqual(f)
+
+    // Un flujo sin el campo: el fin lo deja igual y no lo escribe.
+    const sin = avanzar(base, agenteFin('revisor'), 0) as Flujo
+    expect(sin).toEqual(base)
+    expect('revisores' in sin).toBe(false)
+
+    // El ejecutor limpia el contador; sin él, no escribe el campo.
+    expect((avanzar({ ...base, revisores: 2 }, agente('ejecutor'), 0) as Flujo).revisores).toBe(0)
+    expect('revisores' in (avanzar(base, agente('ejecutor'), 0) as Flujo)).toBe(false)
+
+    // Una entrada congelada no se muta.
+    const congelado = Object.freeze({ ...base, revisores: 1 })
+    expect(() => avanzar(congelado, agenteFin('revisor'), 0)).not.toThrow()
+    expect((avanzar(congelado, agenteFin('revisor'), 0) as Flujo).revisores).toBe(0)
+    expect(congelado.revisores).toBe(1)
+  })
+
+  test('anotar y cuadradosDeFila cuentan exploradores y revisores', async () => {
+    const base = iniciarFlujo('implementador', '', 0) as Flujo
+    const fila = 'Haiku 5.5|high|subagente'
+    const vacias: string[] = []
+    const anotadas = [fila]
+
+    // Solo revisores en vuelo.
+    expect(anotarFilaExplorador(vacias, { ...base, revisores: 2 }, fila)).toEqual([fila])
+    expect(cuadradosDeFila({ ...base, revisores: 2 }, anotadas, fila)).toBe(2)
+    expect(cuadradosDeFila({ ...base, revisores: 5 }, anotadas, fila)).toBe(3)
+
+    // Exploradores y revisores suman.
+    expect(cuadradosDeFila({ ...base, exploradores: 1, revisores: 1 }, anotadas, fila)).toBe(2)
+
+    // Con 0 revisores: no anota y da 1.
+    expect(anotarFilaExplorador(vacias, { ...base, revisores: 0 }, fila)).toBe(vacias)
+    expect(cuadradosDeFila({ ...base, revisores: 0 }, anotadas, fila)).toBe(1)
+
+    // Flujo terminado: da 1.
+    const terminado = terminarFlujo({ ...base, revisores: 3 }, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
+    expect(terminado.estado).toBe('completo')
+    expect(cuadradosDeFila(terminado, anotadas, fila)).toBe(1)
+  })
+
+  test('abreTanda', async () => {
+    const base = iniciarFlujo('implementador', '', 0) as Flujo
+    const paso1 = { ...base, paso: 1 }
+
+    // Revisor: abre con 0 o sin el campo; no con 1 en vuelo.
+    expect(abreTanda({ ...base, revisores: 0 }, agente('revisor'))).toBe(true)
+    expect(abreTanda(base, agente('revisor'))).toBe(true)
+    expect(abreTanda({ ...base, revisores: 1 }, agente('revisor'))).toBe(false)
+
+    // Explorador: fuera del paso 1 abre; en el paso 1 solo sin otros en vuelo.
+    expect(abreTanda({ ...base, paso: 0, exploradores: 2 }, agente('explorador'))).toBe(true)
+    expect(abreTanda({ ...paso1, exploradores: 2 }, agente('explorador'))).toBe(false)
+    expect(abreTanda(paso1, agente('explorador'))).toBe(true)
+
+    // Nada más abre tanda.
+    expect(abreTanda(base, agente('ejecutor'))).toBe(false)
+    expect(abreTanda(base, verificar)).toBe(false)
+    expect(abreTanda(null, agente('revisor'))).toBe(false)
+
+    const terminado = terminarFlujo(base, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
+    expect(abreTanda(terminado, agente('revisor'))).toBe(false)
+    expect(abreTanda(iniciarFlujo('documentar', '', 0), agente('revisor'))).toBe(false)
+    expect(abreTanda(iniciarFlujo('documentar', '', 0), agente('explorador'))).toBe(false)
+  })
+
   /** Una sesión con esas filas, ya ordenadas como las deja `resumir` (de mayor a menor total). */
   const sesionCon = (filas: FilaSemana[]): Semana =>
     Object.freeze({
@@ -2578,6 +2770,14 @@ describe('flujo (puro)', () => {
     // Un flujo sin base (anterior a este campo) cuenta toda la sesión.
     const sinBase = iniciarFlujo('implementador', '', 5) as Flujo
     expect(consumoDeFlujo(sinBase, despues).map(x => x.total)).toEqual([5_000, 3_000, 700])
+  })
+
+  test('consumoDeFlujo: las filas del consumo no llevan flujo', async () => {
+    const f = iniciarFlujo('implementador', '', 5) as Flujo
+    const conFlujo: FilaSemana = { ...fila('Opus 5.5', 'high', 'principal', 3_000, 400), flujo: 1_200 }
+
+    expect(consumoDeFlujo(f, sesionCon([conFlujo]))).toEqual([fila('Opus 5.5', 'high', 'principal', 3_000, 400)])
+    expect(consumoDeFlujo(f, sesionCon([conFlujo]))[0]).not.toHaveProperty('flujo')
   })
 
   test('congelarConsumo: fija el consumo al terminar una sola vez y no escribe un valor vacío', async () => {
@@ -3034,6 +3234,115 @@ describe('flujo en el panel', () => {
     expect(t).toContain('200k · sal 4k')
     expect(t).not.toContain('300k · sal 6k')
     expect(t).toContain('orquestador Sonnet 5.5 high')
+    await ui.unmount()
+  })
+
+  test('el hilo principal anota flujo|… solo con el flujo en curso; los subagentes, antes y después, sin marca', async ($, on) => {
+    const { guardados } = preparar(on)
+    on('turn.step', async function* (_$, e) {
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: 'ok',
+        toolUses: [],
+        stopReason: 'end_turn' as const,
+        usage: { ...USO, model: e.model },
+      }
+    })
+    await $.session.measure(MEDIDA)
+
+    await paso($, 'claude-opus-5-5', 'high')
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await paso($, 'claude-opus-5-5', 'high')
+    await paso($, 'claude-opus-5-5', 'high', 'agente-1')
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const hora = comoRegistro(guardados.get('uso:s1'))[String(inicioDeHora(AHORA))] ?? {}
+    expect(Object.keys(hora).sort()).toEqual(['claude-opus-5-5|high', 'claude-opus-5-5|high|sub', 'flujo|claude-opus-5-5|high'])
+    const una = [USO.input_tokens, USO.output_tokens, USO.cache_read_input_tokens, USO.cache_creation_input_tokens]
+    const dos = una.map(x => x * 2)
+    // Dentro del flujo, solo la respuesta del hilo principal; fuera, la de antes y la de después.
+    expect(hora['flujo|claude-opus-5-5|high']).toEqual(una)
+    expect(hora['claude-opus-5-5|high']).toEqual(dos)
+    expect(hora['claude-opus-5-5|high|sub']).toEqual(una)
+  })
+
+  test('Esta sesión y Esta semana pintan en success el tramo del orquestador; lo de fuera del flujo sigue en claude', async ($, on) => {
+    const h = String(inicioDeHora(AHORA))
+    preparar(on, [], { 'uso:otra': { [h]: { [clave('claude-sonnet-5-5', 'low')]: [400_000, 0, 0, 0] } } })
+    on('turn.step', async function* (_$, e) {
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: 'ok',
+        toolUses: [],
+        stopReason: 'end_turn' as const,
+        usage: { ...USO, model: e.model },
+      }
+    })
+    await $.session.measure(MEDIDA)
+
+    // Antes del flujo, dentro (hilo principal y un subagente).
+    await paso($, 'claude-opus-5-5', 'high')
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await paso($, 'claude-opus-5-5', 'high')
+    await paso($, 'claude-opus-5-5', 'high', 'agente-1')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 's-plegar' })
+    const esBarra = (n: { type: string; text?: string | undefined }) => n.type === 'Text' && /^[█░]+$/.test(n.text ?? '')
+    /** Los tramos `[color, texto]` de la barra de cada fila con esa etiqueta dentro de una sección. */
+    const tramosDe = async (desde: string, hasta: string | null, etiqueta: (t: string) => boolean) => {
+      const arbol = await ui.findAll({})
+      const textos = arbol.map(n => (n.type === 'Text' ? (n.text ?? '') : ''))
+      const ini = textos.indexOf(desde)
+      const fin = hasta === null ? textos.length : textos.indexOf(hasta)
+
+      return textos.flatMap((t, i) => {
+        if (i <= ini || i >= fin || !etiqueta(t)) return []
+        // La barra termina en el «%» de su fila; después vienen las de «por día».
+        const final = textos.findIndex((x, j) => j > i && x.endsWith('%'))
+
+        return [arbol.slice(i, final).filter(esBarra).map(n => [n.props.color, n.text])]
+      })
+    }
+    const opus = (t: string) => t === 'Opus 5.5 high'
+
+    // Esta sesión (25 celdas): Opus principal 200k de 300k, con 100k dentro del flujo; el subagente entero en suggestion.
+    const sesion = await tramosDe('Esta sesión', 'Esta semana', opus)
+    expect(sesion).toHaveLength(2)
+    const deSub = sesion.find(f => f[0]?.[0] === 'suggestion')
+    const principal = sesion.find(f => f[0]?.[0] !== 'suggestion')
+    expect(deSub).toEqual([['suggestion', '█'.repeat(8) + '░'.repeat(17)]])
+    expect(principal).toEqual([
+      ['claude', '█'.repeat(9)],
+      ['success', '█'.repeat(8)],
+      ['claude', '░'.repeat(8)],
+    ])
+
+    // Esta semana: Opus 300k de 700k (100k de flujo, 100k de subagente) y Sonnet 400k sin flujo.
+    const semana = await tramosDe('Esta semana', null, t => t === 'Opus   5.5 high')
+    expect(semana).toEqual([
+      [
+        ['claude', '█'.repeat(3)],
+        ['success', '█'.repeat(4)],
+        ['suggestion', '█'.repeat(4)],
+        ['claude', '░'.repeat(14)],
+      ],
+    ])
+    const sonnet = await tramosDe('Esta semana', null, t => t.trimEnd() === 'Sonnet 5.5 low')
+    expect(sonnet).toEqual([[['claude', '█'.repeat(14) + '░'.repeat(11)]]])
+
+    // Tras el cierre, lo nuevo del hilo principal va en claude: el tramo verde no crece.
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    await paso($, 'claude-opus-5-5', 'high')
+    const tras = await tramosDe('Esta sesión', 'Esta semana', opus)
+    expect(tras.find(f => f[0]?.[0] !== 'suggestion')).toEqual([
+      ['claude', '█'.repeat(13)],
+      ['success', '█'.repeat(6)],
+      ['claude', '░'.repeat(6)],
+    ])
     await ui.unmount()
   })
 
@@ -3687,6 +3996,122 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
+  const SONNET = 'claude-sonnet-5-5'
+
+  /**
+   * Un flujo en Preflight con el panel montado y el modelo respondiendo con el modelo que se le pide
+   * (la fila de un subagente sale del modelo de su petición).
+   */
+  async function preparandoRevision($: Engine, on: On) {
+    const motor = preparar(on)
+    on('turn.step', async function* (_$, e) {
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: 'ok',
+        toolUses: [],
+        stopReason: 'end_turn' as const,
+        usage: { ...USO, model: e.model },
+      }
+    })
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+
+    return { motor, ui: await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' }) }
+  }
+
+  /** Lleva el flujo a Verificación final (`estado --base` → ejecutor → `verificar`) y lanza tres revisores retenidos (R1, R2 y R3). */
+  async function lanzandoRevisores($: Engine, motor: ReturnType<typeof preparar>) {
+    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await agente($, 'ejecutor', 'E1')
+    await bash($, 'node ~/.claude/flujos/verificar.mjs')
+
+    const abrir = { R1: motor.detener('R1'), R2: motor.detener('R2'), R3: motor.detener('R3') }
+    const vuelos = { R1: agente($, 'revisor', 'R1'), R2: agente($, 'revisor', 'R2'), R3: agente($, 'revisor', 'R3') }
+    await esperar()
+
+    return { abrir, vuelos }
+  }
+
+  test('la fila de los revisores lleva un ■ por revisor en vuelo en la revisión integral (hasta 3) y vuelve a uno', async ($, on) => {
+    const { motor, ui } = await preparandoRevision($, on)
+    const { abrir, vuelos } = await lanzandoRevisores($, motor)
+
+    // El paso de un revisor llega tras los tres lanzamientos y crea la fila anotada.
+    await paso($, HAIKU, 'high', 'agente-R1')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(3)
+
+    abrir.R1()
+    await vuelos.R1
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(2)
+
+    abrir.R2()
+    abrir.R3()
+    await Promise.all([vuelos.R2, vuelos.R3])
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test('un revisor que falla también baja la cuenta', async ($, on) => {
+    const { motor, ui } = await preparandoRevision($, on)
+    const { abrir, vuelos } = await lanzandoRevisores($, motor)
+    await paso($, HAIKU, 'high', 'agente-R1')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(3)
+
+    // El revisor cae: el error llega intacto y su ■ se va igual.
+    motor.fallan.add('R1')
+    abrir.R1()
+    const error = await vuelos.R1.then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toMatch(/panel/)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(2)
+
+    abrir.R2()
+    abrir.R3()
+    await Promise.all([vuelos.R2, vuelos.R3])
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(1)
+    await ui.unmount()
+  })
+
+  test('en la revisión integral la fila de los exploradores no lleva los ■ de los revisores', async ($, on) => {
+    const { motor, ui } = await preparandoRevision($, on)
+
+    // La exploración con Haiku anota su fila.
+    const abrirExp = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
+    const exploradores = { A: agente($, 'explorador', 'A'), B: agente($, 'explorador', 'B'), C: agente($, 'explorador', 'C') }
+    await esperar()
+    await paso($, HAIKU, 'high', 'agente-A')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(3)
+
+    abrirExp.A()
+    abrirExp.B()
+    abrirExp.C()
+    await Promise.all(Object.values(exploradores))
+
+    // Tres revisores con otro modelo: abren su propia tanda y no heredan la marca de la fila de Haiku.
+    const { abrir, vuelos } = await lanzandoRevisores($, motor)
+    await paso($, SONNET, 'high', 'agente-R1')
+    // Con dos modelos las etiquetas salen alineadas en columnas.
+    expect((await cuadradosDe(ui, 'Sonnet 5.5 high', true)).colores).toHaveLength(3)
+    expect((await cuadradosDe(ui, 'Haiku  5.5 high', true)).colores).toHaveLength(1)
+
+    abrir.R1()
+    abrir.R2()
+    abrir.R3()
+    await Promise.all(Object.values(vuelos))
+    await ui.unmount()
+  })
+
   test('con más de tres exploradores en vuelo la fila lleva tres ■', async ($, on) => {
     const { ui, motor, abrir, vuelos } = await explorando($, on)
     const abrirD = motor.detener('D')
@@ -3854,11 +4279,12 @@ describe('flujo en el panel', () => {
     const filas = await filasDeSesion(ui)
     const haiku = filas.filter(f => f.etiqueta === 'Haiku  5.5 high')
     expect(haiku).toHaveLength(2)
-    expect(haiku.map(f => f.barra).sort()).toEqual(['claude', 'suggestion'])
+    // El hilo principal responde con el flujo en curso: su barra empieza en `success` (el tramo del flujo), no en `claude`.
+    expect(haiku.map(f => f.barra).sort()).toEqual(['success', 'suggestion'])
     expect(haiku.find(f => f.barra === 'suggestion')?.cuadrados).toBe(3)
-    expect(haiku.find(f => f.barra === 'claude')?.cuadrados).toBe(1)
+    expect(haiku.find(f => f.barra === 'success')?.cuadrados).toBe(1)
     expect(filas.some(f => f.etiqueta.includes('sub'))).toBe(false)
-    expect(filas.find(f => f.etiqueta.startsWith('Sonnet'))?.barra).toBe('claude')
+    expect(filas.find(f => f.etiqueta.startsWith('Sonnet'))?.barra).toBe('success')
 
     abrir.A()
     abrir.B()

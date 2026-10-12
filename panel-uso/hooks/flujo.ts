@@ -145,12 +145,12 @@ export function senalDeHerramienta(tool: string, args: unknown, agentId?: string
   return null
 }
 
-/** La señal que deja un agente al terminar (`bien`: sin error, por defecto sí); solo el explorador mueve el flujo. */
+/** La señal que deja un agente al terminar (`bien`: sin error, por defecto sí); solo el explorador y el revisor dejan una. */
 export function senalAlTerminar(s: Senal, bien = true): Senal | null {
-  return s.tipo === 'agente' && s.nombre === 'explorador' ? { tipo: 'agente-fin', nombre: 'explorador', bien } : null
+  return s.tipo === 'agente' && (s.nombre === 'explorador' || s.nombre === 'revisor') ? { tipo: 'agente-fin', nombre: s.nombre, bien } : null
 }
 
-type Cambio = Partial<Pick<Flujo, 'paso' | 'ejecuto' | 'exploradores' | 'totalExploradores' | 'exploro' | 'planes' | 'ejecuciones' | 'revisiones'>>
+type Cambio = Partial<Pick<Flujo, 'paso' | 'ejecuto' | 'exploradores' | 'totalExploradores' | 'exploro' | 'planes' | 'ejecuciones' | 'revisiones' | 'revisores'>>
 
 /**
  * Ejecutores lanzados en todo el flujo, con las correcciones. En un atom 0.9.7 (sin `ejecuciones`)
@@ -187,6 +187,8 @@ function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
     case 'pregunta':
       return s.plan ? { paso: 4 } : {}
     case 'agente-fin': {
+      if (s.nombre === 'revisor') return (f.revisores ?? 0) > 0 ? { revisores: (f.revisores ?? 0) - 1 } : {}
+
       if (s.nombre !== 'explorador') return {}
 
       const exploradores = Math.max(0, (f.exploradores ?? 0) - 1)
@@ -204,12 +206,16 @@ function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
       }
 
       if (s.nombre === 'planificador') return ligero ? {} : { paso: 3, planes: (f.planes ?? 0) + 1 }
-      if (s.nombre === 'ejecutor') return { paso: 5, ejecuto: true, ejecuciones: ejecucionesLanzadas(f) + 1 }
+      if (s.nombre === 'ejecutor') {
+        const lanzado = { paso: 5, ejecuto: true, ejecuciones: ejecucionesLanzadas(f) + 1 }
+
+        return (f.revisores ?? 0) > 0 ? { ...lanzado, revisores: 0 } : lanzado
+      }
 
       if (s.nombre === 'revisor') {
         const destino = ligero ? 6 : p >= 6 ? p : 5
 
-        return { paso: destino, revisiones: { ...(f.revisiones ?? {}), [destino]: (f.revisiones?.[destino] ?? 0) + 1 } }
+        return { paso: destino, revisiones: { ...(f.revisiones ?? {}), [destino]: (f.revisiones?.[destino] ?? 0) + 1 }, revisores: (f.revisores ?? 0) + 1 }
       }
 
       return {}
@@ -342,21 +348,34 @@ export function terminarFlujo(actual: Flujo | null, razon: string, respuesta?: s
 }
 
 /**
- * Anota el id de una fila de subagente vista con exploradores en vuelo (en el flujo en curso todo
- * subagente que pide al modelo es entonces un explorador). Si no corresponde anotarla o ya estaba,
+ * Anota el id de una fila de subagente vista con exploradores o revisores en vuelo (en el flujo en curso todo
+ * subagente que pide al modelo es entonces uno de ellos). Si no corresponde anotarla o ya estaba,
  * devuelve la misma referencia; nunca muta `filas`.
  */
 export function anotarFilaExplorador<T extends readonly string[]>(filas: T, f: Flujo | null, id: string): T | string[] {
-  if (f === null || f.estado !== 'en curso' || (f.exploradores ?? 0) <= 0 || filas.includes(id)) return filas
+  if (f === null || f.estado !== 'en curso' || (f.exploradores ?? 0) + (f.revisores ?? 0) <= 0 || filas.includes(id)) return filas
 
   return [...filas, id]
 }
 
-/** Cuántos ■ lleva una fila: uno por explorador en vuelo (de 1 a 3) si es una fila anotada del flujo en curso; si no, 1. */
+/**
+ * Si la señal `s` abre una tanda nueva de exploradores o revisores: un `agente` `explorador` o `revisor` lanzado
+ * cuando no había otro de su tipo en vuelo (el explorador en el paso 1 solo abre tanda si no hay ninguno).
+ * Es falso sin flujo, con el flujo terminado, en `/documentar` y con cualquier otra señal.
+ */
+export function abreTanda(f: Flujo | null, s: Senal): boolean {
+  if (f === null || f.estado !== 'en curso' || f.nombre === 'documentar' || s.tipo !== 'agente') return false
+
+  if (s.nombre === 'explorador') return f.paso !== 1 || (f.exploradores ?? 0) === 0
+
+  return s.nombre === 'revisor' && (f.revisores ?? 0) === 0
+}
+
+/** Cuántos ■ lleva una fila: uno por explorador o revisor en vuelo (de 1 a 3) si es una fila anotada del flujo en curso; si no, 1. */
 export function cuadradosDeFila(f: Flujo | null, filas: readonly string[], id: string): number {
   if (f === null || f.estado !== 'en curso' || !filas.includes(id)) return 1
 
-  return Math.min(3, Math.max(1, f.exploradores ?? 0))
+  return Math.min(3, Math.max(1, (f.exploradores ?? 0) + (f.revisores ?? 0)))
 }
 
 /**
@@ -381,7 +400,13 @@ export function consumoDeFlujo(f: Flujo, s: Semana | null): FilaSemana[] {
     .map(fila => {
       const [total = 0, salida = 0] = f.usoBase?.[idDeFila(fila)] ?? []
 
-      return { ...fila, total: Math.max(fila.total - total, 0), salida: Math.max(fila.salida - salida, 0) }
+      return {
+        modelo: fila.modelo,
+        esfuerzo: fila.esfuerzo,
+        origen: fila.origen,
+        total: Math.max(fila.total - total, 0),
+        salida: Math.max(fila.salida - salida, 0),
+      }
     })
     .filter(fila => fila.total > 0)
     .sort((a, b) => b.total - a.total)

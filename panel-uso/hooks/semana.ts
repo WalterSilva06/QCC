@@ -6,7 +6,10 @@ const HORA = 3_600_000
 const DIA = 24 * HORA
 const SEMANA = 7 * DIA
 
-/** Lo que se guarda por sesión: hora (ms, inicio de la hora) → `modelo|esfuerzo` → cuatro cuentas. */
+/**
+ * Lo que se guarda por sesión: hora (ms, inicio de la hora) → clave → cuatro cuentas. La clave es
+ * `modelo|esfuerzo`, `modelo|esfuerzo|sub` (subagente) o `flujo|modelo|esfuerzo` (hilo principal durante un flujo).
+ */
 export type Registro = Record<string, Record<string, Cuentas>>
 
 /** `[entrada sin caché, salida, leída de caché, escrita en caché]`, como las informa la API. */
@@ -27,11 +30,14 @@ export const PREFIJO = 'uso:'
 export const RETENCION_MS = 15 * DIA
 
 /**
- * `modelo|esfuerzo` para el hilo principal (igual que los datos viejos) y
- * `modelo|esfuerzo|sub` para un subagente.
+ * `modelo|esfuerzo` para el hilo principal (igual que los datos viejos), `modelo|esfuerzo|sub`
+ * para un subagente y `flujo|modelo|esfuerzo` para el hilo principal durante un flujo en curso
+ * (`deFlujo`; un subagente no lleva el prefijo).
  */
-export function clave(modelo: string, esfuerzo: NivelEsfuerzo, subagente = false): string {
-  return `${modelo}|${esfuerzo === undefined ? '' : String(esfuerzo)}${subagente ? '|sub' : ''}`
+export function clave(modelo: string, esfuerzo: NivelEsfuerzo, subagente = false, deFlujo = false): string {
+  const base = `${modelo}|${esfuerzo === undefined ? '' : String(esfuerzo)}${subagente ? '|sub' : ''}`
+
+  return deFlujo && !subagente ? `flujo|${base}` : base
 }
 
 export function inicioDeHora(t: number): number {
@@ -173,9 +179,11 @@ export function resumir(registros: readonly Registro[], desde: number, ahora?: n
       const dia = inicioDeDia(h)
 
       for (const [k, c] of Object.entries(porClave)) {
-        // `modelo|esfuerzo` (principal, también los datos viejos) o `modelo|esfuerzo|sub`.
+        // `modelo|esfuerzo` (principal, también los datos viejos), `modelo|esfuerzo|sub` o `flujo|modelo|esfuerzo`.
         const partes = k.split('|')
-        const subagente = partes.length >= 3 && partes[partes.length - 1] === 'sub'
+        const deFlujo = partes.length >= 3 && partes[0] === 'flujo'
+        if (deFlujo) partes.shift()
+        const subagente = !deFlujo && partes.length >= 3 && partes[partes.length - 1] === 'sub'
         if (subagente) partes.pop()
         const nivel = partes.length > 1 ? (partes.pop() ?? '') : ''
         const modelo = familia(partes.join('|'))
@@ -185,6 +193,7 @@ export function resumir(registros: readonly Registro[], desde: number, ahora?: n
         const fila = filas.get(id) ?? { modelo, esfuerzo, origen, total: 0, salida: 0 }
         fila.total += c[0] + c[1] + c[2] + c[3]
         fila.salida += c[1]
+        if (deFlujo) fila.flujo = (fila.flujo ?? 0) + c[0] + c[1] + c[2] + c[3]
         filas.set(id, fila)
         totales.set(dia, (totales.get(dia) ?? 0) + c[0] + c[1] + c[2] + c[3])
       }
@@ -205,7 +214,8 @@ export function resumir(registros: readonly Registro[], desde: number, ahora?: n
 
 /**
  * Junta las filas del mismo modelo y esfuerzo (principal y subagentes) en una sola, de origen
- * `principal`, y las reordena por total. Los totales, los días y las fechas no cambian.
+ * `principal`, y las reordena por total; suma también `flujo` y solo lo pone si es mayor que 0.
+ * Los totales, los días y las fechas no cambian.
  */
 export function unirOrigenes(s: Semana): Semana {
   const unidas = new Map<string, FilaSemana>()
@@ -216,6 +226,7 @@ export function unirOrigenes(s: Semana): Semana {
     fila.total += f.total
     fila.salida += f.salida
     if (f.origen === 'subagente') fila.sub = (fila.sub ?? 0) + f.total
+    if ((f.flujo ?? 0) > 0) fila.flujo = (fila.flujo ?? 0) + (f.flujo ?? 0)
     unidas.set(id, fila)
   }
 

@@ -27,7 +27,9 @@ Eres el **revisor** de los flujos /implementador. Eres independiente: no viste c
 
 ## Enfoque (solo en la revisión integral en paralelo)
 
-Si el despacho trae `ENFOQUE: <contratos, tipos y documentación | tests>`, otro revisor cubre el otro enfoque a la vez: profundiza solo en el tuyo y rechaza solo por defectos de ese enfoque; lo que veas de otro va a OBSERVACIONES. Igual corres `verificar.mjs` y compruebas cada «hecho cuando» que toque tu enfoque.
+Si el despacho trae `ENFOQUE: <contratos, tipos y documentación | tests | casos borde y seguridad>`, hasta dos revisores más cubren otros enfoques a la vez: profundiza solo en el tuyo y rechaza solo por defectos de ese enfoque; lo que veas de otro va a OBSERVACIONES. Igual corres `verificar.mjs` y compruebas cada «hecho cuando» que toque tu enfoque.
+
+Para «casos borde y seguridad», búscalos a propósito en todo el cambio, no subtarea por subtarea: validación de entrada en fronteras; autorización y datos de otro usuario o inquilino; secretos en código o logs; nulls, rangos y errores sin manejar; fechas y husos horarios; concurrencia e idempotencia; redondeo y saldos si hay dinero; lo irreversible (borrados, migraciones sin vuelta).
 
 ## Rechaza solo por defectos concretos
 

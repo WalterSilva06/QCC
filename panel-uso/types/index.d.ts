@@ -59,6 +59,8 @@ export type FilaSemana = {
   salida: number
   /** Tokens de subagente dentro de `total`; solo lo pone `unirOrigenes` («Esta semana»). */
   sub?: number
+  /** Tokens del hilo principal durante un flujo en curso, dentro de `total`; solo en filas `principal` y solo si los hay. */
+  flujo?: number
 }
 
 /** Los tokens de un día local. */
@@ -120,6 +122,8 @@ export type Flujo = {
   ejecuciones?: number
   /** Revisores lanzados, por índice del paso en que queda el flujo al lanzarlos. Si falta, ninguno. */
   revisiones?: Record<number, number>
+  /** Revisores en vuelo (salieron y aún no vuelven); si falta, 0. */
+  revisores?: number
   /** `en curso`, o cómo terminó: `completo`, `detenido` (CIERRE … DETENIDO) o `interrumpido`. */
   estado: 'en curso' | 'completo' | 'detenido' | 'interrumpido'
   /** Hora (ms) en que empezó el flujo. */
@@ -161,7 +165,7 @@ declare module 'claude-code' {
       flujo: Flujo | null
       /** La sección «Flujo» desplegada; se recuerda en el store con la clave `prefs:flujo`. */
       flujoAbierto: boolean
-      /** Ids de fila de subagente vistas mientras había exploradores en vuelo; solo de esta terminal; se vacía al iniciar un flujo y al cerrar la sesión. */
+      /** Ids de fila de subagente vistas mientras había exploradores o revisores en vuelo; solo de esta terminal; se vacía al iniciar un flujo, al abrir una tanda de exploradores o revisores y al cerrar la sesión. */
       filasExploradores: string[]
     }
   }

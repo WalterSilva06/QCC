@@ -5,6 +5,7 @@ import type { Actividad, Esfuerzo, Flujo, Medida, Semana } from '../types'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
 import {
+  abreTanda,
   abrirEspera,
   anotarFilaExplorador,
   avanzar,
@@ -22,10 +23,11 @@ import {
   senalDeHerramienta,
   terminarFlujo,
 } from './flujo'
+import type { Senal } from './flujo'
 import {
   aDesglose,
   barra,
-  barraPartida,
+  barraTramos,
   cuando,
   duracion,
   etiquetasAlineadas,
@@ -97,6 +99,9 @@ const COLOR_FIN = { completo: 'success', detenido: 'warning', interrumpido: 'err
 /** Color del tramo de subagentes en las barras de «Esta semana»; distinto de `claude` y de los de estado. */
 const COLOR_SUB = 'suggestion'
 
+/** Color del tramo del hilo principal durante un flujo en las barras de «Esta sesión» y «Esta semana». */
+const COLOR_FLUJO = 'success'
+
 /** Columnas de las cifras de cada fila: total (7) + salida (7). */
 const COLUMNAS_CIFRAS = 14
 
@@ -114,14 +119,32 @@ function enFila<T>(trabajo: () => Promise<T>): Promise<T> {
  * Una clave por sesión: dos terminales abiertas no se pisan la misma clave.
  * Se cuenta todo lo que la API informó, hilo principal y subagentes.
  */
-async function anotarUso($: EngineInterface, modelo: string, nivel: NivelEsfuerzo, subagente: boolean, uso: Uso) {
+async function anotarUso(
+  $: EngineInterface,
+  modelo: string,
+  nivel: NivelEsfuerzo,
+  subagente: boolean,
+  deFlujo: boolean,
+  uso: Uso,
+) {
   await enFila(async () => {
     const k = `${PREFIJO}${await $.session.id()}`
     const t = await $.clock.now()
     const antes = comoRegistro(await $.store.get(k))
-    await $.store.set(k, anotar(antes, t, clave(modelo, nivel, subagente), uso))
+    await $.store.set(k, anotar(antes, t, clave(modelo, nivel, subagente, deFlujo), uso))
   })
   await releerSemana($)
+}
+
+/** Si hay un flujo en curso en esta sesión. Nunca rechaza: ante un fallo dice que no. */
+async function enFlujo($: EngineInterface): Promise<boolean> {
+  try {
+    const f = await read($, flujo)
+
+    return f !== null && f.estado === 'en curso'
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -248,7 +271,7 @@ async function readSesion($: EngineInterface): Promise<Semana | null> {
 }
 
 /**
- * Anota la fila de una petición de subagente si hay exploradores en vuelo. Nunca rechaza:
+ * Anota la fila de una petición de subagente si hay exploradores o revisores en vuelo. Nunca rechaza:
  * un fallo del panel no puede frenar una petición al modelo.
  */
 async function marcarExplorador($: EngineInterface, id: string) {
@@ -266,6 +289,18 @@ async function vaciarFilasExploradores($: EngineInterface) {
     await update($, filasExploradores, () => [])
   } catch {
     // Sin vaciar, el ■ de más solo se ve con un flujo en curso y exploradores en vuelo.
+  }
+}
+
+/**
+ * Vacía las filas anotadas cuando la señal abre una tanda de exploradores o revisores, antes de que
+ * se pida al modelo cualquier subagente de la tanda. Nunca rechaza: no puede frenar una herramienta.
+ */
+async function vaciarAlAbrirTanda($: EngineInterface, s: Senal) {
+  try {
+    if (abreTanda(await read($, flujo), s)) await update($, filasExploradores, () => [])
+  } catch {
+    // Sin vaciar, la fila nueva puede heredar la marca de la tanda anterior.
   }
 }
 
@@ -542,7 +577,9 @@ export const register: Register = on => {
 
     if (r.usage !== null) {
       try {
-        await anotarUso($, r.usage.model || e.model, e.effort, e.agentId !== undefined, r.usage)
+        // La marca se decide al llegar la respuesta: en la fila, `turn.complete` ya pudo cerrar el flujo.
+        const deFlujo = e.agentId === undefined && (await enFlujo($))
+        await anotarUso($, r.usage.model || e.model, e.effort, e.agentId !== undefined, deFlujo, r.usage)
       } catch {
         // Perder una cuenta es mejor que frenar la respuesta.
       }
@@ -590,6 +627,8 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     const s = senalDeHerramienta(e.tool, e as unknown as Record<string, unknown>, e.agentId)
     if (s === null) return next(e)
+
+    if (s.tipo === 'agente') await vaciarAlAbrirTanda($, s)
 
     await marcarFlujo($, (f, t) => (s.tipo === 'pregunta' ? abrirEspera(avanzar(f, s, t), t) : avanzar(f, s, t)))
 
@@ -639,14 +678,19 @@ export const register: Register = on => {
     const anchoBarraDia = Math.max(1, ancho - 6 - 1 - 7)
     const maxDia = (s: Semana) => Math.max(1, ...s.dias.map(x => x.total))
 
-    /** La barra de una fila con subagentes: un `Text` por tramo (principal, subagente y vacío), sin los vacíos. */
-    const barraConSub = (parte: number, sub: number, anchoBarra: number) => {
-      const b = barraPartida(parte, sub, anchoBarra)
+    /** La barra de una fila con flujo o subagentes: un `Text` por tramo (principal, flujo, subagente y vacío), sin los vacíos. */
+    const barraConTramos = (parte: number, flujo: number, sub: number, anchoBarra: number) => {
+      const b = barraTramos(parte, flujo, sub, anchoBarra)
 
       return [
         b.principal !== '' && (
           <Text key="principal" color="claude">
             {b.principal}
+          </Text>
+        ),
+        b.flujo !== '' && (
+          <Text key="flujo" color={COLOR_FLUJO}>
+            {b.flujo}
           </Text>
         ),
         b.sub !== '' && (
@@ -740,8 +784,13 @@ export const register: Register = on => {
                       <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
                     </Box>
                     <Box>
-                      {(f.sub ?? 0) > 0 ? (
-                        barraConSub(parte, ((f.sub ?? 0) / s.total) * 100, Math.max(1, ancho - 7))
+                      {(f.sub ?? 0) > 0 || (f.flujo ?? 0) > 0 ? (
+                        barraConTramos(
+                          parte,
+                          ((f.flujo ?? 0) / s.total) * 100,
+                          ((f.sub ?? 0) / s.total) * 100,
+                          Math.max(1, ancho - 7),
+                        )
                       ) : (
                         <Text color={f.origen === 'subagente' ? COLOR_SUB : 'claude'}>{barra(parte, Math.max(1, ancho - 7))}</Text>
                       )}

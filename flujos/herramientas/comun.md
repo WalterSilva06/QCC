@@ -1,6 +1,6 @@
 # Reglas comunes de /implementador y /implementador-ligero
 
-Fuente única, a nivel usuario (`~/.claude/flujos/comun.md`): las dos skills la inyectan y los planificadores (`planificador`, `planificador-ligero`) la leen. Sirve para cualquier proyecto con git. Lo propio de cada proyecto vive en el proyecto:
+Fuente única, a nivel usuario (`~/.claude/flujos/comun.md`): las dos skills la inyectan y los planificadores (`planificador`, `planificador-ligero`) y el `revisor-plan` la leen. Sirve para cualquier proyecto con git. Lo propio de cada proyecto vive en el proyecto:
 
 - **`.claude/implementador.md`** (reglas del proyecto, opcional): rutas y ejemplos de cada criterio CRÍTICO, infraestructura de tests, qué va a «Queda para ti», archivos que no se leen, riesgos típicos para el planificador y motivos de rechazo para el revisor. **Si dice algo distinto de este archivo, manda el del proyecto.**
 - **`.claude/implementador.json`** (opcional): `verificar` (comandos de verificación, en orden) y `guardia` (archivos protegidos, secretos, migraciones inmutables, scripts y comandos negados). Ejemplo comentado en `~/.claude/flujos/config.ejemplo.md`.
@@ -63,7 +63,7 @@ S2 · …
 
 Verificación final: verificar.mjs <+ revisión integral, si aplica>
 Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>
-Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planificador Opus xhigh | · planificador Sonnet high>
+Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planificador Opus high | · planificador Sonnet high> <· revisión del plan Sonnet high, solo CRÍTICO>
 ```
 
 - Subtareas pequeñas: ≤ 4 archivos de código más sus tests, cada una verificable sola, en orden de dependencia (migración → tipos → servidor → UI → docs).
@@ -76,7 +76,7 @@ Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planific
 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
 - **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno y se conservan el modelo y el esfuerzo de la skill; en segundo plano se pierden. Nunca pases `model` ni `isolation`; `effort`, solo donde tu skill lo indica.
-- Solo los agentes `explorador`, `planificador`, `planificador-ligero`, `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración (de 1 a 3 exploradores en paralelo, §5) y en la revisión integral (hasta 2 revisores en paralelo, §5).
+- Solo los agentes `explorador`, `planificador`, `planificador-ligero`, `revisor-plan` (solo `/implementador`), `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración (de 1 a 3 exploradores en paralelo, §5) y en la revisión integral (hasta 3 revisores en paralelo, §5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5). Nunca la conversación ni el razonamiento de otro agente. Al revisor no le pasas nada del reporte del ejecutor.
 - Preguntas al usuario solo con AskUserQuestion (aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
 - Sin plan aprobado no se despacha ningún ejecutor. Si el plan cambia a mitad de camino, se vuelve a aprobar.
@@ -118,6 +118,16 @@ EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo qu
 ```
 Responde con el plan breve o con `ESCALAR: …`.
 
+**Revisor del plan** (solo CRÍTICO, flujo completo) — `subagent_type: "revisor-plan"`, `description: "Revisar plan <tema>"`
+```
+PEDIDO: <literal>
+CLASIFICACIÓN: CRÍTICO — <criterios #n y por qué>
+BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
+EXPLORACIÓN: <reporte fusionado de §6, el mismo que recibió el planificador>
+PLAN: <el plan completo, con tus completados menores y las PREGUNTAS del planificador si las hay>
+```
+Nada más: ni la conversación ni el razonamiento del planificador. Sin `model` ni `effort`. Responde `APROBADO` o `AJUSTAR` (§6).
+
 **Ejecutor** — antes, `estado.mjs --base` → `BASE_Sn`, `DESDE_Sn`. `subagent_type: "ejecutor"`, `description: "Sn: <título>"`
 ```
 SUBTAREA <n>/<total>: <objetivo>
@@ -149,15 +159,25 @@ VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cue
 ```
 
 **Revisión integral** (completo, CRÍTICO con ≥ 2 subtareas) — como el revisor, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y `ENFOQUE: <uno de los de abajo>`.
-Se reparte en hasta 2 revisores en paralelo, uno por enfoque, sin repetir ninguno:
+Se reparte en hasta 3 revisores en paralelo, uno por enfoque aplicable, sin repetir ninguno:
 - **contratos, tipos y documentación:** cadena de llamadas, tipos, datos de punta a punta, compatibilidad con lo ya persistido, y que lo documentado coincida con el código y las convenciones del proyecto.
 - **tests:** ninguno borrado ni debilitado; los adaptados siguen fallando si falta lo que comprueban.
+- **casos borde y seguridad:** validación de entrada en fronteras; autorización y datos de otro usuario o inquilino; secretos en código o logs; nulls, rangos y errores sin manejar; fechas y husos horarios; concurrencia e idempotencia; redondeo y saldos si hay dinero; lo irreversible (borrados, migraciones sin vuelta). Lo busca en todo el cambio, no subtarea por subtarea.
 
-Si el cambio no toca tests, un solo revisor con el primer enfoque. Las dos llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`. Es seguro porque el árbol ya está quieto y los revisores no editan. En fork mode, uno solo y sin `ENFOQUE`.
+| Enfoque | Corre |
+|---|---|
+| contratos, tipos y documentación | siempre |
+| tests | si el cambio toca tests |
+| casos borde y seguridad | si la Clasificación del plan cita #1, #2, #3, #6 o #9 y el cambio no es solo texto |
+
+«Solo texto»: todos los archivos permitidos son documentación o prompts (`.md`: skills, agentes, reglas, README). Ahí el tercer enfoque no corre, aunque la Clasificación cite #1 o #5.
+
+Sin ninguno de los dos opcionales, queda un solo revisor con el primer enfoque. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`. Es seguro porque el árbol ya está quieto y los revisores no editan. En fork mode, uno solo y sin `ENFOQUE`.
 
 ## 6. Después de cada agente
 
 - **Explorador(es):** con varios, vuelven todos en el mismo turno; fusiónalos en un solo reporte con ARCHIVOS, TESTS, ACOPLAMIENTOS, DATOS y DUDAS, sin duplicados (la misma `ruta:línea` una vez) y con las contradicciones como DUDA. Si uno falla o vuelve sin reporte, sigue con los demás y lee poco su área o relanza ese solo, una vez. Si sus DUDAS cambian el plan, resuélvelas leyendo tú (poco) o llévalas al plan como pregunta.
+- **Revisor del plan:** `APROBADO` → sigue a la aprobación. `AJUSTAR` → no se relanza al planificador ni al `revisor-plan`: el orquestador aplica lo menor o aditivo (un campo faltante, un archivo olvidado, un «hecho cuando» vago, otro orden) y muestra qué cambió. Lo que cambia el enfoque (contratos, tipos o datos de varias subtareas, o el reparto de archivos entre ellas) no lo rediseña: va tal cual bajo el plan, en «Revisión del plan: para decidir», y lo decide el usuario en la aprobación. Si falla o vuelve sin VEREDICTO claro, se repite una vez; si sigue igual, se sigue sin ella avisando «revisión del plan no disponible». No cuenta como ciclo.
 - **Ejecutor:** siempre `estado.mjs --cambios <BASE_Sn> --desde <DESDE_Sn> --permitidos "<…>"`.
   - `ALCANCE: FUERA` → AskUserQuestion: «Aceptar» (amplía el alcance) / «Restaurar» (corrección que deja esos archivos como en la base) / «Detener».
   - `ESTADO: BLOQUEADO` o `NECESITA_ALCANCE` → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / detener. No cuenta como ciclo.
