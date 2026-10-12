@@ -76,7 +76,7 @@ Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planific
 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
 - **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno y se conservan el modelo y el esfuerzo de la skill; en segundo plano se pierden. Nunca pases `model` ni `isolation`; `effort`, solo donde tu skill lo indica.
-- Solo los agentes `explorador`, `planificador`, `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración: de 1 a 3 exploradores en paralelo (§5).
+- Solo los agentes `explorador`, `planificador`, `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración (de 1 a 3 exploradores en paralelo, §5) y en la revisión integral (hasta 2 revisores en paralelo, §5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5). Nunca la conversación ni el razonamiento de otro agente. Al revisor no le pasas nada del reporte del ejecutor.
 - Preguntas al usuario solo con AskUserQuestion (aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
 - Sin plan aprobado no se despacha ningún ejecutor. Si el plan cambia a mitad de camino, se vuelve a aprobar.
@@ -105,7 +105,8 @@ PEDIDO: <literal>
 CLASIFICACIÓN: CRÍTICO — <criterios #n y por qué>
 BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
 EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo que no aplica>
-AJUSTES DEL USUARIO: <solo al re-planificar>
+PLAN VIGENTE: <solo al re-planificar: el plan aprobado, completo>
+AJUSTES DEL USUARIO: <solo al re-planificar: solo el ajuste>
 ```
 
 **Ejecutor** — antes, `estado.mjs --base` → `BASE_Sn`, `DESDE_Sn`. `subagent_type: "ejecutor"`, `description: "Sn: <título>"`
@@ -138,7 +139,12 @@ SUCIOS PREVIOS (no son del flujo): <lista | ninguno>
 VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cuenta)
 ```
 
-**Revisión integral** (completo, CRÍTICO con ≥ 2 subtareas) — como el revisor, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, y además `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>`.
+**Revisión integral** (completo, CRÍTICO con ≥ 2 subtareas) — como el revisor, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y `ENFOQUE: <uno de los de abajo>`.
+Se reparte en hasta 2 revisores en paralelo, uno por enfoque, sin repetir ninguno:
+- **contratos, tipos y documentación:** cadena de llamadas, tipos, datos de punta a punta, compatibilidad con lo ya persistido, y que lo documentado coincida con el código y las convenciones del proyecto.
+- **tests:** ninguno borrado ni debilitado; los adaptados siguen fallando si falta lo que comprueban.
+
+Si el cambio no toca tests, un solo revisor con el primer enfoque. Las dos llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`. Es seguro porque el árbol ya está quieto y los revisores no editan. En fork mode, uno solo y sin `ENFOQUE`.
 
 ## 6. Después de cada agente
 
@@ -148,6 +154,7 @@ VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cue
   - `ESTADO: BLOQUEADO` o `NECESITA_ALCANCE` → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / detener. No cuenta como ciclo.
   - `ESTADO: FALLA`, reporte sin `RESULTADO: VERDE` (salvo proyecto `SIN PASOS`) o salida parcial (tope de turnos) → cuenta como ciclo: Corrección con la falla. No mandes al revisor algo rojo.
 - **Revisor:** APROBADO → sigue. RECHAZADO → Corrección con la lista PROBLEMAS y revisión de nuevo; un ciclo = corrección + revisión. Sin VEREDICTO claro = RECHAZADO.
+- **Revisión integral en paralelo:** vuelven todos en el mismo turno. APROBADO solo si todos aprueban. Si alguno rechaza, une sus PROBLEMAS sin duplicados en una sola Corrección y, hecha, repite la integral solo con los enfoques que rechazaron (un ciclo). Un revisor que falla o vuelve sin VEREDICTO claro se relanza una vez; si sigue igual, cuenta como RECHAZADO.
 - **Ciclos agotados** → DETENIDO: no despachas más y cierras.
 
 ## 7. Cierre

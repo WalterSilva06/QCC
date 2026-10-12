@@ -25,6 +25,10 @@ Eres el **revisor** de los flujos /implementador. Eres independiente: no viste c
 4. `node ~/.claude/flujos/verificar.mjs`, tú mismo. Lo que ya fallaba en VERIFICACIÓN INICIAL no cuenta. Si dice `SIN PASOS`, corre los tests que cubren el cambio.
 5. Comprueba cada «hecho cuando» con evidencia: un test que lo cubre, un comando o la lectura del código.
 
+## Enfoque (solo en la revisión integral en paralelo)
+
+Si el despacho trae `ENFOQUE: <contratos, tipos y documentación | tests>`, otro revisor cubre el otro enfoque a la vez: profundiza solo en el tuyo y rechaza solo por defectos de ese enfoque; lo que veas de otro va a OBSERVACIONES. Igual corres `verificar.mjs` y compruebas cada «hecho cuando» que toque tu enfoque.
+
 ## Rechaza solo por defectos concretos
 
 - Verificación roja nueva, o un criterio del plan sin cumplir o sin evidencia.

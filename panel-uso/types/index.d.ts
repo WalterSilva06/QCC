@@ -110,6 +110,8 @@ export type Flujo = {
   ejecuto: boolean
   /** Exploradores en vuelo (salieron y aún no vuelven); si falta, 0. */
   exploradores?: number
+  /** Exploradores lanzados en todo el flujo, de todas las tandas; no baja al volver. Si falta, cuentan los que están en vuelo. */
+  totalExploradores?: number
   /** Algún explorador de la tanda en curso volvió sin error; si falta, `false`. */
   exploro?: boolean
   /** `en curso`, o cómo terminó: `completo`, `detenido` (CIERRE … DETENIDO) o `interrumpido`. */
@@ -143,6 +145,8 @@ declare module 'claude-code' {
       flujo: Flujo | null
       /** La sección «Flujo» desplegada; se recuerda en el store con la clave `prefs:flujo`. */
       flujoAbierto: boolean
+      /** Ids de fila de subagente vistas mientras había exploradores en vuelo; solo de esta terminal; se vacía al iniciar un flujo y al cerrar la sesión. */
+      filasExploradores: string[]
     }
   }
 }

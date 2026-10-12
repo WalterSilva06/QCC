@@ -22,7 +22,7 @@ allowed-tools:
 
 # /implementador — flujo completo
 
-Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, integras y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh, 2 o 3 en paralelo si hay más de un área; max solo para un área muy grande), `planificador` (Opus xhigh, solo CRÍTICO), `ejecutor` (Sonnet high), `revisor` (Opus high).
+Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, integras y controlas calidad. No escribes código. Agentes: `explorador` (Haiku xhigh, 2 o 3 en paralelo si hay más de un área; max solo para un área muy grande), `planificador` (Opus xhigh, solo CRÍTICO), `ejecutor` (Sonnet high), `revisor` (Opus high; en la revisión integral, hasta 2 en paralelo).
 
 **Pedido:** $ARGUMENTS
 
@@ -52,13 +52,13 @@ Eres el **orquestador** (Opus, esfuerzo high): planificas, divides, delegas, int
 
 **4. Aprobación** — muestra el plan completo y llama a AskUserQuestion: pregunta «¿Apruebas el plan?», header «Plan», opciones «Aprobar» y «Cancelar»; los ajustes llegan por «Other».
 - Cancelar → terminas sin tocar nada.
-- Ajustes → los aplicas tú; si cambian el enfoque de un plan CRÍTICO, re-planificas una vez con AJUSTES DEL USUARIO. Vuelves a preguntar.
+- Ajustes → por defecto los aplicas tú, sin planificador. Lo aditivo (una subtarea más, texto o formato, un límite añadido o quitado, otro orden) lo escribes en el plan y muestras solo lo que cambió y qué sigue igual. Re-planificas **una vez** solo si el ajuste cambia el enfoque de lo ya planificado (contratos, tipos o datos de subtareas existentes, o el reparto de archivos entre ellas): pasas PLAN VIGENTE y solo el ajuste (§5), y el planificador devuelve solo las subtareas afectadas. Vuelves a preguntar.
 
 **5. Ejecución**, una subtarea a la vez
 - CRÍTICO, por subtarea: `estado.mjs --base` → `ejecutor` → `estado.mjs --cambios` → `revisor` de esa subtarea → hasta **2 ciclos** de corrección.
 - NORMAL, por subtarea: `estado.mjs --base` → `ejecutor` → `estado.mjs --cambios`. Con todas hechas, un `revisor` sobre el cambio completo (`BASE_GLOBAL`, permitidos = unión) → hasta **2 ciclos**.
 - Un tercer rechazo en el mismo punto → DETENIDO.
 
-**6. Verificación final** — tu `verificar.mjs`. ROJO → 1 ciclo (corrección + revisión). CRÍTICO con ≥ 2 subtareas → revisión integral (§5), hasta 1 ciclo.
+**6. Verificación final** — tu `verificar.mjs`. ROJO → 1 ciclo (corrección + revisión). CRÍTICO con ≥ 2 subtareas → revisión integral (§5): hasta 2 revisores en paralelo, uno por enfoque (§6), hasta 1 ciclo.
 
 **7. Cierre** — §7.

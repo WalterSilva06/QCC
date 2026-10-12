@@ -2,7 +2,7 @@
 
 import type { SessionContextBreakdown } from 'claude-code'
 
-import type { Desglose, Parte, Pesado } from '../types'
+import type { Desglose, FilaSemana, Parte, Pesado } from '../types'
 
 const MINUTO = 60_000
 const HORA = 60 * MINUTO
@@ -23,6 +23,42 @@ export function barraPartida(parte: number, sub: number, ancho: number): { princ
   const celdasSub = Math.min(Math.max(Math.round((sub / 100) * ancho), 0), llenas)
 
   return { principal: '█'.repeat(llenas - celdasSub), sub: '█'.repeat(celdasSub), vacio: '░'.repeat(ancho - llenas) }
+}
+
+/**
+ * Las etiquetas de las filas en columnas separadas por un espacio: familia, versión (si alguna la
+ * tiene) y esfuerzo, cada una rellenada al más largo. Todas salen del mismo largo; si pasa de `ancho`
+ * (mínimo 1), cada una se recorta por el final con «…» y se rellena hasta `ancho`.
+ */
+export function etiquetasAlineadas(filas: readonly Pick<FilaSemana, 'modelo' | 'esfuerzo'>[], ancho: number): string[] {
+  if (filas.length === 0) return []
+
+  const partes = filas.map(f => {
+    const corte = f.modelo.indexOf(' ')
+
+    return corte < 0
+      ? { familia: f.modelo, version: '', esfuerzo: f.esfuerzo }
+      : { familia: f.modelo.slice(0, corte), version: f.modelo.slice(corte + 1), esfuerzo: f.esfuerzo }
+  })
+  const mayor = (campo: 'familia' | 'version' | 'esfuerzo') => Math.max(...partes.map(p => p[campo].length))
+  const anchoFamilia = mayor('familia')
+  const anchoVersion = mayor('version')
+  const anchoEsfuerzo = mayor('esfuerzo')
+  const limite = Math.max(1, ancho)
+
+  return partes.map(p => {
+    const columnas = [p.familia.padEnd(anchoFamilia)]
+    if (anchoVersion > 0) columnas.push(p.version.padEnd(anchoVersion))
+    columnas.push(p.esfuerzo.padEnd(anchoEsfuerzo))
+
+    const completa = columnas.join(' ')
+    if (completa.length <= limite) return completa
+
+    const corta = completa.trimEnd()
+    if (corta.length <= limite) return corta.padEnd(limite)
+
+    return `${corta.slice(0, limite - 1).trimEnd()}…`.padEnd(limite)
+  })
 }
 
 /** Color de tema según cuánto se usó: verde, ámbar o rojo. */

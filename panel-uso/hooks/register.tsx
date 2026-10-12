@@ -4,13 +4,14 @@ import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, 
 import type { Actividad, Esfuerzo, Flujo, Medida, Semana } from '../types'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
-import { avanzar, iniciarFlujo, nodos, resumenFlujo, senalAlTerminar, senalDeHerramienta, terminarFlujo } from './flujo'
+import { anotarFilaExplorador, avanzar, cuadradosDeFila, iniciarFlujo, nodos, resumenFlujo, senalAlTerminar, senalDeHerramienta, terminarFlujo } from './flujo'
 import {
   aDesglose,
   barra,
   barraPartida,
   cuando,
   duracion,
+  etiquetasAlineadas,
   falta,
   marcador,
   nombreCorto,
@@ -62,8 +63,9 @@ const semanaAbierta = atom({ plugin: 'panel-uso', key: 'semanaAbierta' } as cons
 const actividad = atom({ plugin: 'panel-uso', key: 'actividad' } as const, {})
 const flujo = atom({ plugin: 'panel-uso', key: 'flujo' } as const, null)
 const flujoAbierto = atom({ plugin: 'panel-uso', key: 'flujoAbierto' } as const, false)
+const filasExploradores = atom({ plugin: 'panel-uso', key: 'filasExploradores' } as const, [])
 
-/** Color del ■ de cada fila de «Esta sesión» según su actividad. */
+/** Color de los ■ de cada fila de «Esta sesión» según su actividad (todos de la fila llevan el mismo). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
 
 /** Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. */
@@ -77,6 +79,9 @@ const COLOR_FIN = { completo: 'success', detenido: 'warning', interrumpido: 'err
 
 /** Color del tramo de subagentes en las barras de «Esta semana»; distinto de `claude` y de los de estado. */
 const COLOR_SUB = 'suggestion'
+
+/** Columnas de las cifras de cada fila: total (7) + salida (7). */
+const COLUMNAS_CIFRAS = 14
 
 // Las escrituras al store van en fila: el hilo principal y los subagentes responden a la vez.
 let cola: Promise<unknown> = Promise.resolve()
@@ -213,6 +218,28 @@ async function marcarFlujo($: EngineInterface, cambio: (f: Flujo | null, t: numb
     await update($, flujo, f => cambio(f, t))
   } catch {
     // Sin seguimiento la sección queda como estaba.
+  }
+}
+
+/**
+ * Anota la fila de una petición de subagente si hay exploradores en vuelo. Nunca rechaza:
+ * un fallo del panel no puede frenar una petición al modelo.
+ */
+async function marcarExplorador($: EngineInterface, id: string) {
+  try {
+    const f = await read($, flujo)
+    await update($, filasExploradores, x => anotarFilaExplorador(x, f, id))
+  } catch {
+    // Sin la marca la fila dibuja un solo ■.
+  }
+}
+
+/** Vacía las filas de exploradores. Nunca rechaza: no puede frenar una skill ni el cierre de la sesión. */
+async function vaciarFilasExploradores($: EngineInterface) {
+  try {
+    await update($, filasExploradores, () => [])
+  } catch {
+    // Sin vaciar, el ■ de más solo se ve con un flujo en curso y exploradores en vuelo.
   }
 }
 
@@ -376,7 +403,7 @@ export const register: Register = on => {
       // Sin store arranca plegada.
     }
     try {
-      // `flujo` no se vacía aquí: un `/reload-plugins` a mitad de flujo no lo pierde.
+      // `flujo` y `filasExploradores` no se vacían aquí: un `/reload-plugins` a mitad de flujo no los pierde.
       const guardada = await $.store.get(PREF_FLUJO)
       await update($, flujoAbierto, () => guardada === true)
     } catch {
@@ -437,6 +464,7 @@ export const register: Register = on => {
     }
     // Cualquier razón: el flujo de esta sesión no sigue en la que viene.
     await marcarFlujo($, () => null)
+    await vaciarFilasExploradores($)
     if (e.reason === 'clear') {
       try {
         await update($, medida, m => (m === null ? null : { ventana: m.ventana, limites: m.limites }))
@@ -467,6 +495,8 @@ export const register: Register = on => {
     // La fila se abre y se cierra con el id de la petición, no con el de la respuesta.
     const id = idFila(e.model, e.effort, e.agentId !== undefined)
     await marcarActividad($, (a, t) => iniciarPeticion(a, id, t))
+    // Antes de `next` y fuera del try/finally: no puede frenar la petición ni dejar la actividad sin bajar.
+    if (e.agentId !== undefined) await marcarExplorador($, id)
 
     let pideHerramienta = false
     let r: TurnStepResult
@@ -510,6 +540,12 @@ export const register: Register = on => {
   // Solo observa: el texto de la skill pasa tal cual.
   on('skill.prompt', async ($, e, next) => {
     await marcarFlujo($, (f, t) => iniciarFlujo(e.skill, e.text, t) ?? f)
+    // Un flujo nuevo no hereda las filas del anterior.
+    try {
+      if (iniciarFlujo(e.skill, e.text) !== null) await vaciarFilasExploradores($)
+    } catch {
+      // Sin vaciar, el ■ de más solo se ve con un flujo en curso y exploradores en vuelo.
+    }
 
     return next(e)
   })
@@ -547,6 +583,7 @@ export const register: Register = on => {
     const abierta = await read($, semanaAbierta)
     const act = await read($, actividad)
     const fl = await read($, flujo)
+    const filasExp = await read($, filasExploradores)
     const flAbierto = await read($, flujoAbierto)
     await read($, ahora)
     const t = await $.clock.now()
@@ -582,9 +619,11 @@ export const register: Register = on => {
 
     /**
      * Tokens por modelo y esfuerzo: la misma tabla para la sesión y la semana.
+     * Cada tabla alinea en columnas las etiquetas de sus propias filas (familia · versión · esfuerzo).
      * Bajo cada fila va su barra con el % de la sección (barra + % = ancho).
      * Con `plegable`, plegada muestra solo el título, el total y el botón.
-     * Con `conActividad`, cada fila lleva un ■ (verde: en curso; amarillo: espera; gris: inactiva).
+     * Con `conActividad`, cada fila lleva un ■ (verde: en curso; amarillo: espera; gris: inactiva),
+     * o uno por explorador en vuelo (hasta 3, separados) si es la fila de los exploradores del flujo.
      * El encabezado lleva el total y la salida; si con el botón no caben en `ancho`,
      * queda solo el total y la salida pasa al pie.
      */
@@ -603,6 +642,11 @@ export const register: Register = on => {
       const cabe =
         plegable === undefined || titulo.length + conSalida.length + 1 + `[ ${label} ]`.length <= ancho
       const salidaAlPie = !cabe && s !== null && s.salida > 0 ? `sal ${tokens(s.salida)}` : null
+      // Las etiquetas van en columnas y dejan sitio a las cifras y, con `conActividad`, a los ■ (2 celdas cada uno).
+      const maxCuadros =
+        conActividad && s !== null ? Math.max(0, ...s.filas.map(f => cuadradosDeFila(fl, filasExp, idDeFila(f)))) : 0
+      const etiquetas =
+        s !== null ? etiquetasAlineadas(s.filas, Math.max(1, e.props.bodyColumns - COLUMNAS_CIFRAS - 2 * maxCuadros)) : []
 
       return (
         <Box key={plegable === undefined ? undefined : CLAVE_SEMANA} flexDirection="column" marginTop={1}>
@@ -632,15 +676,20 @@ export const register: Register = on => {
                 <Text dimColor>{'total'.padStart(7)}</Text>
                 <Text dimColor>{'salida'.padStart(7)}</Text>
               </Box>
-              {s.filas.map(f => {
+              {s.filas.map((f, indice) => {
                 const parte = s.total > 0 ? (f.total / s.total) * 100 : 0
 
                 return (
                   <Box key={`${prefijo}-${f.modelo}-${f.esfuerzo}-${f.origen}`} flexDirection="column">
                     <Box>
                       <Box flexGrow={1}>
-                        <Text wrap="truncate-end">{`${f.modelo} ${f.esfuerzo}${f.origen === 'subagente' ? ' · sub' : ''}`}</Text>
-                        {conActividad && <Text color={COLOR_ACTIVIDAD[estadoActividad(act, idDeFila(f), t)]}> ■</Text>}
+                        <Text wrap="truncate-end">{etiquetas[indice] ?? ''}</Text>
+                        {conActividad &&
+                          Array.from({ length: cuadradosDeFila(fl, filasExp, idDeFila(f)) }, (_, i) => (
+                            <Text key={`cuadrado-${i}`} color={COLOR_ACTIVIDAD[estadoActividad(act, idDeFila(f), t)]}>
+                              {' ■'}
+                            </Text>
+                          ))}
                       </Box>
                       <Text>{tokens(f.total).padStart(7)}</Text>
                       <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
@@ -733,6 +782,11 @@ export const register: Register = on => {
                     <Text bold={n.estado === 'actual'} dimColor={n.estado === 'pendiente'} wrap="truncate-end">
                       {n.etiqueta}
                     </Text>
+                    {n.exploradores !== undefined && (
+                      <Text dimColor wrap="truncate-end">
+                        {` ×${n.exploradores}`}
+                      </Text>
+                    )}
                   </Box>
                   {n.ms !== undefined && <Text dimColor>{` ${duracion(n.ms)}`}</Text>}
                 </Box>,

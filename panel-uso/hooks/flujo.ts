@@ -16,8 +16,9 @@ export type Senal =
  * Un paso del flujo tal como se dibuja: ya pasado, el actual o por venir.
  * `ms` es su tiempo: el de los pasados que se visitaron, el en curso del actual y el total en «Terminado».
  * Falta en los saltados, en los pendientes y cuando no se pasó la hora `t`.
+ * `exploradores` solo está en «Exploración»: es el total del flujo; falta si es 0 o si el nodo está pendiente.
  */
-export type Nodo = { etiqueta: string; estado: 'pasado' | 'actual' | 'pendiente'; ms?: number }
+export type Nodo = { etiqueta: string; estado: 'pasado' | 'actual' | 'pendiente'; ms?: number; exploradores?: number }
 
 /** Los pasos de cada flujo, en orden. */
 export const PASOS: Record<Flujo['nombre'], readonly string[]> = {
@@ -141,7 +142,15 @@ export function senalAlTerminar(s: Senal, bien = true): Senal | null {
   return s.tipo === 'agente' && s.nombre === 'explorador' ? { tipo: 'agente-fin', nombre: 'explorador', bien } : null
 }
 
-type Cambio = Partial<Pick<Flujo, 'paso' | 'ejecuto' | 'exploradores' | 'exploro'>>
+type Cambio = Partial<Pick<Flujo, 'paso' | 'ejecuto' | 'exploradores' | 'totalExploradores' | 'exploro'>>
+
+/**
+ * Exploradores lanzados en todo el flujo. En un atom 0.9.5 (sin `totalExploradores`)
+ * toma los que siguen en vuelo como cota inferior.
+ */
+export function exploradoresLanzados(f: Flujo): number {
+  return Math.max(f.totalExploradores ?? 0, f.exploradores ?? 0)
+}
 
 /** Qué cambia en `/implementador` (y en `/implementador-ligero`, que difiere en pocos puntos) con la señal `s`. */
 function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
@@ -167,10 +176,17 @@ function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
       const exploradores = Math.max(0, (f.exploradores ?? 0) - 1)
       const exploro = (f.exploro ?? false) || s.bien
 
-      return exploradores === 0 && exploro && p === 1 ? { paso: 2, exploradores, exploro } : { exploradores, exploro }
+      const totalExploradores = exploradoresLanzados(f)
+
+      return exploradores === 0 && exploro && p === 1 ? { paso: 2, exploradores, totalExploradores, exploro } : { exploradores, totalExploradores, exploro }
     }
     case 'agente':
-      if (s.nombre === 'explorador') return p !== 1 ? { paso: 1, exploradores: 1, exploro: false } : { exploradores: (f.exploradores ?? 0) + 1 }
+      if (s.nombre === 'explorador') {
+        const totalExploradores = exploradoresLanzados(f) + 1
+
+        return p !== 1 ? { paso: 1, exploradores: 1, totalExploradores, exploro: false } : { exploradores: (f.exploradores ?? 0) + 1, totalExploradores }
+      }
+
       if (s.nombre === 'planificador') return ligero ? {} : { paso: 3 }
       if (s.nombre === 'ejecutor') return { paso: 5, ejecuto: true }
       if (s.nombre === 'revisor') return ligero ? { paso: 6 } : p >= 6 ? {} : { paso: 5 }
@@ -259,6 +275,24 @@ export function terminarFlujo(actual: Flujo | null, razon: string, respuesta?: s
 }
 
 /**
+ * Anota el id de una fila de subagente vista con exploradores en vuelo (en el flujo en curso todo
+ * subagente que pide al modelo es entonces un explorador). Si no corresponde anotarla o ya estaba,
+ * devuelve la misma referencia; nunca muta `filas`.
+ */
+export function anotarFilaExplorador<T extends readonly string[]>(filas: T, f: Flujo | null, id: string): T | string[] {
+  if (f === null || f.estado !== 'en curso' || (f.exploradores ?? 0) <= 0 || filas.includes(id)) return filas
+
+  return [...filas, id]
+}
+
+/** Cuántos ■ lleva una fila: uno por explorador en vuelo (de 1 a 3) si es una fila anotada del flujo en curso; si no, 1. */
+export function cuadradosDeFila(f: Flujo | null, filas: readonly string[], id: string): number {
+  if (f === null || f.estado !== 'en curso' || !filas.includes(id)) return 1
+
+  return Math.min(3, Math.max(1, f.exploradores ?? 0))
+}
+
+/**
  * Los pasos del flujo más un último nodo «Terminado», cada uno pasado, actual o pendiente.
  * Con la hora `t` (ms) cada nodo trae su `ms`; sin ella, ninguno.
  */
@@ -266,9 +300,10 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
   const f = completar(actual, t)
   const pasos = pasosDe(f)
   const enCurso = f.estado === 'en curso'
+  const lanzados = exploradoresLanzados(f)
   const lista: Nodo[] = pasos.map((etiqueta, i) => {
     const estado = enCurso ? (i < f.paso ? 'pasado' : i === f.paso ? 'actual' : 'pendiente') : i <= f.paso ? 'pasado' : 'pendiente'
-    const nodo: Nodo = { etiqueta, estado }
+    const nodo: Nodo = etiqueta === 'Exploración' && estado !== 'pendiente' && lanzados >= 1 ? { etiqueta, estado, exploradores: lanzados } : { etiqueta, estado }
 
     if (t === undefined || estado === 'pendiente') return nodo
 

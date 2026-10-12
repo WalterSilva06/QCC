@@ -6,7 +6,9 @@ import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
   PASOS,
   PASOS_AUDITAR,
+  anotarFilaExplorador,
   avanzar,
+  cuadradosDeFila,
   iniciarFlujo,
   nodos,
   pasosDe,
@@ -16,7 +18,7 @@ import {
   terminarFlujo,
 } from '../hooks/flujo'
 import type { Senal } from '../hooks/flujo'
-import { aDesglose, barra, barraPartida, duracion, falta, pct, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
+import { aDesglose, barra, barraPartida, duracion, etiquetasAlineadas, falta, pct, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
   ESPERA_MAX_MS,
   anotar,
@@ -54,6 +56,9 @@ const PANE = {
     view: {},
   },
 } as const
+
+/** El panel con el ancho real del usuario (49 columnas): ahí caben varios ■ en la fila. */
+const PANE_ANCHO = { ...PANE, props: { ...PANE.props, bodyColumns: 49 } } as const
 
 const MEDIDA: SessionMeasureInput = {
   context: { tokens: 96_200, window: 200_000, percent: 48 },
@@ -213,6 +218,48 @@ describe('formato', () => {
 
     expect(t.reduce((s, x) => s + x.celdas, 0)).toBe(20)
     expect(t[0]).toEqual({ celdas: 1, color: 'claude', tipo: 'usado' })
+  })
+
+  test('etiquetasAlineadas: familia, versión y esfuerzo en columnas del mismo largo', async () => {
+    const fila = (modelo: string, esfuerzo: string) => ({ modelo, esfuerzo })
+
+    expect(etiquetasAlineadas([fila('Sonnet 5.5', 'high'), fila('Haiku 5.5', 'max')], 40)).toEqual([
+      'Sonnet 5.5 high',
+      'Haiku  5.5 max ',
+    ])
+    expect(
+      etiquetasAlineadas([fila('Opus 5.5', 'high'), fila('Haiku 5.5', 'xhigh'), fila('Sonnet 5.5', 'high')], 40),
+    ).toEqual(['Opus   5.5 high ', 'Haiku  5.5 xhigh', 'Sonnet 5.5 high '])
+    // Una sola fila no lleva relleno.
+    expect(etiquetasAlineadas([fila('Opus 5.5', 'medium')], 16)).toEqual(['Opus 5.5 medium'])
+    // Principal y subagente del mismo modelo y esfuerzo: la misma etiqueta.
+    expect(etiquetasAlineadas([fila('Haiku 5.5', 'high'), fila('Haiku 5.5', 'high')], 40)).toEqual([
+      'Haiku 5.5 high',
+      'Haiku 5.5 high',
+    ])
+    // La columna de versión se omite solo si todas están vacías; si no, la vacía conserva su hueco.
+    expect(etiquetasAlineadas([fila('Opus', 'high'), fila('Opus 5.5', 'high')], 40)).toEqual([
+      'Opus     high',
+      'Opus 5.5 high',
+    ])
+    expect(etiquetasAlineadas([fila('Opus', 'high'), fila('Haiku', 'max')], 40)).toEqual(['Opus  high', 'Haiku max '])
+    expect(etiquetasAlineadas([], 40)).toEqual([])
+  })
+
+  test('etiquetasAlineadas: si no caben, se recortan por el final con «…» y salen del mismo largo', async () => {
+    const filas = [
+      { modelo: 'Sonnet 5.5', esfuerzo: 'high' },
+      { modelo: 'Haiku 5.5', esfuerzo: 'max' },
+    ]
+
+    // Largo 15: con 14 la segunda cabe sin su relleno (sin «…») y la primera pierde su última letra.
+    expect(etiquetasAlineadas(filas, 14)).toEqual(['Sonnet 5.5 hi…', 'Haiku  5.5 max'])
+    // Con 12 las dos se recortan; el espacio antes de «…» no se deja.
+    expect(etiquetasAlineadas(filas, 12)).toEqual(['Sonnet 5.5… ', 'Haiku  5.5… '])
+    expect(etiquetasAlineadas(filas, 3)).toEqual(['So…', 'Ha…'])
+    // El mínimo es 1 columna.
+    expect(etiquetasAlineadas(filas, 0)).toEqual(['…', '…'])
+    expect(etiquetasAlineadas(filas, 12).map(s => s.length)).toEqual([12, 12])
   })
 })
 
@@ -629,14 +676,33 @@ describe('semana', () => {
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 's-plegar' })
+    const arbol = await ui.findAll({})
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
     expect(textos).toContain('Esta semana')
-    expect(textos).toContain('Opus 5.5 medium')
-    expect(textos).toContain('Opus 5.5 medium · sub')
-    expect(textos).toContain('Opus 5.5 high')
+    // «Esta sesión» ya no dice «· sub»: la fila del subagente es otra fila con la misma etiqueta y su barra en `suggestion`.
+    const todos = arbol.map(n => (n.type === 'Text' ? (n.text ?? '') : ''))
+    const ses = todos.indexOf('Esta sesión')
+    const sem = todos.indexOf('Esta semana')
+    // Las etiquetas de la semana también llevan relleno al largo común: se comparan sin él y acotadas a «Esta semana».
+    const deSemanaTrim = todos.slice(sem).map(t => t.trimEnd())
+    expect(deSemanaTrim).toContain('Opus 5.5 medium')
+    expect(deSemanaTrim).toContain('Opus 5.5 high')
+    // Las etiquetas de la sesión llevan relleno al largo común: se comparan sin él y acotadas a «Esta sesión».
+    const deSesion = todos.slice(ses, sem).map(t => t.trimEnd())
+    expect(deSesion.filter(t => t === 'Opus 5.5 medium')).toHaveLength(2)
+    expect(deSesion.filter(t => t === 'Opus 5.5 high')).toHaveLength(1)
+    expect(deSesion.indexOf('Opus 5.5 medium')).toBeLessThan(deSesion.indexOf('Opus 5.5 high'))
+    expect(
+      arbol
+        .slice(ses, sem)
+        .filter(n => n.type === 'Text' && /^[█░]+$/.test(n.text ?? ''))
+        .map(n => n.props.color),
+    ).toEqual(['claude', 'suggestion', 'claude'])
     expect(textos).toContain('   100k')
-    expect(textos.indexOf('Opus 5.5 medium')).toBeLessThan(textos.indexOf('Opus 5.5 high'))
+    // La semana ordena por total: medium (200k) antes que high (100k).
+    expect(deSemanaTrim.indexOf('Opus 5.5 medium')).toBeGreaterThan(-1)
+    expect(deSemanaTrim.indexOf('Opus 5.5 medium')).toBeLessThan(deSemanaTrim.indexOf('Opus 5.5 high'))
     expect(textos.indexOf('Esfuerzo')).toBeLessThan(textos.indexOf('Esta semana'))
     await ui.unmount()
   })
@@ -729,12 +795,21 @@ describe('semana', () => {
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 's-plegar' })
+    const arbol = await ui.findAll({})
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
     const ses = textos.indexOf('Esta sesión')
     const sem = textos.indexOf('Esta semana')
-    // Esta sesión: una fila por origen.
-    expect(textos.slice(ses, sem)).toContain('Opus 5.5 high')
-    expect(textos.slice(ses, sem)).toContain('Opus 5.5 high · sub')
+    // Esta sesión: una fila por origen, con la misma etiqueta; la del subagente se reconoce por su barra en `suggestion`.
+    expect(textos.slice(ses, sem).filter(t => t === 'Opus 5.5 high')).toHaveLength(2)
+    expect(textos.slice(ses, sem).some(t => t.includes('· sub'))).toBe(false)
+    const sesionArbol = arbol.slice(
+      arbol.findIndex(n => n.type === 'Text' && n.text === 'Esta sesión'),
+      arbol.findIndex(n => n.type === 'Text' && n.text === 'Esta semana'),
+    )
+    expect(sesionArbol.filter(n => n.type === 'Text' && /^[█░]+$/.test(n.text ?? '')).map(n => n.props.color)).toEqual([
+      'claude',
+      'suggestion',
+    ])
     // Esta semana: una sola fila con la suma (2 × 100k de total, 2 × 2k de salida) y sin «· sub».
     const deSemana = textos.slice(sem)
     expect(deSemana.filter(t => t.startsWith('Opus 5.5 high'))).toEqual(['Opus 5.5 high'])
@@ -769,8 +844,9 @@ describe('semana', () => {
 
     // Semana: Opus 200k de 600k (33,3 %) con 100k de subagente (16,7 %) y Sonnet 400k sin subagente.
     // La semana ordena por total: Sonnet (400k) va antes que Opus (200k).
-    const filaSonnet = textos.indexOf('Sonnet 5.5 low', sem)
-    const fila = textos.indexOf('Opus 5.5 high', sem)
+    // Las etiquetas de la semana van en columnas (familia y versión rellenadas): se buscan así, desde «Esta semana».
+    const filaSonnet = textos.findIndex((t, i) => i > sem && t.trimEnd() === 'Sonnet 5.5 low')
+    const fila = textos.findIndex((t, i) => i > sem && t === 'Opus   5.5 high')
     expect(filaSonnet).toBeGreaterThan(sem)
     expect(fila).toBeGreaterThan(filaSonnet)
     // La barra termina en el «%» de su fila; después vienen las barras de «por día».
@@ -790,20 +866,17 @@ describe('semana', () => {
     const sonnet = barras(filaSonnet, fila)
     expect(sonnet.map(n => [n.props.color, n.text])).toEqual([['claude', '█'.repeat(17) + '░'.repeat(8)]])
 
-    // Sesión: cada fila lleva una sola barra; la de « · sub» va entera en `suggestion` y la principal en `claude`.
-    const filaPrincipal = textos.indexOf('Opus 5.5 high', ses)
-    const filaSesionSub = textos.indexOf('Opus 5.5 high · sub', ses)
-    expect(filaPrincipal).toBeGreaterThan(ses)
-    expect(filaSesionSub).toBeGreaterThan(ses)
-    expect(filaSesionSub).toBeLessThan(sem)
-    const barraPrincipal = arbol
-      .slice(filaPrincipal, filaSesionSub > filaPrincipal ? filaSesionSub : sem)
-      .filter(esBarra)
-    const barraSub = arbol
-      .slice(filaSesionSub, filaSesionSub > filaPrincipal ? sem : filaPrincipal)
-      .filter(esBarra)
-    expect(barraPrincipal.map(n => n.props.color)).toEqual(['claude'])
-    expect(barraSub.map(n => n.props.color)).toEqual(['suggestion'])
+    // Sesión: dos filas con la misma etiqueta, cada una con una sola barra; la del subagente va entera en
+    // `suggestion` y la principal en `claude` (el orden entre ambas no importa, se reconocen por el color).
+    const filasSesion = textos.flatMap((t, i) => (t === 'Opus 5.5 high' && i > ses && i < sem ? [i] : []))
+    expect(filasSesion).toHaveLength(2)
+    const primera = filasSesion[0] ?? -1
+    const segunda = filasSesion[1] ?? -1
+    const barraPrimera = arbol.slice(primera, segunda).filter(esBarra)
+    const barraSegunda = arbol.slice(segunda, sem).filter(esBarra)
+    expect(barraPrimera).toHaveLength(1)
+    expect(barraSegunda).toHaveLength(1)
+    expect([...barraPrimera, ...barraSegunda].map(n => n.props.color).sort()).toEqual(['claude', 'suggestion'])
     expect(barras(ses, sem).filter(n => n.props.color === 'suggestion')).toHaveLength(1)
     await ui.unmount()
   })
@@ -830,10 +903,11 @@ describe('semana', () => {
     expect(ses).toBeLessThan(sem)
     const deSesion = textos.slice(ses, sem)
     expect(deSesion).toContain('Opus 5.5 medium')
-    expect(deSesion).not.toContain('Sonnet 5.5 low')
+    expect(deSesion.map(t => t.trimEnd())).not.toContain('Sonnet 5.5 low')
+    // La semana alinea sus dos filas: «Opus» se rellena al ancho de «Sonnet» y «low» al de «medium».
     const deSemana = textos.slice(sem)
-    expect(deSemana).toContain('Opus 5.5 medium')
-    expect(deSemana).toContain('Sonnet 5.5 low')
+    expect(deSemana).toContain('Opus   5.5 medium')
+    expect(deSemana.map(t => t.trimEnd())).toContain('Sonnet 5.5 low')
     await ui.unmount()
   })
 
@@ -863,12 +937,41 @@ describe('semana', () => {
     expect(textos.slice(i, i + 6)).toEqual(['Opus 5.5 medium', ' ■', '   100k', '     2k', '█'.repeat(25), ' 100,0%'])
 
     // Semana: Sonnet 400k de 500k (80 %) y Opus 100k (20 %), cada barra bajo su fila.
-    const j = textos.indexOf('Sonnet 5.5 low', sem)
+    // Las etiquetas de la semana van rellenadas al largo común («low» al ancho de «medium», «Opus» al de «Sonnet»).
+    const j = textos.indexOf('Sonnet 5.5 low   ', sem)
     expect(j).toBeGreaterThan(sem)
-    expect(textos.slice(j, j + 5)).toEqual(['Sonnet 5.5 low', '   400k', '      0', '█'.repeat(20) + '░'.repeat(5), '  80,0%'])
-    const k = textos.indexOf('Opus 5.5 medium', sem)
+    expect(textos.slice(j, j + 5)).toEqual(['Sonnet 5.5 low   ', '   400k', '      0', '█'.repeat(20) + '░'.repeat(5), '  80,0%'])
+    const k = textos.indexOf('Opus   5.5 medium', sem)
     expect(k).toBeGreaterThan(j)
-    expect(textos.slice(k, k + 5)).toEqual(['Opus 5.5 medium', '   100k', '     2k', '█'.repeat(5) + '░'.repeat(20), '  20,0%'])
+    expect(textos.slice(k, k + 5)).toEqual(['Opus   5.5 medium', '   100k', '     2k', '█'.repeat(5) + '░'.repeat(20), '  20,0%'])
+    await ui.unmount()
+  })
+
+  test('«Esta semana» alinea sus etiquetas en columnas, sin cuadrados', async ($, on) => {
+    const h = String(inicioDeHora(AHORA))
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on, { 'uso:otra': { [h]: { [clave('claude-haiku-5-5', 'max')]: [300_000, 0, 0, 0] } } })
+    on('session.id', () => ({ value: 's1' }))
+    motorResponde(on, 'claude-sonnet-5-5')
+    await $.session.measure(MEDIDA)
+
+    await paso($, 'claude-sonnet-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await ui.press({ key: 's-plegar' })
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    const sem = textos.indexOf('Esta semana')
+    expect(sem).toBeGreaterThan(-1)
+
+    // Solo la sección de la semana: la fila de «Esta sesión» no puede satisfacer nada de esto.
+    const deSemana = textos.slice(sem)
+    const etiquetas = deSemana.filter(t => /^(Sonnet|Haiku) +5\.5 /.test(t))
+    expect(etiquetas.slice().sort()).toEqual(['Haiku  5.5 max ', 'Sonnet 5.5 high'])
+    expect(new Set(etiquetas.map(t => t.length)).size).toBe(1)
+    expect(deSemana).not.toContain(' ■')
+    expect(deSemana.some(t => t.includes('■'))).toBe(false)
     await ui.unmount()
   })
 
@@ -903,7 +1006,8 @@ describe('semana', () => {
     expect(sem).toBeGreaterThan(-1)
     // Con 32 columnas «Esta semana» + total con salida + botón caben justo (ajustado: antes '500k').
     expect(textos[sem + 1]).toBe('500k · sal 2k')
-    expect(textos.slice(sem)).not.toContain('Sonnet 5.5 low')
+    // Las etiquetas de la semana llevan relleno: se comparan sin él.
+    expect(textos.slice(sem).map(t => t.trimEnd())).not.toContain('Sonnet 5.5 low')
     expect(textos.slice(sem)).not.toContain('modelo · esfuerzo')
     // «Esta sesión» no se pliega.
     expect(textos.slice(0, sem)).toContain('Opus 5.5 medium')
@@ -912,13 +1016,13 @@ describe('semana', () => {
     await ui.press({ key: 's-plegar' })
     textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
     sem = textos.indexOf('Esta semana')
-    expect(textos.slice(sem)).toContain('Sonnet 5.5 low')
+    expect(textos.slice(sem).map(t => t.trimEnd())).toContain('Sonnet 5.5 low')
     expect((await ui.find({ type: 'Button', key: 's-plegar' }))?.props.label).toBe('Ocultar')
     expect(guardados.get('prefs:semana')).toBe(true)
 
     await ui.press({ key: 's-plegar' })
     textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-    expect(textos.slice(textos.indexOf('Esta semana'))).not.toContain('Sonnet 5.5 low')
+    expect(textos.slice(textos.indexOf('Esta semana')).map(t => t.trimEnd())).not.toContain('Sonnet 5.5 low')
     expect(guardados.get('prefs:semana')).toBe(false)
     await ui.unmount()
   })
@@ -2054,6 +2158,143 @@ describe('flujo (puro)', () => {
     expect(() => nodos(viejo, 3_000)).not.toThrow()
     expect(() => resumenFlujo(viejo, 3_000)).not.toThrow()
   })
+
+  test('totalExploradores suma en cada tanda y se conserva al volver y al cerrar', async () => {
+    const A = agente('explorador')
+    const F = agenteFin('explorador')
+    let f = iniciarFlujo('implementador', '', 0)
+
+    for (const s of [A, A, A, F, F, F]) f = avanzar(f, s, 1_000)
+    expect(f).toMatchObject({ totalExploradores: 3, exploradores: 0, paso: 2 })
+
+    // Otra tanda desde Clasificación: el total sigue y suma; los en vuelo reinician.
+    f = avanzar(f, A, 2_000)
+    expect(f).toMatchObject({ totalExploradores: 4, exploradores: 1, paso: 1 })
+
+    const cerrado = terminarFlujo(f, 'answer', 'CIERRE · ok', 3_000)
+    expect(cerrado).toMatchObject({ totalExploradores: 4, estado: 'completo' })
+    expect(avanzar(cerrado, A, 4_000)).toBe(cerrado)
+    expect(avanzar(cerrado, F, 4_000)).toBe(cerrado)
+    expect(terminarFlujo(f, 'clear', undefined, 3_000)).toMatchObject({ totalExploradores: 4, estado: 'interrumpido' })
+
+    // El ligero cuenta igual y lo muestra el nodo de Exploración.
+    let ligero = iniciarFlujo('implementador-ligero', '', 0)
+    for (const s of [A, A, F, F]) ligero = avanzar(ligero, s, 1_000)
+    expect(nodos(ligero as Flujo)[1].exploradores).toBe(2)
+  })
+
+  test('nodos: Exploración lleva exploradores solo si hubo y no está pendiente; /documentar nunca', async () => {
+    const A = agente('explorador')
+    const F = agenteFin('explorador')
+    const nuevo = iniciarFlujo('implementador', '', 0) as Flujo
+
+    // Sin exploradores el nodo no trae la propiedad.
+    expect(nodos(nuevo)[1]).toEqual({ etiqueta: 'Exploración', estado: 'pendiente' })
+
+    let f: Flujo | null = nuevo
+    // La primera señal abre Exploración a 1 s; el último regreso, a 6 s, la cierra con 5 s.
+    const senales = [A, A, A, F, F, F]
+
+    for (const [i, s] of senales.entries()) f = avanzar(f, s, 1_000 * (i + 1))
+
+    expect(nodos(f as Flujo)[1]).toEqual({ etiqueta: 'Exploración', estado: 'pasado', exploradores: 3 })
+    expect(nodos(f as Flujo, 7_000)[1]).toEqual({ etiqueta: 'Exploración', estado: 'pasado', exploradores: 3, ms: 5_000 })
+
+    const fin = terminarFlujo(f, 'answer', 'CIERRE · ok', 6_000) as Flujo
+    expect(nodos(fin)[1].exploradores).toBe(3)
+    expect(nodos(fin, 9_000)[1].exploradores).toBe(3)
+
+    // Exploración en curso con lanzados en vuelo.
+    const enVuelo = avanzar(avanzar(nuevo, A, 1_000), A, 1_000) as Flujo
+    expect(nodos(enVuelo, 2_000)[1]).toMatchObject({ estado: 'actual', exploradores: 2 })
+
+    // Volver al paso 0: Exploración queda pendiente y no lleva el total.
+    const atras = avanzar(f, estado('preflight'), 2_000) as Flujo
+    expect(atras.paso).toBe(0)
+    expect(nodos(atras)[1]).toEqual({ etiqueta: 'Exploración', estado: 'pendiente' })
+    expect(nodos(atras, 3_000)[1].exploradores).toBeUndefined()
+
+    // /documentar no tiene Exploración, aunque el flujo traiga el campo.
+    const documentar = { ...(iniciarFlujo('documentar', '', 0) as Flujo), totalExploradores: 3 }
+    expect(nodos(documentar, 1_000).some(n => n.exploradores !== undefined)).toBe(false)
+  })
+
+  test('un flujo con la forma 0.9.5 (exploradores sin totalExploradores) no lanza', async () => {
+    const A = agente('explorador')
+    const F = agenteFin('explorador')
+    const viejo: Flujo = {
+      nombre: 'implementador',
+      variante: null,
+      paso: 1,
+      ejecuto: false,
+      estado: 'en curso',
+      exploradores: 2,
+      exploro: false,
+      inicio: 0,
+      desde: 1_000,
+      tiempos: { 0: 1_000 },
+      fin: null,
+    }
+
+    // Sin total, los en vuelo son la cota inferior; al primer regreso se fija.
+    expect(nodos(viejo, 2_000)[1].exploradores).toBe(2)
+    expect(avanzar(viejo, F, 3_000)).toMatchObject({ exploradores: 1, totalExploradores: 2 })
+    expect(avanzar(viejo, A, 3_000)).toMatchObject({ exploradores: 3, totalExploradores: 3 })
+    expect(() => nodos(viejo, 3_000)).not.toThrow()
+    expect(() => resumenFlujo(viejo, 3_000)).not.toThrow()
+
+    // Un flujo congelado no se muta.
+    const congelado: Flujo = Object.freeze({ ...viejo, tiempos: Object.freeze({ 0: 1_000 }) })
+    expect(() => avanzar(congelado, A, 3_000)).not.toThrow()
+    expect(() => avanzar(congelado, F, 3_000)).not.toThrow()
+    expect(congelado.exploradores).toBe(2)
+    expect(congelado.totalExploradores).toBeUndefined()
+  })
+
+  test('anotarFilaExplorador y cuadradosDeFila', async () => {
+    const base = iniciarFlujo('implementador', '', 0) as Flujo
+    const con = (n: number): Flujo => ({ ...base, exploradores: n })
+    const fila = 'Haiku 5.5|high|subagente'
+    const otra = 'Opus 5.5|high|principal'
+    const vacias: string[] = []
+
+    // Sin flujo: no anota y da 1.
+    expect(anotarFilaExplorador(vacias, null, fila)).toBe(vacias)
+    expect(cuadradosDeFila(null, [fila], fila)).toBe(1)
+
+    // En curso con 3 en vuelo: anota y da 3 (con 5, tope de 3).
+    const anotadas = anotarFilaExplorador(vacias, con(3), fila)
+    expect(anotadas).toEqual([fila])
+    expect(vacias).toEqual([])
+    expect(cuadradosDeFila(con(3), anotadas, fila)).toBe(3)
+    expect(cuadradosDeFila(con(5), anotadas, fila)).toBe(3)
+    expect(cuadradosDeFila(con(2), anotadas, fila)).toBe(2)
+
+    // Con 0 en vuelo (o sin el campo): ni anota ni multiplica.
+    expect(anotarFilaExplorador(vacias, con(0), fila)).toBe(vacias)
+    expect(anotarFilaExplorador(vacias, base, fila)).toBe(vacias)
+    expect(cuadradosDeFila(con(0), anotadas, fila)).toBe(1)
+    expect(cuadradosDeFila(base, anotadas, fila)).toBe(1)
+
+    // Flujo terminado: ni anota ni multiplica.
+    const terminado = terminarFlujo(con(3), 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
+    expect(terminado.estado).toBe('completo')
+    expect(anotarFilaExplorador(vacias, terminado, fila)).toBe(vacias)
+    expect(cuadradosDeFila(terminado, anotadas, fila)).toBe(1)
+
+    // Otra fila no anotada: 1.
+    expect(cuadradosDeFila(con(3), anotadas, otra)).toBe(1)
+
+    // No duplica y devuelve la misma referencia si no cambia.
+    expect(anotarFilaExplorador(anotadas, con(3), fila)).toBe(anotadas)
+    expect(anotarFilaExplorador(anotadas, con(3), otra)).toEqual([fila, otra])
+
+    // Una entrada congelada no se muta.
+    const congeladas = Object.freeze([fila])
+    expect(() => anotarFilaExplorador(congeladas, con(2), otra)).not.toThrow()
+    expect(anotarFilaExplorador(congeladas, con(2), otra)).toEqual([fila, otra])
+    expect(congeladas).toEqual([fila])
+  })
 })
 
 type Ui = Awaited<ReturnType<Engine['ui']['mount']>>
@@ -2096,10 +2337,22 @@ function motorControlado(on: On, modelo: string) {
   return { detener, pidenHerramienta, fallan }
 }
 
-/** El `color` del ■ que sigue a la etiqueta de la fila (el primero del árbol con ese texto). */
-async function colorDe(ui: Ui, etiqueta: string): Promise<unknown> {
+/** Una barra de fila: solo `█` y `░`. */
+const esBarraDeFila = (n: { type: string; text?: string | undefined }) => n.type === 'Text' && /^[█░]+$/.test(n.text ?? '')
+
+/**
+ * El `color` del ■ que sigue a la etiqueta de la fila. La etiqueta se compara sin el relleno final;
+ * principal y subagente del mismo modelo y esfuerzo comparten etiqueta, así que la fila de subagente
+ * (`subagente`) se reconoce por el color `suggestion` de su barra y la principal por no tenerlo.
+ */
+async function colorDe(ui: Ui, etiqueta: string, subagente = false): Promise<unknown> {
   const arbol = await ui.findAll({})
-  const i = arbol.findIndex(n => n.type === 'Text' && n.text === etiqueta)
+  const i = arbol.findIndex(
+    (n, j) =>
+      n.type === 'Text' &&
+      (n.text ?? '').trimEnd() === etiqueta &&
+      (arbol.slice(j + 1).find(esBarraDeFila)?.props.color === 'suggestion') === subagente,
+  )
   const cuadrado = arbol.slice(i + 1).find(n => n.type === 'Text' && n.text === ' ■')
 
   return i === -1 ? undefined : cuadrado?.props.color
@@ -2149,13 +2402,13 @@ describe('actividad en el panel', () => {
     await paso($, 'claude-opus-5-5', 'high')
 
     expect(await colorDe(ui, 'Opus 5.5 high')).toBe('warning')
-    expect(await colorDe(ui, 'Opus 5.5 high · sub')).toBe('success')
+    expect(await colorDe(ui, 'Opus 5.5 high', true)).toBe('success')
 
     // Al terminar el subagente el principal sigue esperando su herramienta (hasta turn.complete o una nueva petición).
     abrirSub()
     await sub
     expect(await colorDe(ui, 'Opus 5.5 high')).toBe('warning')
-    expect(await colorDe(ui, 'Opus 5.5 high · sub')).toBe('subtle')
+    expect(await colorDe(ui, 'Opus 5.5 high', true)).toBe('subtle')
     await ui.unmount()
   })
 
@@ -2230,7 +2483,7 @@ describe('actividad en el panel', () => {
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
     const sem = textos.indexOf('Esta semana')
 
-    expect(textos.slice(sem)).toContain('Opus 5.5 high')
+    expect(textos.slice(sem).map(t => t.trimEnd())).toContain('Opus 5.5 high')
     expect(textos.slice(sem)).not.toContain(' ■')
     expect(textos.slice(0, sem).filter(t => t === ' ■')).toHaveLength(2)
     await ui.unmount()
@@ -2280,7 +2533,8 @@ function motorStore(on: On, inicial: Record<string, unknown> = {}) {
 
 /**
  * Lo que el panel dibuja de «Flujo» abierta en `/implementador · Ejecución`, texto por texto,
- * con los tiempos del recorrido del test (5 s, 20 s, 3 s, 1 min y 1 min 30 s en curso; `Plan` se saltó y no lleva tiempo).
+ * con los tiempos del recorrido del test (5 s, 20 s, 3 s, 1 min y 1 min 30 s en curso; `Plan` se saltó y no lleva tiempo)
+ * y el conteo de exploradores lanzados (` ×1`) junto a `Exploración`, antes de su tiempo.
  */
 const FLUJO_EJECUCION = [
   'Flujo',
@@ -2291,6 +2545,7 @@ const FLUJO_EJECUCION = [
   '│',
   '✓ ',
   'Exploración',
+  ' ×1',
   ' 20 s',
   '│',
   '✓ ',
@@ -2608,6 +2863,44 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
+  test('Exploración muestra cuántos exploradores se lanzaron: ×3 en paralelo, ×4 con otra tanda y sigue tras Terminado', async ($, on) => {
+    const motor = preparar(on)
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+    const tras = async (etiqueta: string, n: number) => {
+      const textos = await textosDe(ui)
+      const i = textos.indexOf(etiqueta)
+
+      return textos.slice(i + 1, i + 1 + n)
+    }
+
+    const abrirA = motor.detener('A')
+    const abrirB = motor.detener('B')
+    const abrirC = motor.detener('C')
+    const a = agente($, 'explorador', 'A')
+    const b = agente($, 'explorador', 'B')
+    const c = agente($, 'explorador', 'C')
+    await esperar()
+    expect((await tras('Exploración', 1))[0]).toBe(' ×3')
+
+    abrirA()
+    abrirB()
+    abrirC()
+    await Promise.all([a, b, c])
+    await agente($, 'explorador', 'D')
+    expect((await tras('Exploración', 1))[0]).toBe(' ×4')
+
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    const despues = await tras('Exploración', 2)
+    expect(despues[0]).toBe(' ×4')
+    expect(despues[1]).toMatch(/^ \d+ (s|min)/)
+    await ui.unmount()
+  })
+
   test('con /implementador-ligero, dos exploradores en paralelo: Escalado cuando vuelve el segundo', async ($, on) => {
     const motor = preparar(on)
     await $.skill.prompt({ skill: 'implementador-ligero', text: '' })
@@ -2724,6 +3017,293 @@ describe('flujo en el panel', () => {
 
     await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
     expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])
+    await ui.unmount()
+  })
+
+  const HAIKU = 'claude-haiku-5-5'
+  const FILA_EXPLORADOR = 'Haiku 5.5 high'
+
+  /**
+   * Los `color` de los ■ seguidos que siguen a la etiqueta de la fila, y si tras ellos viene la cifra de total.
+   * La etiqueta se compara sin el relleno final; la fila de subagente (`subagente`) comparte etiqueta con
+   * la principal y se reconoce por el color `suggestion` de su barra.
+   */
+  const cuadradosDe = async (ui: Ui, etiqueta: string, subagente = false) => {
+    const arbol = await ui.findAll({})
+    const i = arbol.findIndex(
+      (n, k) =>
+        n.type === 'Text' &&
+        (n.text ?? '').trimEnd() === etiqueta &&
+        (arbol.slice(k + 1).find(esBarraDeFila)?.props.color === 'suggestion') === subagente,
+    )
+    const colores: unknown[] = []
+    let j = i + 1
+    while (i !== -1 && arbol[j]?.type === 'Text' && arbol[j]?.text === ' ■') colores.push(arbol[j++]?.props.color)
+
+    return { colores, total: /^ *\d/.test(arbol[j]?.text ?? ''), juntos: arbol.some(n => n.type === 'Text' && n.text === '■■■') }
+  }
+
+  /**
+   * Un flujo en Exploración con tres exploradores en vuelo (A, B y C retenidos) y una petición completa
+   * del modelo de un subagente, que crea la fila de «Esta sesión».
+   */
+  async function explorando($: Engine, on: On) {
+    // Con `mock.clock` (hora fija): el `clock.every` de `preparar` deja el panel sin responder tras un session.start con llamadas retenidas.
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    on('session.id', () => ({ value: 's1' }))
+    motorStore(on)
+    const motor = motorFlujo(on)
+    const modelo = motorControlado(on, HAIKU)
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    const abrir = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
+    const vuelos = { A: agente($, 'explorador', 'A'), B: agente($, 'explorador', 'B'), C: agente($, 'explorador', 'C') }
+    await esperar()
+    await paso($, HAIKU, 'high', 'agente-A')
+
+    return { ui, motor, modelo, abrir, vuelos }
+  }
+
+  test('la fila de los exploradores lleva un ■ por explorador en vuelo (hasta 3) y vuelve a uno', async ($, on) => {
+    const { ui, modelo, abrir, vuelos } = await explorando($, on)
+    await paso($, HAIKU, 'high')
+
+    let sub = await cuadradosDe(ui, FILA_EXPLORADOR, true)
+    expect(sub.colores).toEqual(['subtle', 'subtle', 'subtle'])
+    expect(sub.total).toBe(true)
+    expect(sub.juntos).toBe(false)
+    // Otras filas siempre llevan uno.
+    expect((await cuadradosDe(ui, 'Haiku 5.5 high')).colores).toHaveLength(1)
+
+    // Otra petición de esa fila en vuelo: los tres, del mismo color.
+    const abrirPeticion = modelo.detener('agente-A')
+    const peticion = paso($, HAIKU, 'high', 'agente-A')
+    await esperar()
+    sub = await cuadradosDe(ui, FILA_EXPLORADOR, true)
+    expect(sub.colores).toEqual(['success', 'success', 'success'])
+    expect((await cuadradosDe(ui, 'Haiku 5.5 high')).colores).toHaveLength(1)
+
+    abrir.B()
+    await vuelos.B
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(2)
+
+    abrir.A()
+    abrir.C()
+    await Promise.all([vuelos.A, vuelos.C])
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(1)
+
+    abrirPeticion()
+    await peticion
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toEqual(['subtle'])
+    await ui.unmount()
+  })
+
+  test('con más de tres exploradores en vuelo la fila lleva tres ■', async ($, on) => {
+    const { ui, motor, abrir, vuelos } = await explorando($, on)
+    const abrirD = motor.detener('D')
+    const abrirE = motor.detener('E')
+    const extra = [agente($, 'explorador', 'D'), agente($, 'explorador', 'E')]
+    await esperar()
+
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(3)
+
+    abrirD()
+    abrirE()
+    abrir.A()
+    abrir.B()
+    abrir.C()
+    await Promise.all([...Object.values(vuelos), ...extra])
+    await ui.unmount()
+  })
+
+  test('los ■ de más sobreviven a session.start y se van con session.end', async ($, on) => {
+    const { ui, abrir, vuelos } = await explorando($, on)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(3)
+
+    // Un /reload-plugins a mitad de la exploración repite session.start: el flujo y las marcas siguen.
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(3)
+
+    // session.end borra el flujo y las marcas.
+    await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(1)
+
+    abrir.A()
+    abrir.B()
+    abrir.C()
+    await Promise.all(Object.values(vuelos))
+    await ui.unmount()
+  })
+
+  test('un flujo nuevo no hereda las filas: con exploradores en vuelo la fila vuelve a uno hasta que se la vea de nuevo', async ($, on) => {
+    const { ui, motor, abrir, vuelos } = await explorando($, on)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(3)
+
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    const abrirD = motor.detener('D')
+    const abrirE = motor.detener('E')
+    const d = agente($, 'explorador', 'D')
+    const e = agente($, 'explorador', 'E')
+    await esperar()
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(1)
+
+    await paso($, HAIKU, 'high', 'agente-A')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(2)
+
+    abrirD()
+    abrirE()
+    abrir.A()
+    abrir.B()
+    abrir.C()
+    await Promise.all([d, e, ...Object.values(vuelos)])
+    await ui.unmount()
+  })
+
+  test('si el flujo termina con exploradores en vuelo, la fila vuelve a uno', async ($, on) => {
+    const { ui, abrir, vuelos } = await explorando($, on)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(3)
+
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR, true)).colores).toHaveLength(1)
+
+    abrir.A()
+    abrir.B()
+    abrir.C()
+    await Promise.all(Object.values(vuelos))
+    await ui.unmount()
+  })
+
+  /**
+   * Como `explorando`, pero el modelo responde con el que se le pide (la fila principal y la de subagente
+   * pueden ser de modelos distintos) y el panel se monta con el ancho dado.
+   */
+  async function alineando($: Engine, on: On, pane: typeof PANE | typeof PANE_ANCHO) {
+    const motor = preparar(on)
+    on('turn.step', async function* (_$, e) {
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: 'ok',
+        toolUses: [],
+        stopReason: 'end_turn' as const,
+        usage: { ...USO, model: e.model },
+      }
+    })
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+
+    const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
+    const abrir = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
+    const vuelos = { A: agente($, 'explorador', 'A'), B: agente($, 'explorador', 'B'), C: agente($, 'explorador', 'C') }
+    await esperar()
+    await paso($, 'claude-haiku-5-5', 'high', 'agente-A')
+    await paso($, 'claude-sonnet-5-5', 'high')
+
+    return { ui, abrir, vuelos }
+  }
+
+  /** Cada fila de «Esta sesión»: su etiqueta, cuántos ■ lleva, si tras ellos viene el total y el color de su barra. */
+  const filasDeSesion = async (ui: Ui) => {
+    const arbol = await ui.findAll({})
+    const ses = arbol.findIndex(n => n.type === 'Text' && n.text === 'Esta sesión')
+    const sem = arbol.findIndex(n => n.type === 'Text' && n.text === 'Esta semana')
+    const dentro = arbol.slice(ses, sem)
+
+    return dentro.flatMap((n, i) => {
+      if (n.type !== 'Text' || n.text === ' ■' || dentro[i + 1]?.text !== ' ■') return []
+
+      let j = i + 1
+      while (dentro[j]?.type === 'Text' && dentro[j]?.text === ' ■') j++
+
+      return [
+        {
+          etiqueta: n.text ?? '',
+          cuadrados: j - i - 1,
+          total: /^ *\d/.test(dentro[j]?.text ?? ''),
+          barra: dentro.slice(j).find(esBarraDeFila)?.props.color,
+        },
+      ]
+    })
+  }
+
+  test('Esta sesión alinea las filas y los ■ empiezan en la misma columna', async ($, on) => {
+    const { ui, abrir, vuelos } = await alineando($, on, PANE_ANCHO)
+
+    // Con 3 exploradores en vuelo: la fila de subagente lleva 3 ■ y la principal 1, tras etiquetas del mismo largo.
+    let filas = await filasDeSesion(ui)
+    expect(filas.map(f => f.etiqueta).sort()).toEqual(['Haiku  5.5 high', 'Sonnet 5.5 high'])
+    expect(filas.map(f => f.etiqueta.length)).toEqual([15, 15])
+    expect(filas.map(f => f.cuadrados).sort()).toEqual([1, 3])
+    expect(filas.every(f => f.total)).toBe(true)
+    expect(filas.find(f => f.etiqueta === 'Haiku  5.5 high')?.cuadrados).toBe(3)
+    expect(filas.find(f => f.etiqueta === 'Sonnet 5.5 high')?.cuadrados).toBe(1)
+
+    // Sin exploradores en vuelo: una sola ■ en cada fila y las mismas etiquetas.
+    abrir.A()
+    abrir.B()
+    abrir.C()
+    await Promise.all(Object.values(vuelos))
+    filas = await filasDeSesion(ui)
+    expect(filas.map(f => f.etiqueta).sort()).toEqual(['Haiku  5.5 high', 'Sonnet 5.5 high'])
+    expect(filas.map(f => f.etiqueta.length)).toEqual([15, 15])
+    expect(filas.map(f => f.cuadrados)).toEqual([1, 1])
+    await ui.unmount()
+  })
+
+  test('principal y subagente del mismo modelo y esfuerzo salen con la misma etiqueta; el subagente lleva la barra en `suggestion`', async ($, on) => {
+    const { ui, abrir, vuelos } = await alineando($, on, PANE_ANCHO)
+    await paso($, 'claude-haiku-5-5', 'high')
+
+    const filas = await filasDeSesion(ui)
+    const haiku = filas.filter(f => f.etiqueta === 'Haiku  5.5 high')
+    expect(haiku).toHaveLength(2)
+    expect(haiku.map(f => f.barra).sort()).toEqual(['claude', 'suggestion'])
+    expect(haiku.find(f => f.barra === 'suggestion')?.cuadrados).toBe(3)
+    expect(haiku.find(f => f.barra === 'claude')?.cuadrados).toBe(1)
+    expect(filas.some(f => f.etiqueta.includes('sub'))).toBe(false)
+    expect(filas.find(f => f.etiqueta.startsWith('Sonnet'))?.barra).toBe('claude')
+
+    abrir.A()
+    abrir.B()
+    abrir.C()
+    await Promise.all(Object.values(vuelos))
+    await ui.unmount()
+  })
+
+  test('con 32 columnas las etiquetas se acortan al presupuesto y las cifras de total siguen apareciendo', async ($, on) => {
+    const { ui, abrir, vuelos } = await alineando($, on, PANE)
+
+    // Presupuesto: 32 − 14 de cifras − 2 × 3 ■ = 12 columnas para la etiqueta.
+    const filas = await filasDeSesion(ui)
+    expect(filas.map(f => f.etiqueta).sort()).toEqual(['Haiku  5.5… ', 'Sonnet 5.5… '])
+    expect(filas.map(f => f.etiqueta.length)).toEqual([12, 12])
+    expect(filas.every(f => f.total)).toBe(true)
+    const textos = await textosDe(ui)
+    expect(textos.slice(0, textos.indexOf('Esta semana'))).toContain('   100k')
+
+    abrir.A()
+    abrir.B()
+    abrir.C()
+    await Promise.all(Object.values(vuelos))
     await ui.unmount()
   })
 })
