@@ -4,7 +4,24 @@ import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, 
 import type { Actividad, Esfuerzo, Flujo, Medida, Semana } from '../types'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
-import { anotarFilaExplorador, avanzar, cuadradosDeFila, iniciarFlujo, nodos, resumenFlujo, senalAlTerminar, senalDeHerramienta, terminarFlujo } from './flujo'
+import {
+  abrirEspera,
+  anotarFilaExplorador,
+  avanzar,
+  baseDeUso,
+  cerrarEspera,
+  congelarConsumo,
+  consumoDeFlujo,
+  cuadradosDeFila,
+  iniciarFlujo,
+  marcarOrquestador,
+  nodos,
+  nombreOrquestador,
+  resumenFlujo,
+  senalAlTerminar,
+  senalDeHerramienta,
+  terminarFlujo,
+} from './flujo'
 import {
   aDesglose,
   barra,
@@ -218,6 +235,15 @@ async function marcarFlujo($: EngineInterface, cambio: (f: Flujo | null, t: numb
     await update($, flujo, f => cambio(f, t))
   } catch {
     // Sin seguimiento la sección queda como estaba.
+  }
+}
+
+/** Lo gastado por esta sesión, fila por fila. Nunca rechaza: sin ello el consumo del flujo queda sin dato. */
+async function readSesion($: EngineInterface): Promise<Semana | null> {
+  try {
+    return await read($, sesion)
+  } catch {
+    return null
   }
 }
 
@@ -490,6 +516,8 @@ export const register: Register = on => {
       } catch {
         // El panel no puede frenar una petición al modelo.
       }
+      // Con qué modelo trabaja el orquestador: la skill dice uno, pero la sesión puede estar en otro.
+      await marcarFlujo($, f => marcarOrquestador(f, nombreOrquestador(e.model, e.effort)))
     }
 
     // La fila se abre y se cierra con el id de la petición, no con el de la respuesta.
@@ -531,7 +559,13 @@ export const register: Register = on => {
       } catch {
         // La espera caduca sola a los 30 min.
       }
-      await marcarFlujo($, (f, t) => terminarFlujo(f, e.reason, e.answer, t))
+      // Lo gastado hasta aquí queda fijo en el flujo que acaba de terminar; el trabajo que siga en la sesión no lo mueve.
+      const ses = await readSesion($)
+      await marcarFlujo($, (f, t) => {
+        const fin = terminarFlujo(f, e.reason, e.answer, t)
+
+        return f !== null && f.estado === 'en curso' ? congelarConsumo(fin, ses) : fin
+      })
     }
 
     return next(e)
@@ -539,7 +573,9 @@ export const register: Register = on => {
 
   // Solo observa: el texto de la skill pasa tal cual.
   on('skill.prompt', async ($, e, next) => {
-    await marcarFlujo($, (f, t) => iniciarFlujo(e.skill, e.text, t) ?? f)
+    // Lo que la sesión ya gastó, para descontarlo del consumo del flujo nuevo.
+    const base = baseDeUso(await readSesion($))
+    await marcarFlujo($, (f, t) => iniciarFlujo(e.skill, e.text, t, base) ?? f)
     // Un flujo nuevo no hereda las filas del anterior.
     try {
       if (iniciarFlujo(e.skill, e.text) !== null) await vaciarFilasExploradores($)
@@ -555,7 +591,16 @@ export const register: Register = on => {
     const s = senalDeHerramienta(e.tool, e as unknown as Record<string, unknown>, e.agentId)
     if (s === null) return next(e)
 
-    await marcarFlujo($, (f, t) => avanzar(f, s, t))
+    await marcarFlujo($, (f, t) => (s.tipo === 'pregunta' ? abrirEspera(avanzar(f, s, t), t) : avanzar(f, s, t)))
+
+    // Mientras la pregunta espera al usuario, ese tiempo es espera y no trabajo; se cierra siempre, también si falla o se interrumpe.
+    if (s.tipo === 'pregunta') {
+      try {
+        return await next(e)
+      } finally {
+        await marcarFlujo($, (f, t) => cerrarEspera(f, t))
+      }
+    }
 
     const fin = senalAlTerminar(s)
     if (fin === null) return next(e)
@@ -728,6 +773,10 @@ export const register: Register = on => {
       )
     }
 
+    // Lo que gastó el flujo: en curso se calcula con la sesión; terminado, lo fijado al terminar.
+    const filasConsumo = fl === null ? [] : fl.estado === 'en curso' ? consumoDeFlujo(fl, ses) : (fl.consumo ?? [])
+    const etiquetasConsumo = etiquetasAlineadas(filasConsumo, Math.max(1, e.props.bodyColumns - COLUMNAS_CIFRAS))
+
     const limites = m?.limites ?? []
     const nivel = esf === null ? '—' : esf.nivel
 
@@ -760,6 +809,11 @@ export const register: Register = on => {
           <Text dimColor wrap="truncate-end">
             {resumenFlujo(fl, t)}
           </Text>
+          {flAbierto && fl?.orquestador !== undefined && (
+            <Text dimColor wrap="truncate-end">
+              {`orquestador ${fl.orquestador}`}
+            </Text>
+          )}
           {flAbierto &&
             fl !== null &&
             nodos(fl, t).flatMap((n, i, todos) => {
@@ -787,11 +841,48 @@ export const register: Register = on => {
                         {` ×${n.exploradores}`}
                       </Text>
                     )}
+                    {n.veces !== undefined && (
+                      <Text dimColor wrap="truncate-end">
+                        {` ×${n.veces}`}
+                      </Text>
+                    )}
+                    {n.revisiones !== undefined && (
+                      <Text dimColor wrap="truncate-end">
+                        {` · rev ×${n.revisiones}`}
+                      </Text>
+                    )}
                   </Box>
                   {n.ms !== undefined && <Text dimColor>{` ${duracion(n.ms)}`}</Text>}
+                  {n.esperaUsuario !== undefined && <Text dimColor>{` · espera ${duracion(n.esperaUsuario)}`}</Text>}
                 </Box>,
               ]
             })}
+          {flAbierto && filasConsumo.length > 0 && (
+            <Box flexDirection="column" marginTop={1}>
+              <Box>
+                <Box flexGrow={1}>
+                  <Text dimColor>consumo</Text>
+                </Box>
+                <Text>
+                  {totalConSalida(
+                    filasConsumo.reduce((suma, f) => suma + f.total, 0),
+                    filasConsumo.reduce((suma, f) => suma + f.salida, 0),
+                  )}
+                </Text>
+              </Box>
+              {filasConsumo.map((f, i) => (
+                <Box key={`consumo-${idDeFila(f)}`}>
+                  <Box flexGrow={1}>
+                    <Text color={f.origen === 'subagente' ? COLOR_SUB : undefined} wrap="truncate-end">
+                      {etiquetasConsumo[i] ?? ''}
+                    </Text>
+                  </Box>
+                  <Text>{tokens(f.total).padStart(7)}</Text>
+                  <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
+                </Box>
+              ))}
+            </Box>
+          )}
         </Box>
         <Box>
           <Box flexGrow={1}>

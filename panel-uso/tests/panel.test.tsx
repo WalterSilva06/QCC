@@ -6,11 +6,18 @@ import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
   PASOS,
   PASOS_AUDITAR,
+  abrirEspera,
   anotarFilaExplorador,
   avanzar,
+  baseDeUso,
+  cerrarEspera,
+  congelarConsumo,
+  consumoDeFlujo,
   cuadradosDeFila,
   iniciarFlujo,
+  marcarOrquestador,
   nodos,
+  nombreOrquestador,
   pasosDe,
   resumenFlujo,
   senalAlTerminar,
@@ -39,7 +46,7 @@ import {
   unirOrigenes,
 } from '../hooks/semana'
 import type { Cuentas, Registro } from '../hooks/semana'
-import type { Actividad, Flujo, Semana } from '../types'
+import type { Actividad, FilaSemana, Flujo, Semana } from '../types'
 
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
 
@@ -1947,7 +1954,7 @@ describe('flujo (puro)', () => {
     const fin = terminarFlujo(f, 'answer', 'CIERRE · ok', 3_900_000) as Flujo
     const final = nodos(fin, 9_999_999)
 
-    expect(final[5]).toEqual({ etiqueta: 'Ejecución', estado: 'pasado', ms: 3_870_000 })
+    expect(final[5]).toEqual({ etiqueta: 'Ejecución', estado: 'pasado', veces: 1, ms: 3_870_000 })
     expect(final.at(-1)).toEqual({ etiqueta: 'Terminado', estado: 'actual', ms: 3_900_000 })
     expect(final.slice(6, 8).map(n => n.ms)).toEqual([undefined, undefined])
     // El total de un flujo terminado no sigue corriendo con la hora.
@@ -2003,7 +2010,7 @@ describe('flujo (puro)', () => {
     const f: Flujo = Object.freeze({ ...original })
 
     const a = avanzar(f, agente('ejecutor'), 4_000)
-    expect(a).toEqual({ ...f, paso: 5, ejecuto: true, desde: 4_000, tiempos: { 3: 500, 4: 3_000 } })
+    expect(a).toEqual({ ...f, paso: 5, ejecuto: true, ejecuciones: 1, desde: 4_000, tiempos: { 3: 500, 4: 3_000 } })
     expect(a).not.toBe(f)
     expect(avanzar(f, estado('diff'), 4_000)).toEqual(f)
     expect(terminarFlujo(f, 'answer', 'CIERRE · x — DETENIDO', 4_000)?.estado).toBe('detenido')
@@ -2036,6 +2043,7 @@ describe('flujo (puro)', () => {
       ...viejo,
       paso: 5,
       ejecuto: true,
+      ejecuciones: 1,
       inicio: 9_000,
       desde: 9_000,
       tiempos: { 4: 0 },
@@ -2251,6 +2259,239 @@ describe('flujo (puro)', () => {
     expect(congelado.totalExploradores).toBeUndefined()
   })
 
+  test('Plan, Ejecución y revisores cuentan cada lanzamiento: re-plan, correcciones y revisión integral en paralelo', async () => {
+    const R = agente('revisor')
+    const senales = [
+      agente('planificador'),
+      agente('planificador'),
+      pregunta(true),
+      estado('base'),
+      agente('ejecutor'),
+      agente('ejecutor'),
+      agente('ejecutor'),
+      R,
+      R,
+      R,
+      verificar,
+      R,
+      R,
+    ]
+    let f = iniciarFlujo('implementador', '', 0)
+    for (const s of senales) f = avanzar(f, s, 1_000)
+
+    expect(f).toMatchObject({ paso: 6, planes: 2, ejecuciones: 3, revisiones: { 5: 3, 6: 2 } })
+
+    const lista = nodos(f as Flujo)
+
+    expect(lista[3]).toEqual({ etiqueta: 'Plan', estado: 'pasado', veces: 2 })
+    expect(lista[5]).toEqual({ etiqueta: 'Ejecución', estado: 'pasado', veces: 3, revisiones: 3 })
+    expect(lista[6]).toEqual({ etiqueta: 'Verificación final', estado: 'actual', revisiones: 2 })
+    expect(lista.filter((_, i) => ![3, 5, 6].includes(i)).some(n => n.veces !== undefined || n.revisiones !== undefined)).toBe(false)
+
+    // Se conservan tras terminar.
+    const fin = terminarFlujo(f, 'answer', 'CIERRE · ok', 2_000) as Flujo
+    expect(fin).toMatchObject({ planes: 2, ejecuciones: 3, revisiones: { 5: 3, 6: 2 } })
+    expect(nodos(fin)[3].veces).toBe(2)
+    expect(nodos(fin)[5]).toMatchObject({ veces: 3, revisiones: 3 })
+    expect(nodos(fin)[6].revisiones).toBe(2)
+    expect(nodos(fin).at(-1)).toEqual({ etiqueta: 'Terminado', estado: 'actual' })
+
+    // Con el paso pendiente faltan.
+    const atras = avanzar(f, estado('preflight'), 3_000) as Flujo
+    expect(atras.paso).toBe(0)
+    expect(nodos(atras).some(n => n.veces !== undefined || n.revisiones !== undefined)).toBe(false)
+
+    // Que vuelva el ejecutor no cuenta.
+    expect(avanzar(f, agenteFin('ejecutor'))).toEqual(f)
+
+    // Un flujo congelado, con `revisiones` congelado, no se muta.
+    const congelado: Flujo = Object.freeze({ ...(f as Flujo), revisiones: Object.freeze({ 5: 3, 6: 2 }) })
+    expect(() => avanzar(congelado, R, 4_000)).not.toThrow()
+    expect(avanzar(congelado, R, 4_000)?.revisiones).toEqual({ 5: 3, 6: 3 })
+    expect(congelado.revisiones).toEqual({ 5: 3, 6: 2 })
+  })
+
+  test('contadores en /implementador-ligero (Ejecución y Revisión) y nunca en /documentar', async () => {
+    const senales = [agente('planificador'), estado('base'), agente('ejecutor'), agente('ejecutor'), agente('revisor'), agente('revisor')]
+    let f = iniciarFlujo('implementador-ligero', '', 0)
+    for (const s of senales) f = avanzar(f, s, 1_000)
+
+    const lista = nodos(f as Flujo)
+
+    expect(lista[5]).toEqual({ etiqueta: 'Ejecución', estado: 'pasado', veces: 2 })
+    expect(lista[6]).toEqual({ etiqueta: 'Revisión', estado: 'actual', veces: 2 })
+    expect(lista.some(n => n.revisiones !== undefined)).toBe(false)
+    expect(lista[3]).toEqual({ etiqueta: 'Plan breve', estado: 'pasado' })
+    expect(f?.planes).toBeUndefined()
+
+    // /documentar ignora los campos aunque el atom los traiga.
+    const documentar: Flujo = { ...(iniciarFlujo('documentar', '', 0) as Flujo), paso: 5, planes: 2, ejecuciones: 2, revisiones: { 5: 1 } }
+    expect(nodos(documentar, 1_000).some(n => n.veces !== undefined || n.revisiones !== undefined)).toBe(false)
+    expect(avanzar(documentar, agente('revisor-doc'), 1_000)).toMatchObject({ planes: 2, ejecuciones: 2, revisiones: { 5: 1 } })
+  })
+
+  test('un flujo con la forma 0.9.7 (sin planes, ejecuciones ni revisiones) no lanza: Ejecución toma `ejecuto` como cota y cuenta desde ahí', async () => {
+    const viejo: Flujo = {
+      nombre: 'implementador',
+      variante: null,
+      paso: 5,
+      ejecuto: true,
+      totalExploradores: 2,
+      estado: 'en curso',
+      inicio: 0,
+      desde: 1_000,
+      tiempos: { 0: 1_000 },
+      fin: null,
+    }
+
+    expect(nodos(viejo, 2_000)[5]).toMatchObject({ etiqueta: 'Ejecución', veces: 1 })
+    expect(nodos(viejo, 2_000)[3].veces).toBeUndefined()
+    expect(avanzar(viejo, agente('ejecutor'), 2_000)?.ejecuciones).toBe(2)
+    expect(avanzar(viejo, agente('revisor'), 2_000)?.revisiones).toEqual({ 5: 1 })
+    expect(avanzar(viejo, agente('planificador'), 2_000)?.planes).toBe(1)
+
+    // La forma 0.9.3 tampoco lanza.
+    const muyViejo = { nombre: 'implementador', variante: null, paso: 5, ejecuto: true, estado: 'en curso' } as unknown as Flujo
+    expect(() => nodos(muyViejo, 3_000)).not.toThrow()
+    expect(() => resumenFlujo(muyViejo, 3_000)).not.toThrow()
+    expect(nodos(muyViejo, 3_000)[5].veces).toBe(1)
+  })
+
+  test('la espera del usuario no suma al paso ni al trabajo: va aparte en su paso y en Terminado', async () => {
+    let f = iniciarFlujo('implementador', '', 0)
+    f = avanzar(f, agente('explorador'), 5_000)
+    f = avanzar(f, agenteFin('explorador'), 25_000)
+    f = abrirEspera(avanzar(f, pregunta(true), 30_000), 30_000)
+    expect(f).toMatchObject({ paso: 4, desde: 30_000, preguntaDesde: 30_000, tiempos: { 0: 5_000, 1: 20_000, 2: 5_000, 4: 0 } })
+
+    // Con la pregunta abierta, Aprobación no cuenta trabajo: todo el tiempo es espera.
+    expect(nodos(f, 90_000)[4]).toEqual({ etiqueta: 'Aprobación', estado: 'actual', ms: 0, esperaUsuario: 60_000 })
+    expect(resumenFlujo(f, 90_000)).toBe('/implementador · Aprobación · 30 s')
+    // Sin hora, ningún nodo lleva espera.
+    expect(nodos(f).some(n => n.esperaUsuario !== undefined)).toBe(false)
+
+    // Al responder, la espera queda en Aprobación y el trabajo sigue desde ahí.
+    f = cerrarEspera(f, 330_000)
+    expect(f).toMatchObject({ paso: 4, desde: 330_000, preguntaDesde: null, esperaUsuario: { 4: 300_000 } })
+    f = avanzar(f, estado('base'), 340_000)
+    expect(f?.tiempos[4]).toBe(10_000)
+
+    // Otra pregunta en Ejecución: la espera se anota en su paso.
+    f = abrirEspera(f, 400_000)
+    f = cerrarEspera(f, 460_000)
+    expect(f?.esperaUsuario).toEqual({ 4: 300_000, 5: 60_000 })
+
+    f = terminarFlujo(f, 'answer', 'CIERRE · ok — COMPLETO', 500_000)
+    expect(f?.estado).toBe('completo')
+    expect(Object.values(f?.tiempos ?? {}).reduce((suma, ms) => suma + ms, 0)).toBe(140_000)
+
+    const lista = f ? nodos(f, 600_000) : []
+    expect(lista[4]).toMatchObject({ etiqueta: 'Aprobación', ms: 10_000, esperaUsuario: 300_000 })
+    expect(lista[5]).toMatchObject({ etiqueta: 'Ejecución', ms: 100_000, esperaUsuario: 60_000 })
+    expect(lista[3].esperaUsuario).toBeUndefined()
+    expect(lista.at(-1)).toEqual({ etiqueta: 'Terminado', estado: 'actual', ms: 140_000, esperaUsuario: 360_000 })
+    expect(resumenFlujo(f, 600_000)).toBe('/implementador · Terminado · 2 min 20 s')
+    expect(nodos(f as Flujo).some(n => n.esperaUsuario !== undefined)).toBe(false)
+  })
+
+  test('abrirEspera y cerrarEspera: idempotentes, sin efecto sin flujo o ya terminado, y un cambio de paso con la pregunta abierta no cuenta como trabajo', async () => {
+    const f = iniciarFlujo('implementador', '', 0) as Flujo
+
+    // Sin flujo, nada.
+    expect(abrirEspera(null, 1_000)).toBeNull()
+    expect(cerrarEspera(null, 1_000)).toBeNull()
+
+    // Cerrar sin espera abierta devuelve lo mismo; abrir dos veces, también.
+    expect(cerrarEspera(f, 1_000)).toBe(f)
+    const abierta = abrirEspera(f, 10_000) as Flujo
+    expect(abierta).not.toBe(f)
+    expect(abierta.preguntaDesde).toBe(10_000)
+    expect(abrirEspera(abierta, 20_000)).toBe(abierta)
+
+    // Terminado no se toca.
+    const terminado = terminarFlujo(f, 'answer', 'CIERRE · x — COMPLETO', 50_000)
+    expect(abrirEspera(terminado, 60_000)).toBe(terminado)
+    expect(cerrarEspera(terminado, 60_000)).toBe(terminado)
+
+    // No muta un flujo congelado.
+    const congelado: Flujo = Object.freeze({ ...abierta, tiempos: Object.freeze({ ...abierta.tiempos }), esperaUsuario: Object.freeze({ 0: 1_000 }) })
+    const copia: Flujo = JSON.parse(JSON.stringify(congelado))
+    expect(abrirEspera(congelado, 30_000)).toBe(congelado)
+    expect(cerrarEspera(congelado, 30_000)).toMatchObject({ preguntaDesde: null, esperaUsuario: { 0: 21_000 }, desde: 30_000 })
+    expect(abrirEspera(f, 5_000)).toMatchObject({ preguntaDesde: 5_000 })
+    expect(congelado).toEqual(copia)
+
+    // Cambio de paso con la pregunta abierta: el paso que se deja no suma trabajo y la espera va al paso en que cierra.
+    let g = avanzar(f, agente('planificador'), 0) as Flujo
+    g = abrirEspera(g, 30_000) as Flujo
+    g = avanzar(g, estado('base'), 40_000) as Flujo
+    expect(g).toMatchObject({ paso: 5, desde: 40_000, preguntaDesde: 30_000 })
+    // Plan trabajó hasta abrir la pregunta (30 s); el cambio de paso no le suma nada más.
+    expect(g.tiempos[3]).toBe(30_000)
+    const enCurso = nodos(g, 50_000)
+    expect(enCurso[3]).toEqual({ etiqueta: 'Plan', estado: 'pasado', ms: 30_000, veces: 1 })
+    expect(enCurso[5]).toEqual({ etiqueta: 'Ejecución', estado: 'actual', ms: 0, esperaUsuario: 20_000 })
+    g = cerrarEspera(g, 70_000) as Flujo
+    expect(g.esperaUsuario).toEqual({ 5: 40_000 })
+    expect(nodos(g, 80_000)[3].esperaUsuario).toBeUndefined()
+    expect(nodos(g, 80_000)[5]).toEqual({ etiqueta: 'Ejecución', estado: 'actual', ms: 10_000, esperaUsuario: 40_000 })
+  })
+
+  test('interrumpir con una pregunta abierta: terminarFlujo cierra la espera a su hora y el orden con la vuelta de la pregunta no cambia el resultado', async () => {
+    const abierta = abrirEspera(avanzar(iniciarFlujo('implementador', '', 0), pregunta(true), 5_000), 5_000) as Flujo
+
+    // Escape: el turno termina antes que la vuelta de la pregunta.
+    const interrumpido = terminarFlujo(abierta, 'aborted', undefined, 65_000) as Flujo
+    expect(interrumpido).toMatchObject({ estado: 'interrumpido', fin: 65_000, preguntaDesde: null, esperaUsuario: { 4: 60_000 } })
+    expect(nodos(interrumpido, 90_000).at(-1)).toEqual({ etiqueta: 'Terminado · interrumpido', estado: 'actual', ms: 5_000, esperaUsuario: 60_000 })
+    expect(resumenFlujo(interrumpido, 90_000)).toBe('/implementador · Terminado · interrumpido · 5 s')
+
+    // La vuelta tardía no cambia nada.
+    expect(cerrarEspera(interrumpido, 95_000)).toBe(interrumpido)
+
+    // Al revés: primero la vuelta y luego el fin, a la misma hora, da los mismos nodos.
+    const alReves = terminarFlujo(cerrarEspera(abierta, 65_000), 'aborted', undefined, 65_000) as Flujo
+    expect(nodos(alReves, 90_000)).toEqual(nodos(interrumpido, 90_000))
+    expect(resumenFlujo(alReves, 90_000)).toBe(resumenFlujo(interrumpido, 90_000))
+
+    // Sin espera abierta, terminarFlujo no agrega campos de espera.
+    const sinEspera = terminarFlujo(iniciarFlujo('implementador', '', 0), 'aborted', undefined, 1_000) as Flujo
+    expect(sinEspera).not.toHaveProperty('esperaUsuario')
+    expect(sinEspera).not.toHaveProperty('preguntaDesde')
+  })
+
+  test('formas 0.9.3 a 0.9.7 (sin espera) no lanzan con abrirEspera, cerrarEspera, nodos y resumenFlujo', async () => {
+    const muyViejo = { nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso' } as unknown as Flujo
+    const viejo: Flujo = {
+      nombre: 'implementador',
+      variante: null,
+      paso: 5,
+      ejecuto: true,
+      totalExploradores: 2,
+      estado: 'en curso',
+      inicio: 0,
+      desde: 1_000,
+      tiempos: { 0: 1_000 },
+      fin: null,
+    }
+
+    for (const forma of [muyViejo, viejo]) {
+      expect(() => nodos(forma, 5_000)).not.toThrow()
+      expect(() => resumenFlujo(forma, 5_000)).not.toThrow()
+      expect(cerrarEspera(forma, 5_000)).toBe(forma)
+      expect(nodos(forma, 5_000).some(n => n.esperaUsuario !== undefined)).toBe(false)
+
+      const abierta = abrirEspera(forma, 5_000)
+      expect(abierta).toMatchObject({ paso: forma.paso, desde: 5_000, preguntaDesde: 5_000 })
+      expect(nodos(abierta as Flujo, 8_000)[forma.paso]).toMatchObject({ estado: 'actual', esperaUsuario: 3_000 })
+      expect(() => resumenFlujo(abierta, 8_000)).not.toThrow()
+
+      const cerrada = cerrarEspera(abierta, 8_000)
+      expect(cerrada).toMatchObject({ preguntaDesde: null, esperaUsuario: { [forma.paso]: 3_000 } })
+      expect(resumenFlujo(cerrada, 8_000)).toMatch(/^\/implementador · (Aprobación|Ejecución) · /)
+    }
+  })
+
   test('anotarFilaExplorador y cuadradosDeFila', async () => {
     const base = iniciarFlujo('implementador', '', 0) as Flujo
     const con = (n: number): Flujo => ({ ...base, exploradores: n })
@@ -2294,6 +2535,93 @@ describe('flujo (puro)', () => {
     expect(() => anotarFilaExplorador(congeladas, con(2), otra)).not.toThrow()
     expect(anotarFilaExplorador(congeladas, con(2), otra)).toEqual([fila, otra])
     expect(congeladas).toEqual([fila])
+  })
+
+  /** Una sesión con esas filas, ya ordenadas como las deja `resumir` (de mayor a menor total). */
+  const sesionCon = (filas: FilaSemana[]): Semana =>
+    Object.freeze({
+      desde: 0,
+      filas: Object.freeze(filas.map(f => Object.freeze(f))) as unknown as FilaSemana[],
+      total: filas.reduce((s, f) => s + f.total, 0),
+      salida: filas.reduce((s, f) => s + f.salida, 0),
+      registroDesde: null,
+      dias: [],
+    }) as Semana
+  const fila = (modelo: string, esfuerzo: string, origen: 'principal' | 'subagente', total: number, salida: number): FilaSemana => ({ modelo, esfuerzo, origen, total, salida })
+
+  test('baseDeUso y consumoDeFlujo: el flujo gasta lo que la sesión sumó desde que empezó, fila por fila', async () => {
+    const antes = sesionCon([fila('Opus 5.5', 'high', 'principal', 1_000, 100), fila('Haiku 5.5', 'xhigh', 'subagente', 700, 70)])
+    const base = baseDeUso(antes)
+    expect(base).toEqual({ 'Opus 5.5|high|principal': [1_000, 100], 'Haiku 5.5|xhigh|subagente': [700, 70] })
+
+    // Sin filas o sin sesión no hay base, y el flujo no lleva el campo.
+    expect(baseDeUso(null)).toBeUndefined()
+    expect(baseDeUso(sesionCon([]))).toBeUndefined()
+    expect(iniciarFlujo('implementador', '', 5)).not.toHaveProperty('usoBase')
+    expect(iniciarFlujo('implementador', '', 5, {})).not.toHaveProperty('usoBase')
+    const f = iniciarFlujo('implementador', '', 5, base) as Flujo
+    expect(f.usoBase).toEqual(base)
+
+    const despues = sesionCon([
+      fila('Opus 5.5', 'high', 'principal', 3_000, 400),
+      fila('Sonnet 5.5', 'high', 'subagente', 5_000, 500),
+      fila('Haiku 5.5', 'xhigh', 'subagente', 700, 70),
+    ])
+    // Solo lo que subió, de mayor a menor; la fila que no se movió no sale.
+    expect(consumoDeFlujo(f, despues)).toEqual([
+      fila('Sonnet 5.5', 'high', 'subagente', 5_000, 500),
+      fila('Opus 5.5', 'high', 'principal', 2_000, 300),
+    ])
+    // Una fila que bajó (no debería pasar) no sale ni da negativos.
+    expect(consumoDeFlujo(f, sesionCon([fila('Opus 5.5', 'high', 'principal', 500, 50)]))).toEqual([])
+    expect(consumoDeFlujo(f, null)).toEqual([])
+    // Un flujo sin base (anterior a este campo) cuenta toda la sesión.
+    const sinBase = iniciarFlujo('implementador', '', 5) as Flujo
+    expect(consumoDeFlujo(sinBase, despues).map(x => x.total)).toEqual([5_000, 3_000, 700])
+  })
+
+  test('congelarConsumo: fija el consumo al terminar una sola vez y no escribe un valor vacío', async () => {
+    const base = baseDeUso(sesionCon([fila('Opus 5.5', 'high', 'principal', 1_000, 100)]))
+    const en = iniciarFlujo('implementador', '', 0, base) as Flujo
+    const ses = sesionCon([fila('Opus 5.5', 'high', 'principal', 4_000, 300)])
+
+    // Sin flujo o en curso: la misma referencia.
+    expect(congelarConsumo(null, ses)).toBeNull()
+    expect(congelarConsumo(en, ses)).toBe(en)
+
+    const fin = terminarFlujo(en, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
+    const fijo = congelarConsumo(fin, ses) as Flujo
+    expect(fijo.consumo).toEqual([fila('Opus 5.5', 'high', 'principal', 3_000, 200)])
+
+    // Lo que la sesión gaste después ya no lo mueve; tampoco con otra sesión distinta.
+    const mas = sesionCon([fila('Opus 5.5', 'high', 'principal', 9_000, 900)])
+    expect(congelarConsumo(fijo, mas)).toBe(fijo)
+
+    // Sin gasto nuevo no se escribe un consumo vacío, y un flujo sin sesión queda como estaba.
+    const quieto = sesionCon([fila('Opus 5.5', 'high', 'principal', 1_000, 100)])
+    expect(congelarConsumo(fin, quieto)).toBe(fin)
+    expect(congelarConsumo(fin, null)).toBe(fin)
+    expect(fin).not.toHaveProperty('consumo')
+  })
+
+  test('nombreOrquestador y marcarOrquestador: el modelo real del hilo principal, solo mientras el flujo está en curso', async () => {
+    expect(nombreOrquestador('claude-opus-5-5', 'high')).toBe('Opus 5.5 high')
+    expect(nombreOrquestador('claude-sonnet-5-5', 'xhigh')).toBe('Sonnet 5.5 xhigh')
+    expect(nombreOrquestador('claude-haiku-5-5', undefined)).toBe('Haiku 5.5 —')
+
+    const f = iniciarFlujo('implementador', '', 0) as Flujo
+    expect(marcarOrquestador(null, 'Opus 5.5 high')).toBeNull()
+
+    const opus = marcarOrquestador(f, 'Opus 5.5 high') as Flujo
+    expect(opus.orquestador).toBe('Opus 5.5 high')
+    expect(f).not.toHaveProperty('orquestador')
+    // El mismo nombre: la misma referencia; otro modelo: el último gana.
+    expect(marcarOrquestador(opus, 'Opus 5.5 high')).toBe(opus)
+    expect((marcarOrquestador(opus, 'Sonnet 5.5 high') as Flujo).orquestador).toBe('Sonnet 5.5 high')
+
+    // Terminado: no cambia.
+    const fin = terminarFlujo(opus, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
+    expect(marcarOrquestador(fin, 'Sonnet 5.5 high')).toBe(fin)
   })
 })
 
@@ -2574,7 +2902,11 @@ const FLUJO_EJECUCION = [
 ]
 
 describe('flujo en el panel', () => {
-  /** El motor bajo los plugins: la skill y el turno responden tal cual; `Agent` espera su compuerta y puede fallar. */
+  /**
+   * El motor bajo los plugins: la skill y el turno responden tal cual; `Agent` espera su compuerta y puede fallar.
+   * `AskUserQuestion` también: `detener('AskUserQuestion')` la retiene (el usuario aún no responde) y
+   * `fallan.add('AskUserQuestion')` la hace rechazar.
+   */
   function motorFlujo(on: On) {
     const llamadas: string[] = []
     const compuertas = new Map<string, Promise<void>>()
@@ -2582,6 +2914,11 @@ describe('flujo en el panel', () => {
     on('skill.prompt', (_$, e) => ({ text: e.text }))
     on('tool.call', async (_$, e) => {
       llamadas.push(e.tool)
+      if (e.tool === 'AskUserQuestion') {
+        await compuertas.get('AskUserQuestion')
+        if (fallan.has('AskUserQuestion')) throw new Error('pregunta cancelada')
+      }
+
       if (e.tool === 'Agent') {
         // La compuerta y el fallo se piden por tipo de agente o por `description` (para distinguir exploradores en paralelo).
         const tipo = e.subagent_type ?? ''
@@ -2640,6 +2977,64 @@ describe('flujo en el panel', () => {
     isAborted: extra.reason === 'aborted',
     turnId: 't',
     ...(extra.agentId === undefined ? {} : { agentId: extra.agentId }),
+  })
+
+  test('«Flujo» muestra el orquestador real y lo que gastó el flujo, sin lo que la sesión gastó antes ni después', async ($, on) => {
+    preparar(on)
+    on('turn.step', async function* (_$, e) {
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: 'ok',
+        toolUses: [],
+        stopReason: 'end_turn' as const,
+        usage: { ...USO, model: e.model },
+      }
+    })
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+    /** Lo que dibuja «Flujo»: del título al de «Contexto». */
+    const deFlujo = async () => {
+      const arbol = await ui.findAll({})
+      const i = arbol.findIndex(n => n.type === 'Text' && n.text === 'Flujo')
+      const j = arbol.findIndex(n => n.type === 'Text' && n.text === 'Contexto')
+
+      return arbol.slice(i, j).filter(n => n.type === 'Text')
+    }
+    const textos = async () => (await deFlujo()).map(n => (n.text ?? '').trim())
+
+    // La sesión ya gastó 100k (2k de salida) antes del flujo: no cuenta, y mientras nada gaste no hay bloque.
+    await paso($, 'claude-opus-5-5', 'high')
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    expect(await textos()).not.toContain('consumo')
+    expect(await textos()).not.toContain('orquestador Opus 5.5 high')
+
+    // El orquestador responde con Sonnet aunque la skill pida Opus; un explorador (Haiku) responde aparte.
+    await paso($, 'claude-sonnet-5-5', 'high')
+    await paso($, 'claude-haiku-5-5', 'xhigh', 'agente-A')
+    let t = await textos()
+    expect(t).toContain('orquestador Sonnet 5.5 high')
+    expect(t).toContain('consumo')
+    expect(t).toContain('200k · sal 4k')
+    expect(t.filter(x => x === '100k')).toHaveLength(2)
+    expect(t.filter(x => x === '2k')).toHaveLength(2)
+    expect(t).toContain('Sonnet 5.5 high')
+    expect(t).toContain('Haiku  5.5 xhigh')
+    // El subagente se reconoce por el color; el hilo principal no lleva.
+    const nodos = await deFlujo()
+    expect(nodos.find(n => (n.text ?? '').trim() === 'Haiku  5.5 xhigh')?.props.color).toBe('suggestion')
+    expect(nodos.find(n => (n.text ?? '').trim() === 'Sonnet 5.5 high')?.props.color).toBeUndefined()
+
+    // Al terminar queda fijo: lo que la sesión gaste después no lo mueve, y el orquestador tampoco cambia.
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    await paso($, 'claude-opus-5-5', 'high')
+    t = await textos()
+    expect(t).toContain('200k · sal 4k')
+    expect(t).not.toContain('300k · sal 6k')
+    expect(t).toContain('orquestador Sonnet 5.5 high')
+    await ui.unmount()
   })
 
   test('«Flujo» arranca plegada y sin flujo: tecla f, Ver/Ocultar y prefs:flujo', async ($, on) => {
@@ -2834,6 +3229,114 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
+  /** Una `AskUserQuestion` con el header «Plan», como la que abre la Aprobación. */
+  const preguntarPlan = ($: Engine) =>
+    $.tool.call({
+      tool: 'AskUserQuestion',
+      questions: [
+        {
+          question: '¿Apruebas el plan?',
+          header: 'Plan',
+          options: [
+            { label: 'Sí', description: 'Ejecutar' },
+            { label: 'No', description: 'Detener' },
+          ],
+          multiSelect: false,
+        },
+      ],
+    })
+
+  /** Los `n` textos que empiezan en el glifo del nodo «Terminado» (el último del diagrama). */
+  const deTerminado = (textos: string[], n: number) => {
+    const i = textos.findIndex(t => t.startsWith('Terminado'))
+
+    return textos.slice(i - 1, i - 1 + n)
+  }
+
+  test('la espera de AskUserQuestion va aparte: Aprobación y Terminado con « · espera», la línea plegada solo con el trabajo y el resultado intacto', async ($, on) => {
+    const { detener, reloj } = preparar(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+
+    reloj.t += 5_000
+    const responder = detener('AskUserQuestion')
+    const pregunta = preguntarPlan($)
+    await esperar()
+    reloj.t += 120_000
+    responder()
+    expect((await pregunta).result).toBe('listo')
+
+    reloj.t += 10_000
+    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    reloj.t += 30_000
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+
+    const textos = await textosDe(ui)
+    const despues = (etiqueta: string, n: number) => textos.slice(textos.indexOf(etiqueta) + 1, textos.indexOf(etiqueta) + 1 + n)
+    expect(despues('Aprobación', 3)).toEqual([' 10 s', ' · espera 2 min', '│'])
+    expect(despues('Ejecución', 2)).toEqual([' 30 s', '│'])
+    expect(deTerminado(textos, 4)).toEqual(['● ', 'Terminado', ' 45 s', ' · espera 2 min'])
+    expect(textos[textos.indexOf('Flujo') + 1]).toBe('/implementador · Terminado · 45 s')
+
+    // Plegada, solo queda la línea con el trabajo.
+    await ui.press({ key: 'flujo-plegar' })
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Terminado · 45 s'])
+    expect((await textosDe(ui)).some(t => t.includes('espera'))).toBe(false)
+    await ui.unmount()
+  })
+
+  test('una pregunta que responde al instante no dibuja espera', async ($, on) => {
+    const { reloj } = preparar(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+    reloj.t += 5_000
+    await preguntarPlan($)
+    reloj.t += 10_000
+    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+
+    expect((await textosDe(ui)).some(t => t.includes('espera'))).toBe(false)
+    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Ejecución · 15 s')
+    await ui.unmount()
+  })
+
+  test('Escape con la pregunta abierta: Terminado · interrumpido con la espera hasta ese momento; la vuelta tardía con error llega intacta y no cambia nada', async ($, on) => {
+    const { detener, fallan, reloj } = preparar(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+
+    reloj.t += 5_000
+    const responder = detener('AskUserQuestion')
+    fallan.add('AskUserQuestion')
+    const pregunta = preguntarPlan($).then(
+      () => null,
+      (err: unknown) => err,
+    )
+    await esperar()
+    reloj.t += 60_000
+    await $.turn.complete(respuesta('', { reason: 'aborted' }))
+
+    const final = ['● ', 'Terminado · interrumpido', ' 5 s', ' · espera 1 min']
+    const linea = '/implementador · Terminado · interrumpido · 5 s'
+    expect((await desdeFlujo(ui, 2))[1]).toBe(linea)
+    expect(deTerminado(await textosDe(ui), 4)).toEqual(final)
+
+    // La pregunta vuelve tarde, con error: el error llega intacto y el flujo no cambia.
+    reloj.t += 30_000
+    responder()
+    const error = await pregunta
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toMatch(/panel/i)
+    expect((await desdeFlujo(ui, 2))[1]).toBe(linea)
+    expect(deTerminado(await textosDe(ui), 4)).toEqual(final)
+    await ui.unmount()
+  })
+
   test('tres exploradores en paralelo: el paso sigue en Exploración hasta que vuelve el último, en cualquier orden', async ($, on) => {
     const motor = preparar(on)
     await $.skill.prompt({ skill: 'implementador', text: '' })
@@ -2898,6 +3401,81 @@ describe('flujo en el panel', () => {
     const despues = await tras('Exploración', 2)
     expect(despues[0]).toBe(' ×4')
     expect(despues[1]).toMatch(/^ \d+ (s|min)/)
+    await ui.unmount()
+  })
+
+  test('/implementador: Plan ×2, Ejecución ×2 (con una que falla) y rev ×N donde corrieron; siguen tras Terminado y no van en la línea plegada', async ($, on) => {
+    const motor = preparar(on)
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+    const tras = async (etiqueta: string, n: number) => {
+      const textos = await textosDe(ui)
+      const i = textos.indexOf(etiqueta)
+
+      return textos.slice(i + 1, i + 1 + n)
+    }
+    const comprobar = async () => {
+      expect(await tras('Plan', 1)).toEqual([' ×2'])
+      expect(await tras('Ejecución', 2)).toEqual([' ×2', ' · rev ×1'])
+      expect(await tras('Verificación final', 1)).toEqual([' · rev ×2'])
+    }
+
+    await agente($, 'planificador')
+    await agente($, 'planificador')
+    await $.tool.call({
+      tool: 'AskUserQuestion',
+      questions: [
+        {
+          question: '¿Apruebas el plan?',
+          header: 'Plan',
+          options: [
+            { label: 'Sí', description: 'Ejecutar' },
+            { label: 'No', description: 'Detener' },
+          ],
+          multiSelect: false,
+        },
+      ],
+    })
+    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await agente($, 'ejecutor', 'E1')
+
+    // La corrección falla: el error llega intacto y el lanzamiento cuenta igual.
+    motor.fallan.add('E2')
+    const error = await agente($, 'ejecutor', 'E2').then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toMatch(/panel/)
+
+    await agente($, 'revisor', 'R0')
+    await bash($, 'node ~/.claude/flujos/verificar.mjs')
+
+    // Dos revisores en paralelo en la verificación final.
+    const abrirR1 = motor.detener('R1')
+    const abrirR2 = motor.detener('R2')
+    const r1 = agente($, 'revisor', 'R1')
+    const r2 = agente($, 'revisor', 'R2')
+    await esperar()
+    abrirR1()
+    abrirR2()
+    await Promise.all([r1, r2])
+    await comprobar()
+
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    await comprobar()
+    expect((await desdeFlujo(ui, 2))[1]).not.toContain('×')
+
+    // Plegada, ni la línea resumen ni nada más lleva los contadores.
+    await ui.press({ key: 'flujo-plegar' })
+    const plegada = await textosDe(ui)
+    expect(plegada).not.toContain(' ×2')
+    expect(plegada).not.toContain(' · rev ×1')
+    expect((await desdeFlujo(ui, 2))[1]).not.toContain('×')
     await ui.unmount()
   })
 

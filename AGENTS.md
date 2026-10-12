@@ -15,6 +15,7 @@ AGENTS.md                         reglas generales (este archivo)
 MODS.md                           documentación del mod panel-uso
 FLUJOS.md                         documentación de los flujos
 .claude/implementador.json        pasos de verificación para /implementador
+.claude/implementador.md          reglas de /implementador para este repo (clasificación, plan, revisor)
 .claude/documentar.md             reglas de /documentar para este repo
 .claude/documentar/cobertura.md   mapa de cobertura de la documentación
 flujos/
@@ -53,7 +54,7 @@ Los tres tienen que terminar sin errores antes de dar algo por hecho. Qué no pr
 
 ## Flujo con /implementador
 
-`.claude/implementador.json` define la verificación (validate → test → test flujos). No hay `.claude/implementador.md`, así que rigen las reglas comunes. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
+`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador.md` y mandan sobre las comunes. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
 
 ## Pendiente de confirmar
 

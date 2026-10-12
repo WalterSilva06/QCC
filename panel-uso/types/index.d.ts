@@ -114,16 +114,32 @@ export type Flujo = {
   totalExploradores?: number
   /** Algún explorador de la tanda en curso volvió sin error; si falta, `false`. */
   exploro?: boolean
+  /** Planificadores lanzados en todo el flujo, con los re-planes; solo `/implementador`. Si falta, 0. */
+  planes?: number
+  /** Ejecutores lanzados en todo el flujo, con las correcciones. Si falta, 0, o 1 si `ejecuto`. */
+  ejecuciones?: number
+  /** Revisores lanzados, por índice del paso en que queda el flujo al lanzarlos. Si falta, ninguno. */
+  revisiones?: Record<number, number>
   /** `en curso`, o cómo terminó: `completo`, `detenido` (CIERRE … DETENIDO) o `interrumpido`. */
   estado: 'en curso' | 'completo' | 'detenido' | 'interrumpido'
   /** Hora (ms) en que empezó el flujo. */
   inicio: number
-  /** Hora (ms) en que empezó el tramo abierto del paso actual. */
+  /** Hora (ms) en que empezó el tramo abierto de trabajo del paso actual (con una pregunta abierta, no corre). */
   desde: number
-  /** Ms acumulados por índice de paso, sin contar el tramo abierto; falta el paso que nunca se visitó. */
+  /** Ms de trabajo acumulados por índice de paso, sin contar el tramo abierto ni la espera al usuario; falta el paso que nunca se visitó. */
   tiempos: Record<number, number>
+  /** Ms esperando al usuario (`AskUserQuestion`) por índice de paso, sin la espera abierta; no está en `tiempos`. Si falta, 0. */
+  esperaUsuario?: Record<number, number>
+  /** Hora (ms) en que empezó la espera abierta al usuario; `null` o ausente si no hay. */
+  preguntaDesde?: number | null
   /** Hora (ms) en que terminó; `null` mientras está en curso. */
   fin: number | null
+  /** Lo que la sesión llevaba gastado al empezar el flujo, por fila de «Esta sesión» (`modelo|esfuerzo|origen`): `[total, salida]`. Si falta, 0 en cada fila. */
+  usoBase?: Record<string, [number, number]>
+  /** Lo que gastó el flujo, fijado al terminar (con el hilo principal y los subagentes por separado); falta si no gastó nada o si terminó antes de existir este campo. */
+  consumo?: FilaSemana[]
+  /** Modelo y esfuerzo del hilo principal (el orquestador) en su última petición durante el flujo, p. ej. «Opus 5.5 high». Falta hasta la primera. */
+  orquestador?: string
 }
 
 declare module 'claude-code' {

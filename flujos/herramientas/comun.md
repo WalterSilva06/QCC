@@ -169,8 +169,10 @@ Revisión: S1 APROBADO (0 ciclos) · …
 Riesgos pendientes: <… | ninguno>
 Queda para ti: <… | nada>
 Reversión: <solo si DETENIDO o con riesgos: comandos exactos (git restore --source=<BASE> --worktree -- <archivos>; borrar nuevos). No los corres sin OK>
-Consumo: <subagent_tokens sumados por rol> · orquestador: <tu modelo>
+Consumo: contexto final por rol (subagent_tokens: no es gasto) <por rol> · gasto real: sección «Flujo» del panel · orquestador: <tu modelo real según tu entorno, no el que dice la skill>
 ```
+
+`subagent_tokens` es el tamaño del contexto del último turno de cada agente: en un agente largo queda 20 a 40 veces por debajo de lo que de verdad leyó y generó. No lo sumes como si fuera consumo ni lo presentes como tal.
 
 ## 8. `continuar`
 
