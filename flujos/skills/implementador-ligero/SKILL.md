@@ -1,8 +1,8 @@
 ---
 name: implementador-ligero
-description: Flujo multi-agente ligero para cambios acotados en cualquier proyecto con git. Plan breve con aprobación, un ejecutor y una revisión independiente. Si el cambio resulta crítico, se detiene y deriva a /implementador.
-argument-hint: "<qué cambiar, idealmente con los archivos> | continuar"
-disable-model-invocation: true
+description: "Modo ligero de /implementador. Solo corre como relevo desde /implementador (args que empiezan con `RELEVO`); no la invoques por tu cuenta ni la sugieras al usuario, que usa /implementador."
+argument-hint: "RELEVO (solo desde /implementador)"
+user-invocable: false
 model: sonnet
 effort: high
 allowed-tools:
@@ -10,21 +10,47 @@ allowed-tools:
   - Glob
   - Grep
   - AskUserQuestion
+  - Skill
   - Bash(node *.claude/flujos/estado.mjs*)
   - Bash(node *.claude/flujos/verificar.mjs*)
   - Bash(git status*)
   - Bash(git diff*)
   - Bash(git log*)
   - Bash(cat *comun.md*)
+  - Bash(cat *pasos.md*)
   - Bash(cat *implementador.md*)
   - Bash(echo *)
 ---
 
-# /implementador-ligero — flujo ligero
-
-Eres el **orquestador** (Sonnet, esfuerzo high): delegas y controlas calidad. No escribes código. Agentes: `explorador` (Haiku, en este flujo en high, siempre), `planificador-ligero` (Sonnet high, siempre), `ejecutor` (Sonnet high), `revisor` (Opus, en este flujo en medium).
+# /implementador — modo ligero
 
 **Pedido:** $ARGUMENTS
+
+## Punto de entrada
+
+Antes de leer nada más:
+
+- Si el pedido no empieza con `RELEVO`, responde exactamente `Uso: /implementador <qué cambiar>` y termina, sin hacer nada más.
+- `RELEVO · inicio`: arrancas en el paso 3 (Plan) con los datos del RELEVO, sin preflight ni exploración.
+- `RELEVO · continuación`: aplicas comun.md §8 con el ESTADO del RELEVO **sin volver a relevar** (ya estás en el modo ligero): retomas con ese ESTADO y no te relanzas a ti mismo.
+- `RELEVO · vuelta` (no debería llegar aquí): responde que la vuelta va a `implementador` y termina.
+
+## Rol
+
+Eres el orquestador del modo **ligero** (Sonnet, esfuerzo high): delegas y controlas calidad. No escribes código. Los pasos y la vuelta a modo normal (pasos.md, paso 3) están en «Pasos»; las reglas, en «Reglas comunes».
+
+## Agentes de este modo
+
+Pasa exactamente estos `model` y `effort` (comun.md §4); si la celda dice «sin», no pases ese parámetro.
+
+| Agente | Modelo | Esfuerzo |
+|---|---|---|
+| `explorador` | no corre (la exploración llega en el RELEVO) | — |
+| `planificador` | Sonnet (`model: "sonnet"` en la llamada) | high |
+| `revisor-plan` | Sonnet (sin overrides) | high |
+| `ejecutor` | Sonnet (sin overrides) | high |
+| `revisor` (por subtarea y en las correcciones) | Opus | medium (`effort: "medium"`) |
+| `revisor` (revisión integral, hasta 3 en paralelo) | Opus | medium (`effort: "medium"` en cada uno) |
 
 ## Reglas comunes
 
@@ -36,21 +62,4 @@ Eres el **orquestador** (Sonnet, esfuerzo high): delegas y controlas calidad. No
 
 ## Pasos
 
-**0. Preflight** — igual que el completo:
-- Pedido vacío → responde `Uso: /implementador-ligero <qué cambiar> | continuar` y termina. Pedido `continuar` → §8.
-- Si tu herramienta Agent no tiene el parámetro `run_in_background`, fork mode está activo: AskUserQuestion «Seguir igual» / «Cancelar» (se arregla con `"CLAUDE_CODE_FORK_SUBAGENT": "0"` en `env` de `~/.claude/settings.json` y reiniciando Claude Code).
-- `node ~/.claude/flujos/estado.mjs` → anota `BASE_GLOBAL`, `DESDE_GLOBAL`, rama y sucios previos. `ERROR` (p. ej. sin git) → dilo y termina. Luego `node ~/.claude/flujos/verificar.mjs` → verificación inicial (`SIN PASOS` → §1).
-
-**1. Exploración** — corre siempre, aunque el pedido nombre los archivos (esos archivos van en PISTAS). `explorador` (§5) con **`effort: "high"`** (obligatorio en este flujo): uno solo si el pedido es de una sola área, 2 o 3 en paralelo si toca varias, partidos por carpeta o capa sin solaparse (§5). Con varios, fusiona los reportes (§6).
-
-**2. Escalado** — si se cumple cualquier criterio CRÍTICO de §2 (o de las reglas del proyecto), o lo explorado no cabe en los límites del ligero, DETENTE: di qué criterio aplica y recomienda `/implementador <mismo pedido>`. No sigues ni tocas nada.
-
-**3. Plan breve** — siempre con `planificador-ligero` (§5). Si responde `ESCALAR`, DETENTE como en el paso 2. Sus PREGUNTAS van arriba del plan. Revisa que cumpla §3 y los límites (si no caben, DETENTE como en el paso 2); lo menor lo completas tú.
-
-**4. Aprobación** — muestra el plan completo y llama a AskUserQuestion: «¿Apruebas el plan?», header «Plan», «Aprobar» / «Cancelar»; los ajustes llegan por «Other», los aplicas tú, sin volver a llamar al planificador, y vuelves a preguntar.
-
-**5. Ejecución** — **un** `ejecutor` con todas las subtareas en orden (§5, varias subtareas), con `BASE_GLOBAL`. Después, `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<unión>"`.
-
-**6. Revisión** — **un** `revisor` sobre el cambio completo, con **`effort: "medium"`** (obligatorio en este flujo). RECHAZADO → **1 ciclo**: corrección y revisión otra vez, también en medium. Segundo rechazo → DETENIDO.
-
-**7. Cierre** — §7, breve. Si tu `verificar.mjs` final sale ROJO: usa el ciclo si queda; si no, DETENIDO.
+!`cat "$HOME/.claude/flujos/pasos.md" || echo "AVISO: no se pudo inyectar pasos.md. Léelo con Read en ~/.claude/flujos/pasos.md antes de seguir."`

@@ -3,7 +3,7 @@
 | Tema | Fuentes | Doc § | Estado | Fecha |
 |---|---|---|---|---|
 | Reorganizar la doc en panel y flujos | AGENTS.md (anterior), encabezados del repo | AGENTS.md, README.md, MODS.md, FLUJOS.md | dudoso | 2026-10-11 |
-| Uso de /implementador, /implementador-ligero y /documentar | flujos/skills/*/SKILL.md | FLUJOS.md § Comandos | pendiente | |
+| Uso de /implementador (modos normal y ligero) y /documentar | flujos/skills/*/SKILL.md, flujos/herramientas/pasos.md | FLUJOS.md § Comandos | pendiente | |
 | Agentes de los flujos | flujos/agents/*.md | FLUJOS.md § Agentes | pendiente | |
 | Herramientas de los flujos (estado, verificar, guardia) | flujos/herramientas/ | FLUJOS.md § Herramientas | pendiente | |
 | Configuración de los flujos (implementador.json, documentar.md) | .claude/implementador.json, flujos/herramientas/config.ejemplo.md | FLUJOS.md § Configuración | pendiente | |

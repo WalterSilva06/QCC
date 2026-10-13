@@ -4,7 +4,7 @@
 - AGENTS.md — instrucciones generales del repo para Claude: estructura, verificación, convenciones comunes y enlaces a las dos partes.
 - README.md — entrada al repo: qué hay, instalación resumida e índice. Solo enlaza, no duplica.
 - MODS.md — el mod panel-uso: qué muestra, comandos, datos, convenciones y trampas del panel, y su instalación.
-- FLUJOS.md — los flujos /implementador, /implementador-ligero y /documentar: instalación con instalar.mjs, uso, agentes y herramientas.
+- FLUJOS.md — el flujo /implementador (modos normal y ligero) y /documentar: instalación con instalar.mjs, uso, modos, relevo, agentes y herramientas.
 
 ## Excluidos
 - .git/
@@ -15,7 +15,7 @@
 - panel-uso/hooks/register.tsx — hooks, estado y dibujo del panel — solo lectura — densa sí (lector en Haiku max)
 - panel-uso/hooks/semana.ts, formato.ts, carpeta.ts — lógica pura — solo lectura — densa no
 - panel-uso/.claude-plugin/, panel-uso/types/index.d.ts, panel-uso/tests/ — manifiesto, tipos, tests — solo lectura — densa no
-- flujos/skills/*/SKILL.md — comandos /implementador, /implementador-ligero, /documentar — solo lectura — densa no
+- flujos/skills/*/SKILL.md, flujos/herramientas/pasos.md — comandos /implementador (con la skill de relevo implementador-ligero) y /documentar — solo lectura — densa no
 - flujos/agents/*.md — agentes de los flujos — solo lectura — densa no
 - flujos/herramientas/guardia.mjs — guardia de comandos y bitácora — solo lectura — densa sí (lector en Haiku max)
 - flujos/herramientas/estado.mjs, verificar.mjs, comun.md, config.ejemplo.md — solo lectura — densa no

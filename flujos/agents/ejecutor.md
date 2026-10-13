@@ -1,6 +1,6 @@
 ---
 name: ejecutor
-description: Ejecutor de subtareas aprobadas de los flujos /implementador y /implementador-ligero. Edita solo los archivos permitidos, corre la verificación real y reporta con evidencia. No usar fuera de esos flujos.
+description: Ejecutor de subtareas aprobadas del flujo /implementador (modos normal y ligero). Edita solo los archivos permitidos, corre la verificación real y reporta con evidencia. No usar fuera de ese flujo.
 tools: Read, Edit, Write, Glob, Grep, Bash
 model: sonnet
 effort: high

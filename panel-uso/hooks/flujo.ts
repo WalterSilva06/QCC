@@ -1,4 +1,4 @@
-// Flujo `/implementador`, `/implementador-ligero` o `/documentar` en curso. Puro: sin `$`, para poder probarlo solo.
+// Flujo `/implementador` (en modo normal o ligero) o `/documentar` en curso. Puro: sin `$`, para poder probarlo solo.
 
 import type { FilaSemana, Flujo, Semana } from '../types'
 import { duracion } from './formato'
@@ -21,7 +21,7 @@ export type Senal =
  * Falta si es 0, si el nodo está pendiente o cuando no se pasó la hora `t`.
  * `exploradores` solo está en «Exploración»: es el total del flujo; falta si es 0 o si el nodo está pendiente.
  * `veces` son los lanzamientos del agente propio del paso: «Plan» y «Ejecución» en `/implementador`,
- * «Ejecución» y «Revisión» en `/implementador-ligero`. `revisiones` son los revisores lanzados con el flujo
+ * «Ejecución» y «Revisión» en un `/implementador-ligero` guardado de antes de los modos. `revisiones` son los revisores lanzados con el flujo
  * en ese paso (solo `/implementador`). Los dos faltan si son menos de 1, si el nodo está pendiente o en `/documentar`.
  */
 export type Nodo = { etiqueta: string; estado: 'pasado' | 'actual' | 'pendiente'; ms?: number; exploradores?: number; veces?: number; revisiones?: number; esperaUsuario?: number }
@@ -43,21 +43,42 @@ export function pasosDe(f: Flujo): readonly string[] {
   return f.nombre === 'documentar' && f.variante === 'auditar' ? PASOS_AUDITAR : PASOS[f.nombre]
 }
 
+/** El nombre de la skill sin `/` ni prefijo `plugin:`. */
+function nombreDeSkill(skill: string): string {
+  return skill.trim().replace(/^\//, '').split(':').pop() ?? ''
+}
+
+/** El pedido de la skill empieza con la marca `RELEVO`: el orquestador cambia de modo o abre el flujo en otro modo. */
+export function esRelevo(texto: string): boolean {
+  return /\*\*Pedido:\*\*\s*RELEVO\b/.test(texto)
+}
+
+/** El modo que fija una skill de `/implementador` con `RELEVO`; `null` si la skill es otra. */
+function modoDeSkill(nombre: string): NonNullable<Flujo['modo']> | null {
+  if (nombre === 'implementador-ligero') return 'ligero'
+
+  return nombre === 'implementador' ? 'normal' : null
+}
+
 /**
  * Flujo nuevo si `skill` es una de las tres (con o sin `/` y con o sin prefijo `plugin:`); `null` si no.
  * La variante `auditar` solo existe en `documentar`, cuando el pedido lo dice. `t` es la hora (ms) de inicio.
+ * Con `RELEVO` en el pedido, `implementador-ligero` e `implementador` abren `implementador` con `modo` `ligero` o `normal`;
+ * sin `RELEVO`, `implementador-ligero` abre el flujo viejo de ese nombre, sin `modo`.
  * `base` es lo que la sesión ya llevaba gastado (ver `baseDeUso`); sin ella o vacía, el flujo no lleva `usoBase`.
  */
 export function iniciarFlujo(skill: string, texto: string, t = 0, base?: Flujo['usoBase']): Flujo | null {
-  const nombre = skill.trim().replace(/^\//, '').split(':').pop() ?? ''
+  const nombre = nombreDeSkill(skill)
 
   if (!SKILLS.includes(nombre)) return null
 
   const auditar = nombre === 'documentar' && /\*\*Pedido:\*\*\s*auditar\b/.test(texto)
+  const modo = esRelevo(texto) ? modoDeSkill(nombre) : null
 
   return {
-    nombre: nombre as Flujo['nombre'],
+    nombre: modo ? 'implementador' : (nombre as Flujo['nombre']),
     variante: auditar ? 'auditar' : null,
+    ...(modo ? { modo } : {}),
     paso: 0,
     ejecuto: false,
     estado: 'en curso',
@@ -67,6 +88,19 @@ export function iniciarFlujo(skill: string, texto: string, t = 0, base?: Flujo['
     fin: null,
     ...(base !== undefined && Object.keys(base).length > 0 ? { usoBase: base } : {}),
   }
+}
+
+/**
+ * El `/implementador` en curso con el `modo` que fija un relevo: la skill `implementador` (normal) o `implementador-ligero` (ligero)
+ * con `RELEVO` en el pedido. Solo cambia `modo`: paso, tiempos, uso y contadores quedan como están. Es `actual` mismo si ya tenía ese modo.
+ * `null` si no es un relevo, no hay flujo, no es `/implementador` o ya terminó.
+ */
+export function relevarFlujo(actual: Flujo | null, skill: string, texto: string): Flujo | null {
+  const modo = modoDeSkill(nombreDeSkill(skill))
+
+  if (!modo || !esRelevo(texto) || actual?.nombre !== 'implementador' || actual.estado !== 'en curso') return null
+
+  return actual.modo === modo ? actual : { ...actual, modo }
 }
 
 /** Parte un comando en comandos simples (separados por `|`, `;`, `&` o salto de línea) y estos en palabras. */
@@ -168,7 +202,7 @@ export function exploradoresLanzados(f: Flujo): number {
   return Math.max(f.totalExploradores ?? 0, f.exploradores ?? 0)
 }
 
-/** Qué cambia en `/implementador` (y en `/implementador-ligero`, que difiere en pocos puntos) con la señal `s`. */
+/** Qué cambia en `/implementador` (y en un `/implementador-ligero` guardado de antes de los modos, que difiere en pocos puntos) con la señal `s`. */
 function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
   const p = f.paso
   const ligero = f.nombre === 'implementador-ligero'
@@ -492,6 +526,7 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
 
 /**
  * Una línea con el flujo y dónde va: `/implementador · Ejecución`; `sin flujo en esta sesión` si no hay.
+ * Si `/implementador` lleva `modo`, lo muestra tras el nombre: `/implementador ligero · Plan`.
  * Con la hora `t` (ms) agrega el tiempo total de trabajo al final, sin la espera al usuario: `/implementador · Ejecución · 3 min 20 s`.
  */
 export function resumenFlujo(sinCompletar: Flujo | null, t?: number): string {
@@ -501,5 +536,7 @@ export function resumenFlujo(sinCompletar: Flujo | null, t?: number): string {
   const actual = nodos(f, t).find(n => n.estado === 'actual')
   const total = t === undefined ? '' : ` · ${duracion(Math.max((f.fin ?? t) - f.inicio - esperaTotal(f, f.fin === null ? t : undefined), 0))}`
 
-  return `/${f.nombre}${f.variante === 'auditar' ? ' auditar' : ''} · ${actual?.etiqueta ?? ''}${total}`
+  const modo = f.nombre === 'implementador' && f.modo ? ` ${f.modo}` : ''
+
+  return `/${f.nombre}${modo}${f.variante === 'auditar' ? ' auditar' : ''} · ${actual?.etiqueta ?? ''}${total}`
 }

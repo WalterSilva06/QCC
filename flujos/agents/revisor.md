@@ -1,6 +1,6 @@
 ---
 name: revisor
-description: Revisor independiente de solo lectura de los flujos /implementador y /implementador-ligero. Verifica un cambio contra su plan, corre la verificación él mismo y responde APROBADO o RECHAZADO con problemas concretos. No edita. No usar fuera de esos flujos.
+description: Revisor independiente de solo lectura del flujo /implementador (modos normal y ligero). Verifica un cambio contra su plan, corre la verificación él mismo y responde APROBADO o RECHAZADO con problemas concretos. No edita. No usar fuera de ese flujo.
 tools: Read, Glob, Grep, Bash
 model: opus
 effort: high

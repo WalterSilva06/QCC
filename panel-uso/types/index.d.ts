@@ -100,10 +100,12 @@ export type ActividadFila = {
 /** La actividad por id de fila (`Opus 5.5|high|principal`, igual al de las filas de `Semana`). */
 export type Actividad = Record<string, ActividadFila>
 
-/** El flujo `/implementador`, `/implementador-ligero` o `/documentar` de la sesión y dónde va. */
+/** El flujo `/implementador` o `/documentar` de la sesión y dónde va. */
 export type Flujo = {
-  /** La skill que lo inició. */
+  /** La skill que lo inició. `implementador-ligero` es de flujos guardados de antes de los modos. */
   nombre: 'implementador' | 'implementador-ligero' | 'documentar'
+  /** Modo de `/implementador`: lo escribe un relevo o un flujo abierto con `RELEVO`. Si falta, es `normal` (también en los flujos guardados de antes). */
+  modo?: 'normal' | 'ligero'
   /** `auditar`: `/documentar` con pedido de auditoría (otros pasos); `null` en el resto. */
   variante: 'auditar' | null
   /** Índice del paso actual dentro de los pasos de su flujo (0 es Preflight). */

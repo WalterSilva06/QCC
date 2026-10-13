@@ -18,6 +18,7 @@ import {
   marcarOrquestador,
   nodos,
   nombreOrquestador,
+  relevarFlujo,
   resumenFlujo,
   senalAlTerminar,
   senalDeHerramienta,
@@ -614,10 +615,21 @@ export const register: Register = on => {
   on('skill.prompt', async ($, e, next) => {
     // Lo que la sesión ya gastó, para descontarlo del consumo del flujo nuevo.
     const base = baseDeUso(await readSesion($))
-    await marcarFlujo($, (f, t) => iniciarFlujo(e.skill, e.text, t, base) ?? f)
+    // Un relevo sigue el mismo flujo: solo cambia el modo, y las filas de exploradores se quedan.
+    let relevo = false
+    await marcarFlujo($, (f, t) => {
+      const relevado = relevarFlujo(f, e.skill, e.text)
+      if (relevado !== null) {
+        relevo = true
+
+        return relevado
+      }
+
+      return iniciarFlujo(e.skill, e.text, t, base) ?? f
+    })
     // Un flujo nuevo no hereda las filas del anterior.
     try {
-      if (iniciarFlujo(e.skill, e.text) !== null) await vaciarFilasExploradores($)
+      if (!relevo && iniciarFlujo(e.skill, e.text) !== null) await vaciarFilasExploradores($)
     } catch {
       // Sin vaciar, el ■ de más solo se ve con un flujo en curso y exploradores en vuelo.
     }

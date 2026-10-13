@@ -1,6 +1,8 @@
-# Reglas comunes de /implementador y /implementador-ligero
+# Reglas comunes de /implementador
 
-Fuente única, a nivel usuario (`~/.claude/flujos/comun.md`): las dos skills la inyectan y los planificadores (`planificador`, `planificador-ligero`) y el `revisor-plan` la leen. Sirve para cualquier proyecto con git. Lo propio de cada proyecto vive en el proyecto:
+/implementador es un solo flujo con dos modos (normal y ligero) que siguen los mismos pasos, agentes, plantillas y ciclos (`~/.claude/flujos/pasos.md`); solo cambian `model` y `effort`.
+
+Fuente única, a nivel usuario (`~/.claude/flujos/comun.md`): las dos skills (`implementador` e `implementador-ligero`) la inyectan junto con `pasos.md`, y `planificador` y `revisor-plan` la leen. Sirve para cualquier proyecto con git. Lo propio de cada proyecto vive en el proyecto:
 
 - **`.claude/implementador.md`** (reglas del proyecto, opcional): rutas y ejemplos de cada criterio CRÍTICO, infraestructura de tests, qué va a «Queda para ti», archivos que no se leen, riesgos típicos para el planificador y motivos de rechazo para el revisor. **Si dice algo distinto de este archivo, manda el del proyecto.**
 - **`.claude/implementador.json`** (opcional): `verificar` (comandos de verificación, en orden) y `guardia` (archivos protegidos, secretos, migraciones inmutables, scripts y comandos negados). Ejemplo comentado en `~/.claude/flujos/config.ejemplo.md`.
@@ -26,7 +28,7 @@ La foto es un commit suelto: no toca el índice ni el árbol del usuario. Si est
 
 ## 2. Clasificación
 
-CRÍTICO si se cumple **cualquiera** (cita los números en el plan; en `/implementador`, si no aplica ninguno, escribe «sin criterios»). Ante la duda, CRÍTICO. Las rutas y ejemplos concretos de cada criterio están en las reglas del proyecto, si existen.
+CRÍTICO si se cumple **cualquiera** (cita los números en el plan; si no aplica ninguno, escribe «sin criterios»). Ante la duda, CRÍTICO. Las rutas y ejemplos concretos de cada criterio están en las reglas del proyecto, si existen.
 
 1. **Seguridad y acceso:** permisos, roles, autorización, RLS/policies/grants, validación de entrada en fronteras, secretos, rate limit, clientes con privilegios elevados.
 2. **Auth y sesión:** login, registro, recuperación, tokens, cookies, OAuth, redirecciones de login.
@@ -39,15 +41,13 @@ CRÍTICO si se cumple **cualquiera** (cita los números en el plan; en `/impleme
 9. **Irreversible:** borra datos, renombra columnas o APIs, o contradice una decisión registrada del proyecto (CLAUDE.md, ADRs).
 10. **Sin red:** lógica de negocio sin tests que el cambio altera.
 
-NORMAL: lo demás (copy o estilos de una pantalla, componente aislado, función pura con tests, documentación, tests nuevos, refactor local sin cambio de contrato). Solo lo usa `/implementador-ligero`: en `/implementador` todo cambio sigue el mismo camino y la clasificación solo cita los criterios que aplican, o «sin criterios».
-
-Límites del ligero: ≤ 3 subtareas, ≤ 6 archivos en total (tests incluidos) y ningún criterio CRÍTICO.
+Modo ligero recomendado (paso 2): ningún criterio CRÍTICO, ≤ 3 subtareas y ≤ 6 archivos en total (tests incluidos), estimados por el orquestador. Si el plan los supera, vuelta a normal (pasos.md).
 
 ## 3. Formato del plan
 
 ```
 PLAN · <título>
-Clasificación: CRÍTICO (#n, #m | sin criterios) | NORMAL (solo /implementador-ligero) — <por qué, una línea>
+Clasificación: CRÍTICO (#n, #m) | sin criterios — <por qué, una línea>
 Objetivo: <verificable, 1–2 líneas>
 Fuera de alcance: <lo que no se toca>
 Base: <rama>@<HEAD> · sucios previos: <lista | ninguno> · verificación inicial: VERDE | ROJA (<qué falla>) | SIN PASOS
@@ -63,7 +63,7 @@ S2 · …
 
 Verificación final: verificar.mjs <+ revisión integral, si aplica>
 Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>
-Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planificador Opus high | · planificador Sonnet high> <· revisión del plan Sonnet high (/implementador)>
+Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea · revisión integral <hasta n | no> (modelos y esfuerzos: los del modo)
 ```
 
 - Subtareas pequeñas: ≤ 4 archivos de código más sus tests, cada una verificable sola, en orden de dependencia (migración → tipos → servidor → UI → docs).
@@ -75,10 +75,10 @@ Costo: <n> ejecutor(es) Sonnet · <n> revisión(es) Opus <esfuerzo> <· planific
 ## 4. Reglas del orquestador
 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
-- **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno y se conservan el modelo y el esfuerzo de la skill; en segundo plano se pierden. Nunca pases `model` ni `isolation`; `effort`, solo donde tu skill lo indica.
-- Solo los agentes `explorador`, `planificador`, `planificador-ligero`, `revisor-plan` (solo `/implementador`), `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración (de 1 a 3 exploradores en paralelo, §5) y en la revisión integral (hasta 3 revisores en paralelo, §5).
+- **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno y se conservan el modelo y el esfuerzo de la skill; en segundo plano se pierden. Nunca pases `isolation`. `model` y `effort`, solo los de la tabla de tu modo (ligero: `model: "sonnet"` al planificador; `effort: "medium"` al revisor y a cada revisor de la integral) y el `effort: "max"` del paso 1.
+- Solo los agentes `explorador`, `planificador`, `revisor-plan`, `ejecutor` y `revisor`; la herramienta Skill solo para el relevo (pasos.md). Uno a la vez, salvo en la Exploración (de 1 a 3 exploradores en paralelo, §5) y en la revisión integral (hasta 3 revisores en paralelo, §5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5). Nunca la conversación ni el razonamiento de otro agente. Al revisor no le pasas nada del reporte del ejecutor.
-- Preguntas al usuario solo con AskUserQuestion (aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
+- Preguntas al usuario solo con AskUserQuestion (elegir el modo, aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
 - Sin plan aprobado no se despacha ningún ejecutor. Si el plan cambia a mitad de camino, se vuelve a aprobar.
 - Nunca: commit, push, ramas, stash, reset, checkout, restore, deploy, migraciones contra bases vivas, regenerar tipos desde un servicio, scripts que peguen a servicios vivos, servidores de desarrollo. No ofreces commits. Lo externo va a «Queda para ti».
 - No declaras éxito sin `RESULTADO: VERDE` de tu propia corrida final de verificar.mjs. Lo verificado solo con typecheck y build (UI) es «pendiente de verificación visual», nunca «verificado».
@@ -97,31 +97,23 @@ PEDIDO: <literal del usuario>
 BUSCA: <2–5 preguntas concretas de su área: archivos, tests, acoplamientos, datos>
 PISTAS: <archivos o símbolos ya conocidos | ninguna>
 ```
-Dos o tres si el pedido toca más de un área (p. ej. código y tests, flujos y panel, código y documentación): parte por carpeta o capa, no por pregunta, para que las áreas no se solapen. Uno solo si es de una sola área o, en el flujo completo, si el pedido nombra los archivos; sin una división natural, uno. Máximo tres. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`, con su propia ÁREA y sus propias preguntas BUSCA, sin repetir las de otro. Nunca en segundo plano. En fork mode, solo uno.
+Dos o tres si el pedido toca más de un área (p. ej. código y tests, flujos y panel, código y documentación): parte por carpeta o capa, no por pregunta, para que las áreas no se solapen. Uno solo si es de una sola área o si el pedido nombra los archivos; sin una división natural, uno. Máximo tres. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`, con su propia ÁREA y sus propias preguntas BUSCA, sin repetir las de otro. Nunca en segundo plano. En fork mode, solo uno.
 
-**Planificador** (siempre, flujo completo) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
+**Planificador** (siempre) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
 ```
 PEDIDO: <literal>
-CLASIFICACIÓN: CRÍTICO — <criterios #n y por qué | sin criterios>
+CLASIFICACIÓN: <criterios #n y por qué | sin criterios>
 BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
 EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo que no aplica>
 PLAN VIGENTE: <solo al re-planificar: el plan aprobado, completo>
 AJUSTES DEL USUARIO: <solo al re-planificar: solo el ajuste>
 ```
+En modo ligero, con `model: "sonnet"`.
 
-**Planificador ligero** (siempre, flujo ligero) — `subagent_type: "planificador-ligero"`, `description: "Planificar <tema>"`
+**Revisor del plan** (siempre, en los dos modos) — `subagent_type: "revisor-plan"`, `description: "Revisar plan <tema>"`
 ```
 PEDIDO: <literal>
-CLASIFICACIÓN: NORMAL — <por qué no aplica ningún criterio CRÍTICO, una línea>
-BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
-EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo que no aplica>
-```
-Responde con el plan breve o con `ESCALAR: …`.
-
-**Revisor del plan** (siempre, flujo completo) — `subagent_type: "revisor-plan"`, `description: "Revisar plan <tema>"`
-```
-PEDIDO: <literal>
-CLASIFICACIÓN: CRÍTICO — <criterios #n y por qué | sin criterios>
+CLASIFICACIÓN: <criterios #n y por qué | sin criterios>
 BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
 EXPLORACIÓN: <reporte fusionado de §6, el mismo que recibió el planificador>
 PLAN: <el plan completo, con tus completados menores y las PREGUNTAS del planificador si las hay>
@@ -139,8 +131,6 @@ CONTEXTO: <hechos útiles: ruta:línea, símbolos, convenciones; sin opiniones>
 YA HECHO: <una línea por subtarea anterior | nada>
 BASE: <BASE_Sn>
 ```
-Varias subtareas en un solo despacho (ligero): un bloque SUBTAREA por cada una, en orden, y ARCHIVOS PERMITIDOS = unión.
-
 **Corrección** — el mismo despacho del ejecutor, con la misma BASE (sin foto nueva), más:
 ```
 CORRECCIÓN <c>/<máx>: arregla exactamente esto y nada más:
@@ -157,8 +147,9 @@ PERMITIDOS: "<lista separada por comas>"
 SUCIOS PREVIOS (no son del flujo): <lista | ninguno>
 VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cuenta)
 ```
+En modo ligero, `effort: "medium"`, también en las correcciones.
 
-**Revisión integral** (flujo completo, con ≥ 2 subtareas) — como el revisor, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y `ENFOQUE: <uno de los de abajo>`.
+**Revisión integral** (con ≥ 2 subtareas, en los dos modos) — como el revisor, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y `ENFOQUE: <uno de los de abajo>`.
 Se reparte en hasta 3 revisores en paralelo, uno por enfoque aplicable, sin repetir ninguno:
 - **contratos, tipos y documentación:** cadena de llamadas, tipos, datos de punta a punta, compatibilidad con lo ya persistido, y que lo documentado coincida con el código y las convenciones del proyecto.
 - **tests:** ninguno borrado ni debilitado; los adaptados siguen fallando si falta lo que comprueban.
@@ -172,7 +163,7 @@ Se reparte en hasta 3 revisores en paralelo, uno por enfoque aplicable, sin repe
 
 «Solo texto»: todos los archivos permitidos son documentación o prompts (`.md`: skills, agentes, reglas, README). Ahí el tercer enfoque no corre, aunque la Clasificación cite #1 o #5.
 
-Sin ninguno de los dos opcionales, queda un solo revisor con el primer enfoque. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`. Es seguro porque el árbol ya está quieto y los revisores no editan. En fork mode, uno solo y sin `ENFOQUE`.
+Sin ninguno de los dos opcionales, queda un solo revisor con el primer enfoque. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`. Es seguro porque el árbol ya está quieto y los revisores no editan. En fork mode, uno solo y sin `ENFOQUE`. En modo ligero, `effort: "medium"` a cada revisor, también en las correcciones.
 
 ## 6. Después de cada agente
 
@@ -192,6 +183,7 @@ Corre `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<
 
 ```
 CIERRE · <título> — COMPLETO | DETENIDO en <paso>
+Modo: normal | ligero | ligero → normal (<motivo>)
 Cambios: <archivo — qué, una línea c/u>
 Verificación final: <tabla y RESULTADO, copiados>
 Revisión: S1 APROBADO (0 ciclos) · …
@@ -204,5 +196,7 @@ Consumo: contexto final por rol (subagent_tokens: no es gasto) <por rol> · gast
 `subagent_tokens` es el tamaño del contexto del último turno de cada agente: en un agente largo queda 20 a 40 veces por debajo de lo que de verdad leyó y generó. No lo sumes como si fuera consumo ni lo presentes como tal.
 
 ## 8. `continuar`
+
+`continuar` entra por /implementador (Opus). Si el último RELEVO de la conversación es `inicio` o `continuación` y la tarea no cerró, relevo `continuación` a `implementador-ligero` con ESTADO; si es `vuelta`, no hay ninguno o hay fork mode, sigue en normal.
 
 Con el pedido `continuar`: no explores ni planifiques de nuevo, y la BASE que imprima un estado.mjs nuevo NO es la base global. Busca en la conversación el último plan, si fue aprobado, `BASE_GLOBAL`/`DESDE_GLOBAL` y la BASE y el estado de cada subtarea; mira el árbol con `estado.mjs --cambios` contra la base global. Plan sin aprobar → pide aprobación. Retoma en la primera subtarea no aprobada, con los ciclos que le queden. Sin plan en la conversación: dilo y termina.

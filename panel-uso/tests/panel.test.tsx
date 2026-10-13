@@ -15,11 +15,13 @@ import {
   congelarConsumo,
   consumoDeFlujo,
   cuadradosDeFila,
+  esRelevo,
   iniciarFlujo,
   marcarOrquestador,
   nodos,
   nombreOrquestador,
   pasosDe,
+  relevarFlujo,
   resumenFlujo,
   senalAlTerminar,
   senalDeHerramienta,
@@ -1767,6 +1769,107 @@ describe('flujo (puro)', () => {
     })
   })
 
+  test('iniciarFlujo con RELEVO abre implementador con el modo de la skill', async () => {
+    const base = { variante: null, paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const relevo = '**Pedido:** RELEVO · inicio\nPEDIDO: arreglar el panel'
+    const uso: Flujo['usoBase'] = { 'Opus 5.5|high|principal': [100, 10] }
+
+    expect(iniciarFlujo('implementador-ligero', relevo)).toEqual({ ...base, nombre: 'implementador', modo: 'ligero' })
+    expect(iniciarFlujo('implementador', relevo)).toEqual({ ...base, nombre: 'implementador', modo: 'normal' })
+    expect(iniciarFlujo('/claude-config:implementador-ligero', relevo)).toEqual({ ...base, nombre: 'implementador', modo: 'ligero' })
+    expect(iniciarFlujo('implementador-ligero', relevo, 5_000, uso)).toEqual({
+      ...base,
+      nombre: 'implementador',
+      modo: 'ligero',
+      inicio: 5_000,
+      desde: 5_000,
+      usoBase: uso,
+    })
+    expect(iniciarFlujo('implementador', relevo, 5_000, uso)).toEqual({
+      ...base,
+      nombre: 'implementador',
+      modo: 'normal',
+      inicio: 5_000,
+      desde: 5_000,
+      usoBase: uso,
+    })
+    // Sin la marca, igual que antes: el ligero sigue abriendo el flujo viejo y el normal no lleva modo.
+    expect(iniciarFlujo('implementador-ligero', '**Pedido:** arreglar el panel')).toEqual({ ...base, nombre: 'implementador-ligero' })
+    expect(iniciarFlujo('implementador', '**Pedido:** arreglar el panel')).toEqual({ ...base, nombre: 'implementador' })
+    // Con la marca, documentar no cambia.
+    expect(iniciarFlujo('documentar', relevo)).toEqual({ ...base, nombre: 'documentar' })
+  })
+
+  test('relevarFlujo conserva paso, tiempos, usoBase y contadores y solo fija el modo', async () => {
+    const antes: Flujo = {
+      nombre: 'implementador',
+      variante: null,
+      paso: 5,
+      ejecuto: true,
+      estado: 'en curso',
+      inicio: 1_000,
+      desde: 4_000,
+      tiempos: { 3: 500, 4: 700 },
+      esperaUsuario: { 4: 900 },
+      preguntaDesde: null,
+      fin: null,
+      usoBase: { 'Opus 5.5|high|principal': [100, 10] },
+      totalExploradores: 2,
+      planes: 1,
+      ejecuciones: 1,
+      revisiones: { 5: 1 },
+    }
+    const inicio = '**Pedido:** RELEVO · inicio\nPEDIDO: arreglar el panel'
+    const vuelta = '**Pedido:** RELEVO · vuelta\nPEDIDO: arreglar el panel'
+
+    const ligero = relevarFlujo(antes, 'implementador-ligero', inicio)
+    expect(ligero).toEqual({ ...antes, modo: 'ligero' })
+    expect(antes.modo).toBeUndefined()
+
+    const normal = relevarFlujo(ligero, 'implementador', vuelta)
+    expect(normal).toEqual({ ...antes, modo: 'normal' })
+
+    // Con el mismo modo, devuelve el mismo flujo.
+    expect(relevarFlujo(ligero, 'implementador-ligero', vuelta)).toBe(ligero)
+    expect(relevarFlujo(normal, 'implementador', inicio)).toBe(normal)
+  })
+
+  test('relevarFlujo es null sin marca, sin flujo, con el flujo terminado, en documentar o en un implementador-ligero guardado, o con otra skill', async () => {
+    const f: Flujo = { nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const relevo = '**Pedido:** RELEVO · continuación\nPEDIDO: x'
+
+    expect(relevarFlujo(f, 'implementador-ligero', relevo)).not.toBeNull()
+    expect(relevarFlujo(f, 'implementador-ligero', '**Pedido:** arreglar el panel')).toBeNull()
+    expect(relevarFlujo(f, 'implementador-ligero', '')).toBeNull()
+    expect(relevarFlujo(f, 'implementador', '**Pedido:** relevo del panel')).toBeNull()
+    expect(relevarFlujo(null, 'implementador-ligero', relevo)).toBeNull()
+    for (const estado of ['completo', 'detenido', 'interrumpido'] as const) {
+      expect(relevarFlujo({ ...f, estado }, 'implementador-ligero', relevo)).toBeNull()
+    }
+    expect(relevarFlujo({ ...f, nombre: 'documentar' }, 'implementador-ligero', relevo)).toBeNull()
+    expect(relevarFlujo({ ...f, nombre: 'implementador-ligero' }, 'implementador-ligero', relevo)).toBeNull()
+    expect(relevarFlujo({ ...f, nombre: 'implementador-ligero' }, 'implementador', relevo)).toBeNull()
+    expect(relevarFlujo(f, 'documentar', relevo)).toBeNull()
+    expect(relevarFlujo(f, 'simplify', relevo)).toBeNull()
+  })
+
+  test('RELEVO fuera de la posición del pedido no cuenta: la marca va justo después de **Pedido:**', async () => {
+    const base = { variante: null, paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const f: Flujo = { nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    // El cuerpo expandido de la skill trae `RELEVO` más abajo, en las instrucciones, aunque el pedido sea normal.
+    const instrucciones = '**Pedido:** arreglar el panel\n\n- Si el pedido empieza con `RELEVO · vuelta`, sigue en el paso 3'
+    const enOtraLinea = '**Pedido:** arreglar el panel\nRELEVO · inicio'
+    const antes = 'RELEVO · inicio\n**Pedido:** arreglar el panel'
+
+    for (const texto of [instrucciones, enOtraLinea, antes]) {
+      expect(esRelevo(texto)).toBe(false)
+      expect(relevarFlujo(f, 'implementador', texto)).toBeNull()
+      expect(relevarFlujo(f, 'implementador-ligero', texto)).toBeNull()
+      expect(iniciarFlujo('implementador', texto)).toEqual({ ...base, nombre: 'implementador' })
+      expect(iniciarFlujo('implementador-ligero', texto)).toEqual({ ...base, nombre: 'implementador-ligero' })
+    }
+  })
+
   test('senalDeHerramienta: estado.mjs con sus opciones, verificar.mjs, ~ y $HOME, y no un cat', async () => {
     expect(bash('node ~/.claude/flujos/estado.mjs')).toEqual(estado('preflight'))
     expect(bash('node ~/.claude/flujos/estado.mjs --base')).toEqual(estado('base'))
@@ -2145,6 +2248,16 @@ describe('flujo (puro)', () => {
 
     expect(resumenFlujo({ ...f, nombre: 'documentar', variante: 'auditar', paso: 3 })).toBe('/documentar auditar · Lectura')
     expect(resumenFlujo(null)).toBe('sin flujo en esta sesión')
+  })
+
+  test('resumenFlujo muestra el modo escrito y nada sin él', async () => {
+    const f: Flujo = { nombre: 'implementador', variante: null, paso: 3, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+
+    expect(resumenFlujo({ ...f, modo: 'ligero' }, 4_000)).toBe('/implementador ligero · Plan · 4 s')
+    expect(resumenFlujo({ ...f, modo: 'normal' }, 4_000)).toBe('/implementador normal · Plan · 4 s')
+    expect(resumenFlujo({ ...f, modo: 'ligero' })).toBe('/implementador ligero · Plan')
+    expect(resumenFlujo(f, 4_000)).toBe('/implementador · Plan · 4 s')
+    expect(resumenFlujo(f)).toBe('/implementador · Plan')
   })
 
   test('las funciones no mutan el flujo que reciben', async () => {
@@ -4336,6 +4449,99 @@ describe('flujo en el panel', () => {
     abrir.B()
     abrir.C()
     await Promise.all([d, e, ...Object.values(vuelos)])
+    await ui.unmount()
+  })
+
+  test('el relevo a modo ligero sigue el mismo flujo: conserva paso, tiempos y filas de exploradores y muestra el modo', async ($, on) => {
+    // Como `explorando`, pero con un reloj del test: con la hora fija el flujo no acumularía tiempo.
+    const reloj = { t: AHORA }
+    on('clock.now', () => ({ value: reloj.t }))
+    on('clock.every', () => ({ value: undefined }))
+    on('clock.after', () => ({ value: undefined }))
+    motorMide(on)
+    motorUsa(on)
+    on('session.id', () => ({ value: 's1' }))
+    motorStore(on)
+    const motor = motorFlujo(on)
+    motorControlado(on, HAIKU)
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    const abrir = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
+    const vuelos = { A: agente($, 'explorador', 'A'), B: agente($, 'explorador', 'B'), C: agente($, 'explorador', 'C') }
+    await esperar()
+    await paso($, HAIKU, 'high', 'agente-A')
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    reloj.t += 12_000
+
+    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
+
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador ligero · Exploración · 12 s'])
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    // Desplegado, el nodo Exploración sigue con sus tres exploradores.
+    await ui.press({ key: 'flujo-plegar' })
+    expect(await textosDe(ui)).toContain(' ×3')
+
+    abrir.A()
+    abrir.B()
+    abrir.C()
+    await Promise.all(Object.values(vuelos))
+    await ui.unmount()
+  })
+
+  test('la vuelta a normal por RELEVO no reinicia el flujo', async ($, on) => {
+    const { reloj } = preparar(on)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+
+    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** algo' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    reloj.t += 5_000
+    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador ligero · Preflight · 5 s'])
+
+    reloj.t += 10_000
+    await agente($, 'planificador')
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador ligero · Plan · 15 s'])
+
+    reloj.t += 5_000
+    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** RELEVO · vuelta\nPEDIDO: x' })
+    const tramo = await desdeFlujo(ui, 8)
+    expect(tramo.slice(0, 2)).toEqual(['Flujo', '/implementador normal · Plan · 20 s'])
+    expect(tramo.slice(2, 5)).toEqual(['✓ ', 'Preflight', ' 15 s'])
+    await ui.unmount()
+  })
+
+  test('RELEVO sin flujo en curso abre /implementador en modo ligero', async ($, on) => {
+    preparar(on)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])
+
+    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
+
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador ligero · Preflight · 0 s'])
+    await ui.unmount()
+  })
+
+  test('un /implementador normal con RELEVO solo en las instrucciones reinicia el flujo y no muestra el modo', async ($, on) => {
+    const { reloj } = preparar(on)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+
+    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** algo' })
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    reloj.t += 5_000
+    await agente($, 'planificador')
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Plan · 5 s'])
+
+    reloj.t += 10_000
+    await $.skill.prompt({
+      skill: 'implementador',
+      text: '**Pedido:** arreglar el panel\n\n- Si el pedido empieza con `RELEVO · vuelta`, sigue en el paso 3',
+    })
+
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Preflight · 0 s'])
     await ui.unmount()
   })
 
