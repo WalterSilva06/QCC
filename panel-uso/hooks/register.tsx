@@ -29,6 +29,7 @@ import {
   barra,
   barraTramos,
   cuando,
+  desgloseTramos,
   duracion,
   etiquetasAlineadas,
   falta,
@@ -53,6 +54,7 @@ import {
   etiquetaDia,
   idDeFila,
   idFila,
+  idsDeActividad,
   inicioSemana,
   iniciarPeticion,
   limpiarPendientes,
@@ -84,7 +86,7 @@ const flujo = atom({ plugin: 'panel-uso', key: 'flujo' } as const, null)
 const flujoAbierto = atom({ plugin: 'panel-uso', key: 'flujoAbierto' } as const, false)
 const filasExploradores = atom({ plugin: 'panel-uso', key: 'filasExploradores' } as const, [])
 
-/** Color de los ■ de cada fila de «Esta sesión» según su actividad (todos de la fila llevan el mismo). */
+/** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
 
 /** Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. */
@@ -96,11 +98,11 @@ const PREF_FLUJO = 'prefs:flujo'
 /** Color del glifo de «Terminado» según cómo terminó el flujo. */
 const COLOR_FIN = { completo: 'success', detenido: 'warning', interrumpido: 'error' } as const
 
-/** Color del tramo de subagentes en las barras de «Esta semana»; distinto de `claude` y de los de estado. */
-const COLOR_SUB = 'suggestion'
+/** Color del tramo de subagentes en las dos tablas («Esta sesión» y «Esta semana») y de la etiqueta de «Flujo › consumo». */
+const COLOR_SUB = 'purple_FOR_SUBAGENTS_ONLY'
 
-/** Color del tramo del hilo principal durante un flujo en las barras de «Esta sesión» y «Esta semana»; el mismo que el revisor-plan, distinto de `claude`, `suggestion` y los de estado. */
-const COLOR_FLUJO = 'pink_FOR_SUBAGENTS_ONLY'
+/** Color del tramo del hilo principal durante un flujo en las barras de «Esta sesión» y «Esta semana»; distinto de `claude`, de `COLOR_SUB` y de success/warning/subtle de los ■. */
+const COLOR_FLUJO = 'cyan_FOR_SUBAGENTS_ONLY'
 
 /** Columnas de las cifras de cada fila: total (7) + salida (7). */
 const COLUMNAS_CIFRAS = 14
@@ -711,8 +713,10 @@ export const register: Register = on => {
      * Cada tabla alinea en columnas las etiquetas de sus propias filas (familia · versión · esfuerzo).
      * Bajo cada fila va su barra con el % de la sección (barra + % = ancho).
      * Con `plegable`, plegada muestra solo el título, el total y el botón.
-     * Con `conActividad`, cada fila lleva un ■ (verde: en curso; amarillo: espera; gris: inactiva),
-     * o uno por explorador en vuelo (hasta 3, separados) si es la fila de los exploradores del flujo.
+     * Con `conActividad`, una fila unida lleva un ■ del principal y otro del subagente (verde: en curso;
+     * amarillo: espera; gris: inactiva), cada uno con el estado de su origen; el del subagente son
+     * 1 a 3 (uno por explorador en vuelo, separados) si es la fila de los exploradores del flujo.
+     * Con `conDesglose`, bajo la barra de cada fila con flujo o subagentes va su desglose (`desgloseTramos`).
      * El encabezado lleva el total y la salida; si con el botón no caben en `ancho`,
      * queda solo el total y la salida pasa al pie.
      */
@@ -723,6 +727,7 @@ export const register: Register = on => {
       desde: string | null,
       plegable?: { abierta: boolean },
       conActividad = false,
+      conDesglose = false,
     ) => {
       const visible = plegable === undefined || plegable.abierta
       const label = plegable?.abierta ? 'Ocultar' : 'Ver'
@@ -733,7 +738,9 @@ export const register: Register = on => {
       const salidaAlPie = !cabe && s !== null && s.salida > 0 ? `sal ${tokens(s.salida)}` : null
       // Las etiquetas van en columnas y dejan sitio a las cifras y, con `conActividad`, a los ■ (2 celdas cada uno).
       const maxCuadros =
-        conActividad && s !== null ? Math.max(0, ...s.filas.map(f => cuadradosDeFila(fl, filasExp, idDeFila(f)))) : 0
+        conActividad && s !== null
+          ? Math.max(0, ...s.filas.map(f => idsDeActividad(f).reduce((n, id) => n + cuadradosDeFila(fl, filasExp, id), 0)))
+          : 0
       const etiquetas =
         s !== null ? etiquetasAlineadas(s.filas, Math.max(1, e.props.bodyColumns - COLUMNAS_CIFRAS - 2 * maxCuadros)) : []
 
@@ -774,11 +781,13 @@ export const register: Register = on => {
                       <Box flexGrow={1}>
                         <Text wrap="truncate-end">{etiquetas[indice] ?? ''}</Text>
                         {conActividad &&
-                          Array.from({ length: cuadradosDeFila(fl, filasExp, idDeFila(f)) }, (_, i) => (
-                            <Text key={`cuadrado-${i}`} color={COLOR_ACTIVIDAD[estadoActividad(act, idDeFila(f), t)]}>
-                              {' ■'}
-                            </Text>
-                          ))}
+                          idsDeActividad(f).flatMap(id =>
+                            Array.from({ length: cuadradosDeFila(fl, filasExp, id) }, (_, i) => (
+                              <Text key={`cuadrado-${id}-${i}`} color={COLOR_ACTIVIDAD[estadoActividad(act, id, t)]}>
+                                {' ■'}
+                              </Text>
+                            )),
+                          )}
                       </Box>
                       <Text>{tokens(f.total).padStart(7)}</Text>
                       <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
@@ -792,10 +801,15 @@ export const register: Register = on => {
                           Math.max(1, ancho - 7),
                         )
                       ) : (
-                        <Text color={f.origen === 'subagente' ? COLOR_SUB : 'claude'}>{barra(parte, Math.max(1, ancho - 7))}</Text>
+                        <Text color="claude">{barra(parte, Math.max(1, ancho - 7))}</Text>
                       )}
                       <Text dimColor>{pct(parte).padStart(7)}</Text>
                     </Box>
+                    {conDesglose && desgloseTramos(f, ancho) !== '' && (
+                      <Text dimColor wrap="truncate-end">
+                        {desgloseTramos(f, ancho)}
+                      </Text>
+                    )}
                   </Box>
                 )
               })}
@@ -1046,7 +1060,7 @@ export const register: Register = on => {
         </Box>
 
         {/* La hora anotada se redondea a la hora entera: «desde» mentiría en la sesión. */}
-        {tabla('Esta sesión', 'n', ses, null, undefined, true)}
+        {tabla('Esta sesión', 'n', ses === null ? null : unirOrigenes(ses), null, undefined, true, true)}
 
         {tabla(
           'Esta semana',

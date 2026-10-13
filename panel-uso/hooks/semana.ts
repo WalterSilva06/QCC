@@ -249,6 +249,20 @@ export function idDeFila(f: FilaSemana): string {
   return `${f.modelo}|${f.esfuerzo}|${f.origen}`
 }
 
+/**
+ * Los ids de actividad de una fila: uno si no está unida (`sub` sin definir); si está unida, el de
+ * `principal` si le queda algo y el de `subagente` si tiene `sub`, en ese orden.
+ */
+export function idsDeActividad(f: FilaSemana): string[] {
+  if (f.sub === undefined) return [idDeFila(f)]
+
+  const ids: string[] = []
+  if (f.total - f.sub > 0) ids.push(`${f.modelo}|${f.esfuerzo}|principal`)
+  if (f.sub > 0) ids.push(`${f.modelo}|${f.esfuerzo}|subagente`)
+
+  return ids
+}
+
 /** Una petición al modelo sale: una más en vuelo y ya no espera. Devuelve una actividad nueva. */
 export function iniciarPeticion(a: Actividad, id: string, t: number): Actividad {
   return { ...a, [id]: { enVuelo: (a[id]?.enVuelo ?? 0) + 1, pendiente: false, desde: t } }

@@ -52,12 +52,12 @@ export type FilaSemana = {
   modelo: string
   /** «bajo», «medio», «alto», «muy alto», «máximo»; «—» para un modelo sin esfuerzo. */
   esfuerzo: string
-  /** Quién respondió: el hilo principal o un subagente. En «Esta sesión» las filas se separan por origen; en «Esta semana» vienen unidas (origen 'principal'). */
+  /** Quién respondió: el hilo principal o un subagente. Las filas del registro vienen separadas por origen; al dibujar, «Esta sesión» y «Esta semana» las unen (origen 'principal'). */
   origen: 'principal' | 'subagente'
   /** Entrada + salida + caché leída + caché escrita. */
   total: number
   salida: number
-  /** Tokens de subagente dentro de `total`; solo lo pone `unirOrigenes` («Esta semana»). */
+  /** Tokens de subagente dentro de `total`; solo lo pone `unirOrigenes`, que se aplica al dibujar «Esta sesión» y «Esta semana». */
   sub?: number
   /** Tokens del hilo principal durante un flujo en curso, dentro de `total`; solo en filas `principal` y solo si los hay. */
   flujo?: number

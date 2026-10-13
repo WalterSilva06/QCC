@@ -37,6 +37,32 @@ export function barraTramos(parte: number, flujo: number, sub: number, ancho: nu
 }
 
 /**
+ * El desglose de una fila por tramos: «normal 6,4M · flujo 3,5M · sub 3M», sin los tramos en 0.
+ * Sin flujo ni sub, vacío. Si no cabe en `ancho` (mínimo 1) quita los espacios y, si aún no cabe, recorta con «…».
+ */
+export function desgloseTramos(f: Pick<FilaSemana, 'total' | 'flujo' | 'sub'>, ancho: number): string {
+  const flujo = f.flujo ?? 0
+  const sub = f.sub ?? 0
+  if (flujo <= 0 && sub <= 0) return ''
+
+  const partes = [
+    { nombre: 'normal', n: Math.max(0, f.total - flujo - sub) },
+    { nombre: 'flujo', n: flujo },
+    { nombre: 'sub', n: sub },
+  ]
+    .filter(p => p.n > 0)
+    .map(p => `${p.nombre} ${tokens(p.n)}`)
+  const limite = Math.max(1, ancho)
+  const normal = partes.join(' · ')
+  if (normal.length <= limite) return normal
+
+  const compacta = partes.join('·')
+  if (compacta.length <= limite) return compacta
+
+  return `${compacta.slice(0, limite - 1).trimEnd()}…`
+}
+
+/**
  * Las etiquetas de las filas en columnas separadas por un espacio: familia, versión (si alguna la
  * tiene) y esfuerzo, cada una rellenada al más largo. Todas salen del mismo largo; si pasa de `ancho`
  * (mínimo 1), cada una se recorta por el final con «…» y se rellena hasta `ancho`.
