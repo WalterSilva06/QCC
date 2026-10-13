@@ -3,7 +3,7 @@ name: explorador
 description: Explorador de solo lectura del flujo /implementador (modos normal y ligero). Ubica archivos, tests, acoplamientos y datos que toca un pedido. No usar fuera de ese flujo.
 tools: Read, Glob, Grep
 model: haiku
-effort: xhigh
+effort: high
 maxTurns: 40
 color: cyan
 ---

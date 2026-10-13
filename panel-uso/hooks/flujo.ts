@@ -405,11 +405,14 @@ export function abreTanda(f: Flujo | null, s: Senal): boolean {
   return s.nombre === 'revisor' && (f.revisores ?? 0) === 0
 }
 
-/** Cuántos ■ lleva una fila: uno por explorador o revisor en vuelo (de 1 a 3) si es una fila anotada del flujo en curso; si no, 1. */
+/** Tope de ■ de una fila anotada: el máximo de exploradores en paralelo de `/implementador`. */
+export const TOPE_EN_VUELO = 5
+
+/** Cuántos ■ lleva una fila: uno por explorador o revisor en vuelo (de 1 a `TOPE_EN_VUELO`) si es una fila anotada del flujo en curso; si no, 1. */
 export function cuadradosDeFila(f: Flujo | null, filas: readonly string[], id: string): number {
   if (f === null || f.estado !== 'en curso' || !filas.includes(id)) return 1
 
-  return Math.min(3, Math.max(1, (f.exploradores ?? 0) + (f.revisores ?? 0)))
+  return Math.min(TOPE_EN_VUELO, Math.max(1, (f.exploradores ?? 0) + (f.revisores ?? 0)))
 }
 
 /**
@@ -471,6 +474,27 @@ export function marcarOrquestador(actual: Flujo | null, nombre: string): Flujo |
   if (actual === null || actual.estado !== 'en curso' || actual.orquestador === nombre) return actual
 
   return { ...actual, orquestador: nombre }
+}
+
+/** Modelo y esfuerzo que debe usar el orquestador en `/implementador` ligero. */
+export const MODELO_LIGERO = 'claude-sonnet-5-5'
+export const ESFUERZO_LIGERO = 'high' as const
+
+/**
+ * Qué modelo y esfuerzo pedir al orquestador en `/implementador` ligero en curso, o `null` si no hay que cambiar nada.
+ * Existe porque el `model:` de la skill no se aplica cuando el relevo entra por la herramienta Skill: el panel lo fija en `turn.step`.
+ * No toca los modelos de contexto largo (`[1m]`) ni lo que ya es Sonnet high.
+ */
+export function pedidoDelOrquestador(
+  f: Flujo | null,
+  modelo: string,
+  esfuerzo: string | number | undefined,
+): { model: string; effort: 'high' } | null {
+  if (f === null || f.nombre !== 'implementador' || f.modo !== 'ligero' || f.estado !== 'en curso') return null
+  if (modelo.endsWith('[1m]')) return null
+  if (modelo === MODELO_LIGERO && esfuerzo === ESFUERZO_LIGERO) return null
+
+  return { model: MODELO_LIGERO, effort: ESFUERZO_LIGERO }
 }
 
 /**

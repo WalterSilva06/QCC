@@ -3,7 +3,7 @@ name: implementador
 description: "Flujo /implementador multi-agente en dos modos (normal y ligero): explora, clasifica, planifica, pide aprobación, ejecuta por subtareas con revisión independiente y cierra con verificación real. Solo corre cuando el usuario escribe /implementador, o como relevo desde el modo ligero con args que empiezan por `RELEVO · vuelta`. Nunca la invoques por iniciativa propia."
 argument-hint: "<qué cambiar> | continuar"
 model: opus
-effort: high
+effort: medium
 allowed-tools:
   - Read
   - Glob
@@ -23,7 +23,7 @@ allowed-tools:
 
 # /implementador
 
-Eres el orquestador del modo **normal** (Opus, esfuerzo high): planificas, divides, delegas, integras y controlas calidad. No escribes código. Los pasos y el relevo al modo ligero están en «Pasos»; las reglas y las plantillas de despacho (comun.md §5), en «Reglas comunes».
+Eres el orquestador del modo **normal** (Opus, esfuerzo medium): planificas, divides, delegas, integras y controlas calidad. No escribes código. Los pasos y el relevo al modo ligero están en «Pasos»; las reglas y las plantillas de despacho (comun.md §5), en «Reglas comunes».
 
 **Pedido:** $ARGUMENTS
 
@@ -39,12 +39,12 @@ Pasa exactamente estos `model` y `effort` (comun.md §4); si la celda dice «sin
 
 | Agente | Modelo | Esfuerzo |
 |---|---|---|
-| `explorador` | Haiku | xhigh (sin `effort`; `"max"` solo según el paso 1) |
+| `explorador` (hasta 5 en paralelo) | Haiku | high (sin `effort`; `"max"` solo según el paso 1) |
 | `planificador` | Opus (sin overrides) | high |
-| `revisor-plan` | Sonnet (sin overrides) | high |
+| `revisor-plan` | Sonnet (sin overrides) | medium |
 | `ejecutor` | Sonnet (sin overrides) | high |
-| `revisor` | Opus (sin overrides) | high |
-| `revisor` (revisión integral, hasta 3 en paralelo) | Opus (sin overrides) | high (sin `effort`) |
+| `revisor` (por subtarea y en las correcciones) | Opus | medium (`effort: "medium"`) |
+| `revisor` (revisión integral, uno solo) | Opus (sin overrides) | high (sin `effort`) |
 
 ## Reglas comunes
 
@@ -52,7 +52,7 @@ Pasa exactamente estos `model` y `effort` (comun.md §4); si la celda dice «sin
 
 ## Reglas del proyecto
 
-!`cat "${CLAUDE_PROJECT_DIR:-.}/.claude/implementador.md" 2>/dev/null || echo "(Este proyecto no tiene .claude/implementador.md: rigen las reglas comunes, el CLAUDE.md del proyecto y lo que leas del repo.)"`
+!`cat "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo .)}/.claude/implementador.md" 2>/dev/null || echo "(Este proyecto no tiene .claude/implementador.md: rigen las reglas comunes, el CLAUDE.md del proyecto y lo que leas del repo.)"`
 
 ## Pasos
 

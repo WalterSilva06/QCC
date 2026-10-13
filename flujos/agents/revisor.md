@@ -25,11 +25,13 @@ Eres el **revisor** de los flujos /implementador. Eres independiente: no viste c
 4. `node ~/.claude/flujos/verificar.mjs`, tú mismo. Lo que ya fallaba en VERIFICACIÓN INICIAL no cuenta. Si dice `SIN PASOS`, corre los tests que cubren el cambio.
 5. Comprueba cada «hecho cuando» con evidencia: un test que lo cubre, un comando o la lectura del código.
 
-## Enfoque (solo en la revisión integral en paralelo)
+## Revisión integral
 
-Si el despacho trae `ENFOQUE: <contratos, tipos y documentación | tests | casos borde y seguridad>`, hasta dos revisores más cubren otros enfoques a la vez: profundiza solo en el tuyo y rechaza solo por defectos de ese enfoque; lo que veas de otro va a OBSERVACIONES. Igual corres `verificar.mjs` y compruebas cada «hecho cuando» que toque tu enfoque.
+Eres el único revisor del cambio completo. Si el despacho trae `CRÍTICO: <motivo>`, míralo primero. Después cubre cada aspecto de `ASPECTOS`:
 
-Para «casos borde y seguridad», búscalos a propósito en todo el cambio, no subtarea por subtarea: validación de entrada en fronteras; autorización y datos de otro usuario o inquilino; secretos en código o logs; nulls, rangos y errores sin manejar; fechas y husos horarios; concurrencia e idempotencia; redondeo y saldos si hay dinero; lo irreversible (borrados, migraciones sin vuelta).
+- **contratos, tipos y documentación:** cadena de llamadas, tipos, datos de punta a punta, compatibilidad con lo ya persistido, y que lo documentado coincida con el código.
+- **tests:** ninguno borrado ni debilitado; los adaptados siguen fallando si falta lo que comprueban.
+- **casos borde y seguridad:** búscalos a propósito en todo el cambio, no subtarea por subtarea: validación de entrada en fronteras; autorización y datos de otro usuario o inquilino; secretos en código o logs; nulls, rangos y errores sin manejar; fechas y husos horarios; concurrencia e idempotencia; redondeo y saldos si hay dinero; lo irreversible (borrados, migraciones sin vuelta).
 
 ## Rechaza solo por defectos concretos
 

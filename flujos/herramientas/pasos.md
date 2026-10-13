@@ -33,7 +33,7 @@ Quien recibe un RELEVO no hace preflight ni exploración y usa esos datos como p
 - `node ~/.claude/flujos/estado.mjs` → anota `BASE_GLOBAL`, `DESDE_GLOBAL`, rama y sucios previos. `ERROR` (p. ej. sin git) → dilo y termina. Si GUARDIA no dice OK, ponlo en el plan.
 - `node ~/.claude/flujos/verificar.mjs` → verificación inicial. `SIN PASOS` → comun.md §1.
 
-**1. Exploración** (solo en modo normal; el ligero la recibe en el RELEVO) — `explorador` (comun.md §5): 2 o 3 en paralelo si el pedido toca más de un área, partidos por carpeta o capa sin solaparse; uno solo si nombra los archivos o es de una sola área (comun.md §5). A cada uno, sin `effort` (corre en xhigh); `effort: "max"` solo a un área muy grande, nunca a todos a la vez. Con varios, fusiona los reportes (comun.md §6) antes de clasificar.
+**1. Exploración** (solo en modo normal; el ligero la recibe en el RELEVO) — `explorador` (comun.md §5): hasta 5 en paralelo si el pedido toca más de un área, partidos por carpeta o capa sin solaparse; uno solo si nombra los archivos o es de una sola área (comun.md §5). A cada uno, sin `effort` (corre en high); `effort: "max"` solo a un área muy grande, nunca a todos a la vez. Con varios, fusiona los reportes (comun.md §6) antes de clasificar.
 
 **2. Clasificación** — cita los criterios de comun.md §2 y de las reglas del proyecto que aplican, o «sin criterios». Los usan el plan y la revisión integral.
 - Luego el modo. Si no hay ningún criterio CRÍTICO, se estiman ≤ 3 subtareas y ≤ 6 archivos en total (tests incluidos) y no hay fork mode → AskUserQuestion con header «Modo», opciones «Ligero (recomendado)» y «Normal» (un «Other» sin elección clara cuenta como Normal).
@@ -56,9 +56,9 @@ Quien recibe un RELEVO no hace preflight ni exploración y usa esos datos como p
 - Ajustes → por defecto los aplicas tú, sin planificador. Lo aditivo (una subtarea más, texto o formato, un límite añadido o quitado, otro orden) lo escribes en el plan y muestras solo lo que cambió y qué sigue igual. Re-planificas **una vez** solo si el ajuste cambia el enfoque de lo ya planificado (contratos, tipos o datos de subtareas existentes, o el reparto de archivos entre ellas): pasas PLAN VIGENTE y solo el ajuste (comun.md §5), y el planificador devuelve solo las subtareas afectadas. En modo ligero, el plan re-planificado también pasa por la vuelta del paso 3. Vuelves a preguntar.
 
 **5. Ejecución**, una subtarea a la vez
-- Por subtarea: `estado.mjs --base` → `ejecutor` → `estado.mjs --cambios` → `revisor` de esa subtarea (con el `effort` de tu tabla; en ligero, `medium`, también en las correcciones) → hasta **2 ciclos** de corrección.
+- Por subtarea: `estado.mjs --base` → `ejecutor` → `estado.mjs --cambios` → `revisor` de esa subtarea (con el `model`/`effort` de tu tabla: en normal, Opus con `effort: "medium"`; en ligero, `model: "sonnet"` en high; también en las correcciones) → hasta **2 ciclos** de corrección.
 - Un tercer rechazo en el mismo punto → DETENIDO.
 
-**6. Verificación final** — tu `verificar.mjs`. ROJO → 1 ciclo (corrección + revisión). Con ≥ 2 subtareas, en los dos modos → revisión integral (comun.md §5): hasta 3 revisores en paralelo, uno por enfoque aplicable (comun.md §5), con el `effort` de tu tabla (en ligero, `medium`, también en las correcciones), hasta 1 ciclo.
+**6. Verificación final** — tu `verificar.mjs`. ROJO → 1 ciclo (corrección + revisión). Con ≥ 2 subtareas, en los dos modos → revisión integral (comun.md §5): un solo revisor, con el motivo CRÍTICO y los aspectos que aplican, y el `model`/`effort` de tu tabla (en normal, Opus high sin overrides; en ligero, `effort: "medium"`; también en las correcciones), hasta 1 ciclo.
 
 **7. Cierre** — comun.md §7.

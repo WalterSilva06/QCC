@@ -3,7 +3,7 @@ name: revisor-plan
 description: Revisor de solo lectura del flujo /implementador para cualquier plan (los dos modos). Comprueba el plan contra el formato, la exploración y las reglas del proyecto antes de que el usuario lo apruebe. Responde APROBADO o AJUSTAR. No edita. No usar fuera de ese flujo.
 tools: Read, Glob, Grep
 model: sonnet
-effort: high
+effort: medium
 maxTurns: 25
 color: pink
 ---

@@ -47,10 +47,10 @@ Pasa exactamente estos `model` y `effort` (comun.md §4); si la celda dice «sin
 |---|---|---|
 | `explorador` | no corre (la exploración llega en el RELEVO) | — |
 | `planificador` | Sonnet (`model: "sonnet"` en la llamada) | high |
-| `revisor-plan` | Sonnet (sin overrides) | high |
+| `revisor-plan` | Sonnet (sin overrides) | medium |
 | `ejecutor` | Sonnet (sin overrides) | high |
-| `revisor` (por subtarea y en las correcciones) | Opus | medium (`effort: "medium"`) |
-| `revisor` (revisión integral, hasta 3 en paralelo) | Opus | medium (`effort: "medium"` en cada uno) |
+| `revisor` (por subtarea y en las correcciones) | Sonnet (`model: "sonnet"` en la llamada) | high |
+| `revisor` (revisión integral, uno solo) | Opus | medium (`effort: "medium"`) |
 
 ## Reglas comunes
 
@@ -58,7 +58,7 @@ Pasa exactamente estos `model` y `effort` (comun.md §4); si la celda dice «sin
 
 ## Reglas del proyecto
 
-!`cat "${CLAUDE_PROJECT_DIR:-.}/.claude/implementador.md" 2>/dev/null || echo "(Este proyecto no tiene .claude/implementador.md: rigen las reglas comunes, el CLAUDE.md del proyecto y lo que leas del repo.)"`
+!`cat "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo .)}/.claude/implementador.md" 2>/dev/null || echo "(Este proyecto no tiene .claude/implementador.md: rigen las reglas comunes, el CLAUDE.md del proyecto y lo que leas del repo.)"`
 
 ## Pasos
 

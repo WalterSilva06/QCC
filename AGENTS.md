@@ -54,7 +54,7 @@ Los tres tienen que terminar sin errores antes de dar algo por hecho. Qué no pr
 
 ## Flujo con /implementador
 
-`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador.md` y mandan sobre las comunes y rigen en los dos modos. `/implementador` tiene dos modos con los mismos pasos (`flujos/herramientas/pasos.md`): normal (Opus) y ligero (Sonnet, con revisores en Opus medium). Se recomienda el ligero cuando no hay criterios CRÍTICOS y el cambio se estima en ≤ 3 subtareas y ≤ 6 archivos; entonces el flujo pregunta el modo. Si el plan resulta más grande o crítico, vuelve a normal. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
+`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador.md` y mandan sobre las comunes y rigen en los dos modos. `/implementador` tiene dos modos con los mismos pasos (`flujos/herramientas/pasos.md`): normal (Opus) y ligero (Sonnet, con la revisión integral en Opus medium). Se recomienda el ligero cuando no hay criterios CRÍTICOS y el cambio se estima en ≤ 3 subtareas y ≤ 6 archivos; entonces el flujo pregunta el modo. Si el plan resulta más grande o crítico, vuelve a normal. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
 
 ## Pendiente de confirmar
 

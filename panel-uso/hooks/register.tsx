@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
+import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepInput, TurnStepResult } from 'claude-code'
 
 import type { Actividad, Esfuerzo, Flujo, Medida, Semana } from '../types'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
@@ -18,6 +18,7 @@ import {
   marcarOrquestador,
   nodos,
   nombreOrquestador,
+  pedidoDelOrquestador,
   relevarFlujo,
   resumenFlujo,
   senalAlTerminar,
@@ -147,6 +148,17 @@ async function enFlujo($: EngineInterface): Promise<boolean> {
     return f !== null && f.estado === 'en curso'
   } catch {
     return false
+  }
+}
+
+/** La petición del hilo principal con el modelo y esfuerzo del flujo ligero, si toca. Nunca rechaza: ante un fallo devuelve la misma. */
+async function conModeloDelFlujo($: EngineInterface, e: TurnStepInput): Promise<TurnStepInput> {
+  try {
+    const cambio = pedidoDelOrquestador(await read($, flujo), e.model, e.effort)
+
+    return cambio === null ? e : { ...e, ...cambio }
+  } catch {
+    return e
   }
 }
 
@@ -547,19 +559,22 @@ export const register: Register = on => {
   })
 
   on('turn.step', async function* ($, e, next) {
-    if (e.agentId === undefined) {
+    // En /implementador ligero el hilo principal pide Sonnet high; antes de `next`, sin poder frenar la petición. Los subagentes no se tocan.
+    const pedido = e.agentId === undefined ? await conModeloDelFlujo($, e) : e
+
+    if (pedido.agentId === undefined) {
       try {
-        const nivel = e.effort === undefined ? 'sin esfuerzo' : String(e.effort)
-        await update($, esfuerzo, () => ({ nivel, modelo: e.model, origen: 'turno' as const }))
+        const nivel = pedido.effort === undefined ? 'sin esfuerzo' : String(pedido.effort)
+        await update($, esfuerzo, () => ({ nivel, modelo: pedido.model, origen: 'turno' as const }))
       } catch {
         // El panel no puede frenar una petición al modelo.
       }
       // Con qué modelo trabaja el orquestador: la skill dice uno, pero la sesión puede estar en otro.
-      await marcarFlujo($, f => marcarOrquestador(f, nombreOrquestador(e.model, e.effort)))
+      await marcarFlujo($, f => marcarOrquestador(f, nombreOrquestador(pedido.model, pedido.effort)))
     }
 
     // La fila se abre y se cierra con el id de la petición, no con el de la respuesta.
-    const id = idFila(e.model, e.effort, e.agentId !== undefined)
+    const id = idFila(pedido.model, pedido.effort, pedido.agentId !== undefined)
     await marcarActividad($, (a, t) => iniciarPeticion(a, id, t))
     // Antes de `next` y fuera del try/finally: no puede frenar la petición ni dejar la actividad sin bajar.
     if (e.agentId !== undefined) await marcarExplorador($, id)
@@ -567,7 +582,7 @@ export const register: Register = on => {
     let pideHerramienta = false
     let r: TurnStepResult
     try {
-      r = yield* next(e)
+      r = yield* next(pedido)
       try {
         pideHerramienta = r.toolUses.length > 0 || r.stopReason === 'tool_use'
       } catch {
@@ -581,8 +596,8 @@ export const register: Register = on => {
     if (r.usage !== null) {
       try {
         // La marca se decide al llegar la respuesta: en la fila, `turn.complete` ya pudo cerrar el flujo.
-        const deFlujo = e.agentId === undefined && (await enFlujo($))
-        await anotarUso($, r.usage.model || e.model, e.effort, e.agentId !== undefined, deFlujo, r.usage)
+        const deFlujo = pedido.agentId === undefined && (await enFlujo($))
+        await anotarUso($, r.usage.model || pedido.model, pedido.effort, pedido.agentId !== undefined, deFlujo, r.usage)
       } catch {
         // Perder una cuenta es mejor que frenar la respuesta.
       }
@@ -727,7 +742,7 @@ export const register: Register = on => {
      * Con `plegable`, plegada muestra solo el título, el total y el botón.
      * Con `conActividad`, una fila unida lleva un ■ del principal y otro del subagente (verde: en curso;
      * amarillo: espera; gris: inactiva), cada uno con el estado de su origen; el del subagente son
-     * 1 a 3 (uno por explorador en vuelo, separados) si es la fila de los exploradores del flujo.
+     * 1 a 5 (uno por explorador o revisor en vuelo, separados) si es la fila anotada del flujo.
      * Con `conDesglose`, bajo la barra de cada fila con flujo o subagentes va su desglose (`desgloseTramos`).
      * El encabezado lleva el total y la salida; si con el botón no caben en `ancho`,
      * queda solo el total y la salida pasa al pie.

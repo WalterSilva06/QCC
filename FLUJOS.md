@@ -15,13 +15,15 @@ Un solo comando, dos modos con los mismos pasos, agentes, plantillas y ciclos (`
 
 | Rol | Normal | Ligero |
 |---|---|---|
-| Orquestador | Opus high (skill `implementador`) | Sonnet high (skill `implementador-ligero`) |
-| Explorador | Haiku xhigh | no corre: la exploración llega en el relevo |
+| Orquestador | Opus medium (skill `implementador`) | Sonnet high (skill `implementador-ligero`; lo fija el panel tras el relevo) |
+| Explorador | Haiku high, hasta 5 en paralelo (uno por área, sin solaparse) | no corre: la exploración llega en el relevo |
 | Planificador | Opus high | Sonnet high (mismo agente `planificador`, con `model: "sonnet"`) |
-| Revisor del plan | Sonnet high | Sonnet high |
+| Revisor del plan | Sonnet medium | Sonnet medium |
 | Ejecutor | Sonnet high | Sonnet high |
-| Revisor por subtarea | Opus high | Opus medium (`effort: "medium"`) |
-| Revisión integral | hasta 3 Opus high | hasta 3 Opus medium |
+| Revisor por subtarea | Opus medium (`effort: "medium"`) | Sonnet high (`model: "sonnet"`) |
+| Revisión integral | 1 Opus high | 1 Opus medium (`effort: "medium"`) |
+
+Sin el panel instalado y cargado, el orquestador del ligero sigue en el modelo de la sesión (en la práctica Opus), porque el `model:` de la skill no se aplica en un relevo por la herramienta Skill.
 
 - **Cuándo se recomienda el ligero:** en el paso 2 (Clasificación), si no hay criterios CRÍTICOS (los de `flujos/herramientas/comun.md` §2 ni los de las reglas del proyecto), se estiman ≤ 3 subtareas y ≤ 6 archivos, y no hay fork mode. Entonces pregunta «Modo» con «Ligero (recomendado)» y «Normal». Si el cambio no califica, no pregunta y sigue en normal.
 - **Relevo:** cambiar de modo es un relevo con la herramienta Skill, nunca con Agent (un subagente no puede lanzar subagentes ni preguntar). Los args empiezan con la línea `RELEVO · <inicio | vuelta | continuación>` y llevan el pedido, la base, la clasificación y la exploración. Quien lo recibe no repite el preflight ni la exploración.

@@ -4,6 +4,8 @@ import type { Engine } from 'claude-code/testing'
 
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
+  ESFUERZO_LIGERO,
+  MODELO_LIGERO,
   PASOS,
   PASOS_AUDITAR,
   abrirEspera,
@@ -21,6 +23,7 @@ import {
   nodos,
   nombreOrquestador,
   pasosDe,
+  pedidoDelOrquestador,
   relevarFlujo,
   resumenFlujo,
   senalAlTerminar,
@@ -2768,12 +2771,13 @@ describe('flujo (puro)', () => {
     expect(anotarFilaExplorador(vacias, null, fila)).toBe(vacias)
     expect(cuadradosDeFila(null, [fila], fila)).toBe(1)
 
-    // En curso con 3 en vuelo: anota y da 3 (con 5, tope de 3).
+    // En curso con 3 en vuelo: anota y da 3 (con 5 da 5; con 6, tope de 5).
     const anotadas = anotarFilaExplorador(vacias, con(3), fila)
     expect(anotadas).toEqual([fila])
     expect(vacias).toEqual([])
     expect(cuadradosDeFila(con(3), anotadas, fila)).toBe(3)
-    expect(cuadradosDeFila(con(5), anotadas, fila)).toBe(3)
+    expect(cuadradosDeFila(con(5), anotadas, fila)).toBe(5)
+    expect(cuadradosDeFila(con(6), anotadas, fila)).toBe(5)
     expect(cuadradosDeFila(con(2), anotadas, fila)).toBe(2)
 
     // Con 0 en vuelo (o sin el campo): ni anota ni multiplica.
@@ -2846,7 +2850,7 @@ describe('flujo (puro)', () => {
     // Solo revisores en vuelo.
     expect(anotarFilaExplorador(vacias, { ...base, revisores: 2 }, fila)).toEqual([fila])
     expect(cuadradosDeFila({ ...base, revisores: 2 }, anotadas, fila)).toBe(2)
-    expect(cuadradosDeFila({ ...base, revisores: 5 }, anotadas, fila)).toBe(3)
+    expect(cuadradosDeFila({ ...base, revisores: 6 }, anotadas, fila)).toBe(5)
 
     // Exploradores y revisores suman.
     expect(cuadradosDeFila({ ...base, exploradores: 1, revisores: 1 }, anotadas, fila)).toBe(2)
@@ -2979,6 +2983,36 @@ describe('flujo (puro)', () => {
     // Terminado: no cambia.
     const fin = terminarFlujo(opus, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
     expect(marcarOrquestador(fin, 'Sonnet 5.5 high')).toBe(fin)
+  })
+
+  test('pedidoDelOrquestador: Sonnet high solo con /implementador ligero en curso', async () => {
+    const relevo = '**Pedido:** RELEVO · inicio\nPEDIDO: x'
+    const ligero = iniciarFlujo('implementador-ligero', relevo) as Flujo
+    const pedido = { model: 'claude-sonnet-5-5', effort: 'high' }
+
+    expect(MODELO_LIGERO).toBe('claude-sonnet-5-5')
+    expect(ESFUERZO_LIGERO).toBe('high')
+
+    // Sin cambio: no hay flujo, no es /implementador ligero o ya no está en curso.
+    expect(pedidoDelOrquestador(null, 'claude-opus-5-5', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(iniciarFlujo('documentar', relevo) as Flujo, 'claude-opus-5-5', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(iniciarFlujo('implementador', '') as Flujo, 'claude-opus-5-5', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(iniciarFlujo('implementador', relevo) as Flujo, 'claude-opus-5-5', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(relevarFlujo(ligero, 'implementador', relevo), 'claude-opus-5-5', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(terminarFlujo(ligero, 'answer', 'CIERRE · x — COMPLETO', 1_000), 'claude-opus-5-5', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(terminarFlujo(ligero, 'answer', 'CIERRE · x — DETENIDO', 1_000), 'claude-opus-5-5', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(terminarFlujo(ligero, 'abort', undefined, 1_000), 'claude-opus-5-5', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(iniciarFlujo('implementador-ligero', '**Pedido:** x') as Flujo, 'claude-opus-5-5', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(ligero, 'claude-opus-5-5[1m]', 'high')).toBeNull()
+    expect(pedidoDelOrquestador(ligero, 'claude-sonnet-5-5', 'high')).toBeNull()
+
+    // Cambio: ligero en curso con otro modelo u otro esfuerzo.
+    expect(pedidoDelOrquestador(ligero, 'claude-opus-5-5', 'high')).toEqual(pedido)
+    expect(pedidoDelOrquestador(ligero, 'claude-opus-5-5', 'max')).toEqual(pedido)
+    expect(pedidoDelOrquestador(ligero, 'claude-opus-5-5', undefined)).toEqual(pedido)
+    expect(pedidoDelOrquestador(ligero, 'claude-haiku-5-5', 'low')).toEqual(pedido)
+    expect(pedidoDelOrquestador(ligero, 'claude-sonnet-5-5', 'medium')).toEqual(pedido)
+    expect(pedidoDelOrquestador(ligero, 'claude-sonnet-5-5', 3)).toEqual(pedido)
   })
 })
 
@@ -3495,6 +3529,123 @@ describe('flujo en el panel', () => {
     expect(hora['flujo|claude-opus-5-5|high']).toEqual(una)
     expect(hora['claude-opus-5-5|high']).toEqual(dos)
     expect(hora['claude-opus-5-5|high|sub']).toEqual(una)
+  })
+
+  /** Un `turn.step` final que anota con qué modelo y esfuerzo llegó cada petición y responde con ese modelo. */
+  function motorVisto(on: On) {
+    const vistos: { model: string; effort: unknown }[] = []
+    on('turn.step', async function* (_$, e) {
+      vistos.push({ model: e.model, effort: e.effort })
+
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: 'ok',
+        toolUses: [],
+        stopReason: 'end_turn' as const,
+        usage: { ...USO, model: e.model },
+      }
+    })
+
+    return vistos
+  }
+
+  const RELEVO_INICIO = '**Pedido:** RELEVO · inicio\nPEDIDO: x'
+
+  test('en modo ligero el hilo principal pide Sonnet high; subagentes, normal y sin flujo no cambian', async ($, on) => {
+    preparar(on)
+    const vistos = motorVisto(on)
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+
+    // Sin flujo: llega tal cual.
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+
+    // /implementador normal: tampoco cambia.
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+
+    // Relevo a ligero: el hilo principal pide Sonnet high; un subagente conserva el suyo.
+    await $.skill.prompt({ skill: 'implementador-ligero', text: RELEVO_INICIO })
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-sonnet-5-5', effort: 'high' })
+    await paso($, 'claude-opus-5-5', 'high', 'agente-A')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+    expect((await textosDe(ui)).map(t => t.trim())).toContain('orquestador Sonnet 5.5 high')
+
+    // Vuelta a normal por RELEVO: el hilo principal recupera el modelo de la sesión.
+    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** RELEVO · vuelta\nPEDIDO: x' })
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+    await ui.unmount()
+  })
+
+  test('al terminar el flujo ligero las peticiones vuelven al modelo de la sesión', async ($, on) => {
+    preparar(on)
+    const vistos = motorVisto(on)
+    await $.session.measure(MEDIDA)
+
+    await $.skill.prompt({ skill: 'implementador-ligero', text: RELEVO_INICIO })
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-sonnet-5-5', effort: 'high' })
+
+    await $.turn.complete(respuesta('ok'))
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+
+    // Un /implementador-ligero escrito a mano, sin RELEVO, no es el modo ligero de /implementador.
+    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** x' })
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+  })
+
+  test('en ligero la fila anotada y el esfuerzo usan el modelo pedido, no el original', async ($, on) => {
+    const { guardados } = preparar(on)
+    motorVisto(on)
+    await $.session.measure(MEDIDA)
+
+    await $.skill.prompt({ skill: 'implementador-ligero', text: RELEVO_INICIO })
+    await paso($, 'claude-opus-5-5', 'medium')
+
+    const hora = comoRegistro(guardados.get('uso:s1'))[String(inicioDeHora(AHORA))] ?? {}
+    expect(Object.keys(hora)).toContain('flujo|claude-sonnet-5-5|high')
+    expect(Object.keys(hora).filter(k => k.includes('claude-opus-5-5'))).toEqual([])
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const fila = await ui.find({ type: 'Box', text: /^Esfuerzo/ })
+    expect(fila?.text).toContain('high')
+    expect(fila?.text).toContain('claude-sonnet-5-5')
+    expect(fila?.text).not.toContain('medium')
+    await ui.unmount()
+  })
+
+  test('en ligero, si next lanza, el error llega intacto y la fila baja', async ($, on) => {
+    preparar(on)
+    const motor = motorControlado(on, 'claude-sonnet-5-5')
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador-ligero', text: RELEVO_INICIO })
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const abrir = motor.detener('principal')
+    motor.fallan.add('principal')
+    const resultado = paso($, 'claude-opus-5-5', 'high').then(
+      () => null,
+      (err: unknown) => err,
+    )
+    await esperar()
+    expect(await colorDe(ui, 'Sonnet 5.5 high')).toBe('success')
+
+    abrir()
+    const error = await resultado
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toMatch(/turn\.step/)
+    expect((error as Error).message).not.toMatch(/panel/i)
+    expect(await colorDe(ui, 'Sonnet 5.5 high')).toBe('subtle')
+    await ui.unmount()
   })
 
   test('Esta sesión y Esta semana pintan en cyan_FOR_SUBAGENTS_ONLY el tramo del orquestador; lo de fuera del flujo sigue en claude', async ($, on) => {
@@ -4280,7 +4431,7 @@ describe('flujo en el panel', () => {
     return { ui, motor, modelo, abrir, vuelos }
   }
 
-  test('la fila de los exploradores lleva un ■ por explorador en vuelo (hasta 3) y vuelve a uno', async ($, on) => {
+  test('la fila de los exploradores lleva un ■ por explorador en vuelo y vuelve a uno', async ($, on) => {
     const { ui, modelo, abrir, vuelos } = await explorando($, on)
     await paso($, HAIKU, 'high')
 
@@ -4388,7 +4539,7 @@ describe('flujo en el panel', () => {
     return { abrir, vuelos }
   }
 
-  test('la fila de los revisores lleva un ■ por revisor en vuelo en la revisión integral (hasta 3) y vuelve a uno', async ($, on) => {
+  test('la fila de los revisores lleva un ■ por revisor en vuelo en la revisión integral y vuelve a uno', async ($, on) => {
     const { motor, ui } = await preparandoRevision($, on)
     const { abrir, vuelos } = await lanzandoRevisores($, motor)
 
@@ -4460,17 +4611,24 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('con más de tres exploradores en vuelo la fila lleva tres ■', async ($, on) => {
+  test('con cinco exploradores en vuelo la fila lleva cinco ■, y con más de cinco, cinco', async ($, on) => {
     const { ui, motor, abrir, vuelos } = await explorando($, on)
     const abrirD = motor.detener('D')
     const abrirE = motor.detener('E')
     const extra = [agente($, 'explorador', 'D'), agente($, 'explorador', 'E')]
     await esperar()
 
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    // Fila solo de subagente: un ■ por explorador, con la etiqueta entera a 49 columnas.
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(5)
+
+    const abrirF = motor.detener('F')
+    extra.push(agente($, 'explorador', 'F'))
+    await esperar()
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(5)
 
     abrirD()
     abrirE()
+    abrirF()
     abrir.A()
     abrir.B()
     abrir.C()

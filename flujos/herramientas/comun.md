@@ -63,7 +63,7 @@ S2 · …
 
 Verificación final: verificar.mjs <+ revisión integral, si aplica>
 Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>
-Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea · revisión integral <hasta n | no> (modelos y esfuerzos: los del modo)
+Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea · revisión integral <sí | no> (modelos y esfuerzos: los del modo)
 ```
 
 - Subtareas pequeñas: ≤ 4 archivos de código más sus tests, cada una verificable sola, en orden de dependencia (migración → tipos → servidor → UI → docs).
@@ -75,8 +75,8 @@ Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea · revisión integral 
 ## 4. Reglas del orquestador
 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
-- **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno y se conservan el modelo y el esfuerzo de la skill; en segundo plano se pierden. Nunca pases `isolation`. `model` y `effort`, solo los de la tabla de tu modo (ligero: `model: "sonnet"` al planificador; `effort: "medium"` al revisor y a cada revisor de la integral) y el `effort: "max"` del paso 1.
-- Solo los agentes `explorador`, `planificador`, `revisor-plan`, `ejecutor` y `revisor`; la herramienta Skill solo para el relevo (pasos.md). Uno a la vez, salvo en la Exploración (de 1 a 3 exploradores en paralelo, §5) y en la revisión integral (hasta 3 revisores en paralelo, §5).
+- **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno. Nunca pases `isolation`. `model` y `effort`, solo los de la tabla de tu modo (normal: `effort: "medium"` al revisor por subtarea; ligero: `model: "sonnet"` al planificador y al revisor por subtarea, y `effort: "medium"` al de la integral) y el `effort: "max"` del paso 1.
+- Solo los agentes `explorador`, `planificador`, `revisor-plan`, `ejecutor` y `revisor`; la herramienta Skill solo para el relevo (pasos.md). Uno a la vez, salvo en la Exploración (de 1 a 5 exploradores en paralelo, §5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5). Nunca la conversación ni el razonamiento de otro agente. Al revisor no le pasas nada del reporte del ejecutor.
 - Preguntas al usuario solo con AskUserQuestion (elegir el modo, aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
 - Sin plan aprobado no se despacha ningún ejecutor. Si el plan cambia a mitad de camino, se vuelve a aprobar.
@@ -97,7 +97,7 @@ PEDIDO: <literal del usuario>
 BUSCA: <2–5 preguntas concretas de su área: archivos, tests, acoplamientos, datos>
 PISTAS: <archivos o símbolos ya conocidos | ninguna>
 ```
-Dos o tres si el pedido toca más de un área (p. ej. código y tests, flujos y panel, código y documentación): parte por carpeta o capa, no por pregunta, para que las áreas no se solapen. Uno solo si es de una sola área o si el pedido nombra los archivos; sin una división natural, uno. Máximo tres. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`, con su propia ÁREA y sus propias preguntas BUSCA, sin repetir las de otro. Nunca en segundo plano. En fork mode, solo uno.
+Hasta cinco si el pedido toca más de un área (p. ej. código y tests, flujos y panel, código y documentación), uno por área: parte por carpeta o capa, no por pregunta, para que las áreas no se solapen. Uno solo si es de una sola área o si el pedido nombra los archivos; sin una división natural, uno. Máximo cinco, y solo tantos como áreas sin solapar haya. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`, con su propia ÁREA y sus propias preguntas BUSCA, sin repetir las de otro. Nunca en segundo plano. En fork mode, solo uno.
 
 **Planificador** (siempre) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
 ```
@@ -147,23 +147,21 @@ PERMITIDOS: "<lista separada por comas>"
 SUCIOS PREVIOS (no son del flujo): <lista | ninguno>
 VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cuenta)
 ```
-En modo ligero, `effort: "medium"`, también en las correcciones.
+En modo normal, `effort: "medium"`; en modo ligero, `model: "sonnet"`. También en las correcciones.
 
-**Revisión integral** (con ≥ 2 subtareas, en los dos modos) — como el revisor, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y `ENFOQUE: <uno de los de abajo>`.
-Se reparte en hasta 3 revisores en paralelo, uno por enfoque aplicable, sin repetir ninguno:
-- **contratos, tipos y documentación:** cadena de llamadas, tipos, datos de punta a punta, compatibilidad con lo ya persistido, y que lo documentado coincida con el código y las convenciones del proyecto.
-- **tests:** ninguno borrado ni debilitado; los adaptados siguen fallando si falta lo que comprueban.
-- **casos borde y seguridad:** validación de entrada en fronteras; autorización y datos de otro usuario o inquilino; secretos en código o logs; nulls, rangos y errores sin manejar; fechas y husos horarios; concurrencia e idempotencia; redondeo y saldos si hay dinero; lo irreversible (borrados, migraciones sin vuelta). Lo busca en todo el cambio, no subtarea por subtarea.
+**Revisión integral** (con ≥ 2 subtareas, en los dos modos) — un solo revisor, como el revisor de arriba, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y además:
+```
+CRÍTICO: <criterios #n de la Clasificación y por qué, para mirarlos primero | ninguno>
+ASPECTOS: <los que aplican de la tabla de abajo, separados por comas>
+```
 
-| Enfoque | Corre |
+| Aspecto | Va en ASPECTOS |
 |---|---|
 | contratos, tipos y documentación | siempre |
 | tests | si el cambio toca tests |
 | casos borde y seguridad | si la Clasificación del plan cita #1, #2, #3, #6 o #9 y el cambio no es solo texto |
 
-«Solo texto»: todos los archivos permitidos son documentación o prompts (`.md`: skills, agentes, reglas, README). Ahí el tercer enfoque no corre, aunque la Clasificación cite #1 o #5.
-
-Sin ninguno de los dos opcionales, queda un solo revisor con el primer enfoque. Todas las llamadas a Agent van en el **mismo mensaje**, cada una con `run_in_background: false`. Es seguro porque el árbol ya está quieto y los revisores no editan. En fork mode, uno solo y sin `ENFOQUE`. En modo ligero, `effort: "medium"` a cada revisor, también en las correcciones.
+Qué mira cada aspecto está en el agente `revisor`. «Solo texto»: todos los archivos permitidos son documentación o prompts (`.md`: skills, agentes, reglas, README). Ahí el tercer aspecto no va, aunque la Clasificación cite #1 o #5. En modo normal, sin `model` ni `effort`; en modo ligero, `effort: "medium"`. También en las correcciones.
 
 ## 6. Después de cada agente
 
@@ -174,7 +172,7 @@ Sin ninguno de los dos opcionales, queda un solo revisor con el primer enfoque. 
   - `ESTADO: BLOQUEADO` o `NECESITA_ALCANCE` → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / detener. No cuenta como ciclo.
   - `ESTADO: FALLA`, reporte sin `RESULTADO: VERDE` (salvo proyecto `SIN PASOS`) o salida parcial (tope de turnos) → cuenta como ciclo: Corrección con la falla. No mandes al revisor algo rojo.
 - **Revisor:** APROBADO → sigue. RECHAZADO → Corrección con la lista PROBLEMAS y revisión de nuevo; un ciclo = corrección + revisión. Sin VEREDICTO claro = RECHAZADO.
-- **Revisión integral en paralelo:** vuelven todos en el mismo turno. APROBADO solo si todos aprueban. Si alguno rechaza, une sus PROBLEMAS sin duplicados en una sola Corrección y, hecha, repite la integral solo con los enfoques que rechazaron (un ciclo). Un revisor que falla o vuelve sin VEREDICTO claro se relanza una vez; si sigue igual, cuenta como RECHAZADO.
+- **Revisión integral:** RECHAZADO → una Corrección con sus PROBLEMAS y, hecha, la integral de nuevo con el mismo despacho (un ciclo). Si falla o vuelve sin VEREDICTO claro, se relanza una vez; si sigue igual, cuenta como RECHAZADO.
 - **Ciclos agotados** → DETENIDO: no despachas más y cierras.
 
 ## 7. Cierre
@@ -190,7 +188,7 @@ Revisión: S1 APROBADO (0 ciclos) · …
 Riesgos pendientes: <… | ninguno>
 Queda para ti: <… | nada>
 Reversión: <solo si DETENIDO o con riesgos: comandos exactos (git restore --source=<BASE> --worktree -- <archivos>; borrar nuevos). No los corres sin OK>
-Consumo: contexto final por rol (subagent_tokens: no es gasto) <por rol> · gasto real: sección «Flujo» del panel · orquestador: <tu modelo real según tu entorno, no el que dice la skill>
+Consumo: contexto final por rol (subagent_tokens: no es gasto) <por rol> · gasto real: sección «Flujo» del panel · orquestador: ver la línea «orquestador» de la sección «Flujo» del panel
 ```
 
 `subagent_tokens` es el tamaño del contexto del último turno de cada agente: en un agente largo queda 20 a 40 veces por debajo de lo que de verdad leyó y generó. No lo sumes como si fuera consumo ni lo presentes como tal.
