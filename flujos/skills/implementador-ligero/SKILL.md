@@ -1,6 +1,6 @@
 ---
 name: implementador-ligero
-description: "Modo ligero de /implementador. Solo corre como relevo desde /implementador (args que empiezan con `RELEVO`); no la invoques por tu cuenta ni la sugieras al usuario, que usa /implementador."
+description: "Modo ligero de /implementador. Solo corre como relevo desde /implementador (args que empiezan con `RELEVO`); no la invoques ni la sugieras."
 argument-hint: "RELEVO (solo desde /implementador)"
 user-invocable: false
 model: sonnet
@@ -28,29 +28,26 @@ allowed-tools:
 
 ## Punto de entrada
 
-Antes de leer nada más:
+Antes de nada:
 
-- Si el pedido no empieza con `RELEVO`, responde exactamente `Uso: /implementador <qué cambiar>` y termina, sin hacer nada más.
-- `RELEVO · inicio`: arrancas en el paso 3 (Plan) con los datos del RELEVO, sin preflight ni exploración.
-- `RELEVO · continuación`: aplicas comun.md §8 con el ESTADO del RELEVO **sin volver a relevar** (ya estás en el modo ligero): retomas con ese ESTADO y no te relanzas a ti mismo.
-- `RELEVO · vuelta` (no debería llegar aquí): responde que la vuelta va a `implementador` y termina.
+- Si el pedido no empieza con `RELEVO`, responde exactamente `Uso: /implementador <qué cambiar>` y termina.
+- `RELEVO · inicio`: arrancas en el paso 3 con los datos del RELEVO.
+- `RELEVO · continuación`: aplicas comun.md §8 con el ESTADO del RELEVO, sin volver a relevar.
+- `RELEVO · vuelta`: responde que la vuelta va a `implementador` y termina.
 
-## Rol
-
-Eres el orquestador del modo **ligero** (Sonnet, esfuerzo high): delegas y controlas calidad. No escribes código. Los pasos y la vuelta a modo normal (pasos.md, paso 3) están en «Pasos»; las reglas, en «Reglas comunes».
+Eres el orquestador del modo **ligero**: delegas y controlas calidad.
 
 ## Agentes de este modo
 
-Pasa exactamente estos `model` y `effort` (comun.md §4); si la celda dice «sin», no pases ese parámetro.
+Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases ninguno.
 
-| Agente | Modelo | Esfuerzo |
-|---|---|---|
-| `explorador` | no corre (la exploración llega en el RELEVO) | — |
-| `planificador` | Sonnet (`model: "sonnet"` en la llamada) | high |
-| `revisor-plan` | Sonnet (sin overrides) | medium |
-| `ejecutor` | Sonnet (sin overrides) | high |
-| `revisor` (por subtarea y en las correcciones) | Sonnet (`model: "sonnet"` en la llamada) | high |
-| `revisor` (revisión integral, uno solo) | Opus | medium (`effort: "medium"`) |
+| Agente | Overrides |
+|---|---|
+| `planificador` (Sonnet, high) | `model: "sonnet"` |
+| `revisor-plan` (Sonnet, medium) | ninguno |
+| `ejecutor` (Sonnet, high) | ninguno |
+| `revisor` de subtarea y sus correcciones (Sonnet, high) | `model: "sonnet"` |
+| `revisor` integral (Opus, medium) | `effort: "medium"` |
 
 ## Reglas comunes
 
