@@ -5,7 +5,7 @@
 Fuente única, a nivel usuario (`~/.claude/flujos/comun.md`): las dos skills (`implementador` e `implementador-ligero`) la inyectan junto con `pasos.md`, y `planificador` y `revisor-plan` la leen. Sirve para cualquier proyecto con git. Lo propio de cada proyecto vive en el proyecto:
 
 - **`.claude/implementador.md`** (reglas del proyecto, opcional): rutas y ejemplos de cada criterio CRÍTICO, infraestructura de tests, qué va a «Queda para ti», archivos que no se leen, riesgos típicos para el planificador y motivos de rechazo para el revisor. **Si dice algo distinto de este archivo, manda el del proyecto.**
-- **`.claude/implementador.json`** (opcional): `verificar` (comandos de verificación, en orden) y `guardia` (archivos protegidos, secretos, migraciones inmutables, scripts y comandos negados). Ejemplo comentado en `~/.claude/flujos/config.ejemplo.md`.
+- **`.claude/implementador.json`** (opcional): `verificar` (comandos de verificación, en orden), `verificarRapido` (los pasos que corre `verificar.mjs --rapido`), `generados` (globs que regenera el build y no cuentan para el alcance) y `guardia` (archivos protegidos, secretos, migraciones inmutables, scripts y comandos negados). Ejemplo comentado en `~/.claude/flujos/config.ejemplo.md`.
 - **`CLAUDE.md`** del proyecto: sus reglas valen para todos los agentes.
 
 Sin esos archivos rigen los valores por defecto y lo que se lea del repo.
@@ -18,9 +18,9 @@ Desde la raíz del repo, con Bash (`~` = carpeta del usuario):
 |---|---|
 | `node ~/.claude/flujos/estado.mjs` | Preflight: proyecto, rama, sucios previos, `BASE_GLOBAL` (foto del árbol), `DESDE_GLOBAL`, reglas y config del proyecto, pasos de verificación, autoprueba de la guardia, fork mode |
 | `node ~/.claude/flujos/estado.mjs --base` | Foto nueva: `BASE=<sha> DESDE=<iso>` |
-| `node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <DESDE> --permitidos "<a,b>"` | Qué cambió desde la foto (árbol + ediciones registradas del ejecutor) y qué cae fuera. Termina en `ALCANCE: OK` o `ALCANCE: FUERA (n)` |
-| `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<a,b>" [-- <rutas>]` | Diff unificado desde la foto (lo usa el revisor) |
-| `node ~/.claude/flujos/verificar.mjs` | Los pasos de verificación del proyecto (config, o detectados: typecheck → lint → build → test). Termina en `RESULTADO: VERDE`, `RESULTADO: ROJO (…)` o `RESULTADO: SIN PASOS` |
+| `node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <DESDE> --permitidos "<a,b>"` | Qué cambió desde la foto (árbol + ediciones registradas del ejecutor) y qué cae fuera. Las rutas que caen en `generados` salen con `~` y no cuentan como FUERA. Termina en `ALCANCE: OK` o `ALCANCE: FUERA (n)` |
+| `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<a,b>" [-- <rutas>]` | Diff unificado desde la foto (lo usa el revisor). Omite las rutas de `generados` y las lista en `GENERADOS`; se piden con `-- <ruta>` |
+| `node ~/.claude/flujos/verificar.mjs [--rapido]` | Los pasos de verificación del proyecto (config, o detectados: typecheck → lint → build → test). Con `--rapido` corre solo los de `verificarRapido`; sin la clave, todos. Si la clave nombra un paso que no existe imprime `ERROR:` con exit 2: no detiene el flujo, el revisor corre la completa y lo anota. Termina en `RESULTADO: VERDE`, `RESULTADO: ROJO (…)` o `RESULTADO: SIN PASOS` |
 
 La foto es un commit suelto: no toca el índice ni el árbol del usuario. Si estado.mjs o verificar.mjs fallan por un error propio (`ERROR:` o una excepción), no por tests rojos, detente y avisa. Sin git no hay flujo: dilo y termina (el usuario decide si hace `git init`).
 
@@ -53,6 +53,7 @@ Fuera de alcance: <lo que no se toca>
 Base: <rama>@<HEAD> · sucios previos: <lista | ninguno> · verificación inicial: VERDE | ROJA (<qué falla>) | SIN PASOS
 
 S1 · <objetivo de la subtarea>
+- Crítica: sí (#n) | no — <por qué, una línea>
 - Archivos permitidos: <rutas exactas; glob solo para archivos nuevos; «(generado)» para lo que cambia solo con el build o una herramienta>
 - Hecho cuando: <comando → resultado, o comportamiento que un test comprueba>
 - Tests: <existentes que lo cubren | nuevos (ruta)> · sin tests: <cómo se verifica y qué queda manual>
@@ -63,9 +64,10 @@ S2 · …
 
 Verificación final: verificar.mjs <+ revisión integral, si aplica>
 Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>
-Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea · revisión integral <sí | no> (modelos y esfuerzos: los del modo)
+Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea (<c> críticas) · revisión integral <sí | no> (modelos y esfuerzos: los del modo)
 ```
 
+- `Crítica: sí` si la subtarea toca algo de un criterio de §2 o de las reglas del proyecto; `no` solo si todo lo que toca es UI, textos, estilos o documentación sin criterio. Decide la verificación y el modelo de su revisor (§5). Ante la duda, `sí`. Con Clasificación «sin criterios», todas `no`. Un plan sin el campo (p. ej. en `continuar`) se trata como si todas fueran `Crítica: sí`.
 - Subtareas pequeñas: ≤ 4 archivos de código más sus tests, cada una verificable sola, en orden de dependencia (migración → tipos → servidor → UI → docs).
 - Lo que no está en «Archivos permitidos» no se toca. Las migraciones ya versionadas no se editan: se crea una nueva con la convención de nombres del proyecto.
 - Sin tests: la lógica de negocio los escribe primero, con la infraestructura de tests del proyecto. Lo que no tiene infraestructura de tests (típicamente la UI) se verifica con typecheck y build, y la verificación visual va a «Queda para ti».
@@ -75,7 +77,7 @@ Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea · revisión integral 
 ## 4. Reglas del orquestador
 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
-- **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno. Nunca pases `isolation`. `model` y `effort`, solo los de la tabla de tu modo (normal: `effort: "medium"` al revisor por subtarea; ligero: `model: "sonnet"` al planificador y al revisor por subtarea, y `effort: "medium"` al de la integral) y el `effort: "max"` del paso 1.
+- **Cada llamada a Agent lleva `run_in_background: false`.** En primer plano el resultado vuelve en este mismo turno. Nunca pases `isolation`. `model` y `effort`, solo los de la tabla de tu modo (normal: al revisor de subtarea crítica `effort: "medium"`; al de subtarea no crítica `model: "sonnet"` y `effort: "medium"`; ligero: `model: "sonnet"` al planificador y al revisor por subtarea, y `effort: "medium"` al de la integral) y el `effort: "max"` del paso 1.
 - Solo los agentes `explorador`, `planificador`, `revisor-plan`, `ejecutor` y `revisor`; la herramienta Skill solo para el relevo (pasos.md). Uno a la vez, salvo en la Exploración (de 1 a 5 exploradores en paralelo, §5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5). Nunca la conversación ni el razonamiento de otro agente. Al revisor no le pasas nada del reporte del ejecutor.
 - Preguntas al usuario solo con AskUserQuestion (elegir el modo, aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
@@ -116,7 +118,7 @@ PEDIDO: <literal>
 CLASIFICACIÓN: <criterios #n y por qué | sin criterios>
 BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
 EXPLORACIÓN: <reporte fusionado de §6, el mismo que recibió el planificador>
-PLAN: <el plan completo, con tus completados menores y las PREGUNTAS del planificador si las hay>
+PLAN: <el texto literal del planificador, completo (todas las subtareas con todos sus campos), con tus completados menores y sus PREGUNTAS; nunca un resumen>
 ```
 Nada más: ni la conversación ni el razonamiento del planificador. Sin `model` ni `effort`. Responde `APROBADO` o `AJUSTAR` (§6).
 
@@ -146,11 +148,13 @@ BASE: <sha>
 PERMITIDOS: "<lista separada por comas>"
 SUCIOS PREVIOS (no son del flujo): <lista | ninguno>
 VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cuenta)
+VERIFICAR: completa | rápida
 ```
-En modo normal, `effort: "medium"`; en modo ligero, `model: "sonnet"`. También en las correcciones.
+`VERIFICAR`: `completa` si la subtarea es `Crítica: sí` o no trae el campo; `rápida` si es `no`. Rige en los dos modos; en ligero, la rápida solo cambia algo si el proyecto define `verificarRapido`. Según el campo `Crítica`: normal, crítica → `effort: "medium"`; normal, no crítica → `model: "sonnet"` y `effort: "medium"`; ligero → `model: "sonnet"`. También en las correcciones, con el mismo revisor y `VERIFICAR` que su subtarea.
 
 **Revisión integral** (con ≥ 2 subtareas, en los dos modos) — un solo revisor, como el revisor de arriba, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y además:
 ```
+VERIFICAR: completa
 CRÍTICO: <criterios #n de la Clasificación y por qué, para mirarlos primero | ninguno>
 ASPECTOS: <los que aplican de la tabla de abajo, separados por comas>
 ```
@@ -166,7 +170,7 @@ Qué mira cada aspecto está en el agente `revisor`. «Solo texto»: todos los a
 ## 6. Después de cada agente
 
 - **Explorador(es):** con varios, vuelven todos en el mismo turno; fusiónalos en un solo reporte con ARCHIVOS, TESTS, ACOPLAMIENTOS, DATOS y DUDAS, sin duplicados (la misma `ruta:línea` una vez) y con las contradicciones como DUDA. Si uno falla o vuelve sin reporte, sigue con los demás y lee poco su área o relanza ese solo, una vez. Si sus DUDAS cambian el plan, resuélvelas leyendo tú (poco) o llévalas al plan como pregunta.
-- **Revisor del plan:** `APROBADO` → sigue a la aprobación. `AJUSTAR` → no se relanza al planificador ni al `revisor-plan`: el orquestador aplica lo menor o aditivo (un campo faltante, un archivo olvidado, un «hecho cuando» vago, otro orden) y muestra qué cambió. Lo que cambia el enfoque (contratos, tipos o datos de varias subtareas, o el reparto de archivos entre ellas) no lo rediseña: va tal cual bajo el plan, en «Revisión del plan: para decidir», y lo decide el usuario en la aprobación. Si falla o vuelve sin VEREDICTO claro, se repite una vez; si sigue igual, se sigue sin ella avisando «revisión del plan no disponible». No cuenta como ciclo.
+- **Revisor del plan:** `APROBADO` → sigue a la aprobación. `AJUSTAR` → no se relanza al planificador ni al `revisor-plan`: el orquestador aplica lo menor o aditivo (un campo faltante, un archivo olvidado, un «hecho cuando» vago, otro orden) y muestra qué cambió. Lo que cambia el enfoque (contratos, tipos o datos de varias subtareas, o el reparto de archivos entre ellas) no lo rediseña: va tal cual bajo el plan, en «Revisión del plan: para decidir», y lo decide el usuario en la aprobación. Si falla o vuelve sin VEREDICTO claro, se repite una vez; si sigue igual, se sigue sin ella avisando «revisión del plan no disponible». Si responde con el problema «plan resumido», se re-despacha una vez con el plan íntegro, sin contar como esa repetición. No cuenta como ciclo.
 - **Ejecutor:** siempre `estado.mjs --cambios <BASE_Sn> --desde <DESDE_Sn> --permitidos "<…>"`.
   - `ALCANCE: FUERA` → AskUserQuestion: «Aceptar» (amplía el alcance) / «Restaurar» (corrección que deja esos archivos como en la base) / «Detener».
   - `ESTADO: BLOQUEADO` o `NECESITA_ALCANCE` → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / detener. No cuenta como ciclo.

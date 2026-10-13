@@ -19,7 +19,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, registroDe, configDe, coincide, aRegex, RAIZ } from './guardia.mjs'
-import { pasosDe } from './verificar.mjs'
+import { pasosDe, pasosRapidos } from './verificar.mjs'
 
 export { coincide, aRegex }
 
@@ -38,6 +38,16 @@ export function listaPermitidos(texto) {
     .split(',')
     .map((s) => s.replace(/\s*\([^)]*\)\s*$/, '').trim().replace(/\\/g, '/').replace(/^\.\//, ''))
     .filter(Boolean)
+}
+
+/**
+ * Cómo cuenta una ruta cambiada para el alcance: `'permitido'` (sin lista, o en la lista),
+ * `'generado'` (cae en los globs de `generados` de la config: no cuenta) o `'fuera'`.
+ */
+export function alcanceDe(ruta, permitidos, generados = []) {
+  if (!permitidos.length || coincide(ruta, permitidos)) return 'permitido'
+  const globs = generados.map((s) => String(s).trim().replace(/\\/g, '/').replace(/^\.\//, '')).filter(Boolean)
+  return globs.length && coincide(ruta, globs) ? 'generado' : 'fuera'
 }
 
 // ── Git ─────────────────────────────────────────────────────────────────────
@@ -171,6 +181,15 @@ function preflight() {
   console.log(`REGLAS DEL PROYECTO: ${reglas ? '.claude/implementador.md' : 'no hay (.claude/implementador.md); rigen CLAUDE.md y las reglas comunes'}`)
   console.log(`CONFIG: ${config.archivo ? '.claude/implementador.json' : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
   console.log(`VERIFICACIÓN (${origen}): ${pasos.length ? pasos.map((p) => p.cmd).join(' → ') : 'SIN PASOS'}`)
+  if (config.verificarRapido) {
+    const { pasos: rapidos, faltan } = pasosRapidos(pasos, config.verificarRapido)
+    console.log(
+      faltan.length
+        ? `VERIFICACIÓN RÁPIDA: ERROR (pasos inexistentes: ${faltan.join(', ')})`
+        : `VERIFICACIÓN RÁPIDA (--rapido): ${rapidos.map((p) => p.cmd).join(' → ')}`,
+    )
+  }
+  if (config.generados.length) console.log(`GENERADOS (no cuentan para el alcance): ${config.generados.join(', ')}`)
   console.log(`GUARDIA: ${autoprueba()}`)
   console.log(
     fork === '0'
@@ -193,13 +212,18 @@ function cambios(base, desde, permitidos) {
     if (!mapa.has(clave(f.objetivo))) mapa.set(clave(f.objetivo), { estado: '·', ruta: f.objetivo, soloRegistro: true })
   }
   const lista = [...mapa.values()].sort((a, b) => a.ruta.localeCompare(b.ruta))
+  const generados = configDe(RAIZ).generados
   let fuera = 0
   console.log(`CAMBIOS desde ${corto(base)} (${lista.length}):`)
   for (const c of lista) {
-    const ok = !permitidos.length || coincide(c.ruta, permitidos)
-    if (!ok) fuera++
-    const marca = permitidos.length ? (ok ? '✓' : '✗') : ' '
-    const nota = [!ok ? 'FUERA DE ALCANCE' : '', c.soloRegistro ? 'solo en el registro: ruta ignorada por git o edición sin efecto' : '']
+    const alcance = alcanceDe(c.ruta, permitidos, generados)
+    if (alcance === 'fuera') fuera++
+    const marca = permitidos.length ? { permitido: '✓', generado: '~', fuera: '✗' }[alcance] : ' '
+    const nota = [
+      alcance === 'fuera' ? 'FUERA DE ALCANCE' : '',
+      alcance === 'generado' ? 'generado: no cuenta para el alcance («generados» de .claude/implementador.json)' : '',
+      c.soloRegistro ? 'solo en el registro: ruta ignorada por git o edición sin efecto' : '',
+    ]
       .filter(Boolean)
       .join(' · ')
     console.log(`  ${marca} ${c.estado} ${c.ruta}${nota ? `   ← ${nota}` : ''}`)
@@ -215,10 +239,18 @@ function cambios(base, desde, permitidos) {
 
 function diff(base, permitidos, rutas) {
   const ahora = foto(permitidos)
-  const filtro = ['--', ...rutas]
+  const generados = configDe(RAIZ).generados
+  let omitidos = []
+  if (!rutas.length && permitidos.length && generados.length) {
+    omitidos = git(['diff', '--name-only', '-z', '--no-renames', base, ahora])
+      .split('\0')
+      .filter((r) => r && alcanceDe(r, permitidos, generados) === 'generado')
+  }
+  const filtro = omitidos.length ? ['--', '.', ...omitidos.map((r) => `:(exclude,literal)${r}`)] : ['--', ...rutas]
   const stat = git(['diff', '--stat=150', '--no-renames', base, ahora, ...filtro]).trimEnd()
   const cuerpo = git(['diff', '--no-renames', '--no-color', base, ahora, ...filtro]).trimEnd()
   console.log(`DIFF ${corto(base)} → árbol actual${rutas.length ? ` (${rutas.join(', ')})` : ''}`)
+  if (omitidos.length) console.log(`GENERADOS (omitidos del diff; pídelos con -- <ruta>): ${omitidos.join(', ')}`)
   if (!cuerpo) {
     console.log('(sin cambios)')
     return

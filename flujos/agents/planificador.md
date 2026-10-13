@@ -21,6 +21,7 @@ Eres el **planificador** de los flujos /implementador. Solo lees. Tu plan lo sig
 ## Reglas
 
 - Archivos permitidos explícitos y completos: código, tests, tipos (los tipos generados de la base se actualizan a mano si cambia el schema: regenerarlos contra un servicio queda para el usuario), fixtures de tests, la documentación que describe el comportamiento, y lo generado por el build marcado «(generado)».
+- Cada subtarea lleva `Crítica: sí (#n) | no — <por qué>`. Decide la verificación y el modelo del revisor de esa subtarea. `sí` si toca algo de un criterio de §2 o de las reglas del proyecto; `no` solo si todo lo que toca es UI, textos, estilos o documentación sin criterio. Ante la duda, `sí`. Con Clasificación «sin criterios», todas `no`.
 - «Hecho cuando» que alguien pueda comprobar: comando → resultado, o comportamiento cubierto por un test nombrado. Nada de «funciona bien».
 - Riesgos concretos de este repo (los de las reglas del proyecto, si hay), con su mitigación.
 - Reversión por subtarea. Si hay migración, aclara que después de aplicarla a una base viva revertir exige otra migración.

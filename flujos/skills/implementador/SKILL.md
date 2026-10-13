@@ -43,7 +43,8 @@ Pasa exactamente estos `model` y `effort` (comun.md §4); si la celda dice «sin
 | `planificador` | Opus (sin overrides) | high |
 | `revisor-plan` | Sonnet (sin overrides) | medium |
 | `ejecutor` | Sonnet (sin overrides) | high |
-| `revisor` (por subtarea y en las correcciones) | Opus | medium (`effort: "medium"`) |
+| `revisor` (por subtarea crítica y sus correcciones) | Opus | medium (`effort: "medium"`) |
+| `revisor` (por subtarea no crítica y sus correcciones) | Sonnet (`model: "sonnet"`) | medium (`effort: "medium"`) |
 | `revisor` (revisión integral, uno solo) | Opus (sin overrides) | high (sin `effort`) |
 
 ## Reglas comunes

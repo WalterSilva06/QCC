@@ -41,9 +41,9 @@ Quien recibe un RELEVO no hace preflight ni exploración y usa esos datos como p
 - Si no califica, no se pregunta y se sigue en normal hasta el final. En fork mode no se pregunta; se avisa «modo ligero no disponible (fork mode)».
 
 **3. Plan** (comun.md §3)
-- `planificador` (comun.md §5), en los dos modos, con el `model`/`effort` de la tabla de tu skill. Si trae PREGUNTAS, van arriba del plan. Revisa que cumpla comun.md §3 (archivos explícitos, «hecho cuando» verificable, reversión) y completa tú lo menor.
+- `planificador` (comun.md §5), en los dos modos, con el `model`/`effort` de la tabla de tu skill. Si trae PREGUNTAS, van arriba del plan. Revisa que cumpla comun.md §3 (archivos explícitos, «hecho cuando» verificable, reversión, campo `Crítica` en cada subtarea) y completa tú lo menor; si falta `Crítica`, complétalo como `sí`.
 - **Vuelta (solo en modo ligero):** al recibir cada plan (este paso o el re-plan del paso 4) y antes del `revisor-plan`: si su Clasificación cita algún criterio CRÍTICO, o tiene más de 3 subtareas, o más de 6 archivos permitidos en total → relevo `vuelta` a la skill `implementador` con la CLASIFICACIÓN del plan y el MOTIVO. Quien recibe la vuelta (normal) relanza `planificador` sin `model` desde este paso, con la CLASIFICACIÓN y el MOTIVO (y PLAN VIGENTE/AJUSTES DEL USUARIO si vienen), y no vuelve a preguntar el modo.
-- **Revisión del plan (una vez):** con el plan entregado y lo menor completado, despacha `revisor-plan` (comun.md §5), en los dos modos, antes de la aprobación (paso 4).
+- **Revisión del plan (una vez):** con el plan entregado y lo menor completado, despacha `revisor-plan` (comun.md §5), en los dos modos, antes de la aprobación (paso 4). El PLAN va como texto literal y completo del planificador, nunca un resumen.
   - Fork mode: no se despacha; anótalo en el mensaje de aprobación como «revisión del plan omitida (fork mode)».
   - Falla o vuelve sin VEREDICTO claro: una repetición; si sigue igual, se sigue sin ella avisando «revisión del plan no disponible». No cuenta como ciclo.
   - `APROBADO` → paso 4.
@@ -56,7 +56,7 @@ Quien recibe un RELEVO no hace preflight ni exploración y usa esos datos como p
 - Ajustes → por defecto los aplicas tú, sin planificador. Lo aditivo (una subtarea más, texto o formato, un límite añadido o quitado, otro orden) lo escribes en el plan y muestras solo lo que cambió y qué sigue igual. Re-planificas **una vez** solo si el ajuste cambia el enfoque de lo ya planificado (contratos, tipos o datos de subtareas existentes, o el reparto de archivos entre ellas): pasas PLAN VIGENTE y solo el ajuste (comun.md §5), y el planificador devuelve solo las subtareas afectadas. En modo ligero, el plan re-planificado también pasa por la vuelta del paso 3. Vuelves a preguntar.
 
 **5. Ejecución**, una subtarea a la vez
-- Por subtarea: `estado.mjs --base` → `ejecutor` → `estado.mjs --cambios` → `revisor` de esa subtarea (con el `model`/`effort` de tu tabla: en normal, Opus con `effort: "medium"`; en ligero, `model: "sonnet"` en high; también en las correcciones) → hasta **2 ciclos** de corrección.
+- Por subtarea: `estado.mjs --base` → `ejecutor` → `estado.mjs --cambios` → `revisor` de esa subtarea según su `Crítica` (normal: crítica → Opus con `effort: "medium"`, no crítica → `model: "sonnet"` y `effort: "medium"`; ligero: `model: "sonnet"` en high), con `VERIFICAR` según comun.md §5; también en las correcciones → hasta **2 ciclos** de corrección.
 - Un tercer rechazo en el mismo punto → DETENIDO.
 
 **6. Verificación final** — tu `verificar.mjs`. ROJO → 1 ciclo (corrección + revisión). Con ≥ 2 subtareas, en los dos modos → revisión integral (comun.md §5): un solo revisor, con el motivo CRÍTICO y los aspectos que aplican, y el `model`/`effort` de tu tabla (en normal, Opus high sin overrides; en ligero, `effort: "medium"`; también en las correcciones), hasta 1 ciclo.

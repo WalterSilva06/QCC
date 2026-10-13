@@ -20,8 +20,10 @@ Un solo comando, dos modos con los mismos pasos, agentes, plantillas y ciclos (`
 | Planificador | Opus high | Sonnet high (mismo agente `planificador`, con `model: "sonnet"`) |
 | Revisor del plan | Sonnet medium | Sonnet medium |
 | Ejecutor | Sonnet high | Sonnet high |
-| Revisor por subtarea | Opus medium (`effort: "medium"`) | Sonnet high (`model: "sonnet"`) |
+| Revisor por subtarea | crítica: Opus medium (`effort: "medium"`) · no crítica: Sonnet medium (`model: "sonnet"`) | Sonnet high (`model: "sonnet"`) |
 | Revisión integral | 1 Opus high | 1 Opus medium (`effort: "medium"`) |
+
+El plan marca `Crítica: sí | no` por subtarea (ante la duda, sí; sin el campo, sí). El revisor de una subtarea no crítica corre `verificar.mjs --rapido` (los pasos de `verificarRapido` de `.claude/implementador.json`, o todos sin la clave); el ejecutor, la verificación final y la revisión integral siempre corren la completa. Las claves `verificarRapido` y `generados` están en `flujos/herramientas/config.ejemplo.md`.
 
 Sin el panel instalado y cargado, el orquestador del ligero sigue en el modelo de la sesión (en la práctica Opus), porque el `model:` de la skill no se aplica en un relevo por la herramienta Skill.
 

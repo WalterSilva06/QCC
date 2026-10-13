@@ -160,6 +160,8 @@ export function configDe(raiz) {
     archivo: crudo ? archivo : null,
     invalido: fs.existsSync(archivo) && !crudo,
     verificar: Array.isArray(crudo?.verificar) ? crudo.verificar : null,
+    verificarRapido: Array.isArray(crudo?.verificarRapido) && crudo.verificarRapido.length ? crudo.verificarRapido.map(String) : null,
+    generados: Array.isArray(crudo?.generados) ? crudo.generados.map(String) : [],
     protegidos: { ...PROTEGIDOS_BASE, ...(g.protegidos ?? {}) },
     secretos: (g.secretos ?? []).map(String),
     inmutables: [...INMUTABLES_BASE, ...(g.inmutables ?? [])],

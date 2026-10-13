@@ -13,6 +13,14 @@ Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `pa
     { "nombre": "build", "cmd": "pnpm run build" },
     { "nombre": "test", "cmd": "pnpm run test" }
   ],
+  // Nombres de pasos de `verificar` (o de los detectados) que corre `verificar.mjs --rapido`.
+  // La usa el revisor de las subtareas no críticas. Ausente o vacía = todos los pasos.
+  // Un nombre que no existe da `ERROR: verificarRapido nombra pasos que no existen: …` (exit 2).
+  "verificarRapido": ["typecheck", "test"],
+  // Globs de lo que regenera el build o una herramienta (p. ej. dist/**), nunca código fuente.
+  // En `estado.mjs --cambios` salen con `~` y no cuentan como FUERA; `--diff` los omite y los
+  // lista en `GENERADOS` (se piden con `-- <ruta>`). Un glob ancho ocultaría cambios reales del diff.
+  "generados": ["dist/**"],
   "guardia": {
     // Archivos o carpetas (con / final) o globs que ningún subagente escribe, con el motivo.
     // Se suman a los de siempre: lockfiles, node_modules/, dist/, .env*, .claude/, .git/.

@@ -10,10 +10,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { evaluar, analizar, raizDe, registroDe, configDe } from './guardia.mjs'
-import { coincide, listaPermitidos } from './estado.mjs'
-import { pasosDe } from './verificar.mjs'
+import { coincide, listaPermitidos, alcanceDe } from './estado.mjs'
+import { pasosDe, pasosRapidos } from './verificar.mjs'
 
 const WIN = process.platform === 'win32'
 
@@ -300,6 +301,137 @@ test('alcance: globs y lista de permitidos', () => {
   if (WIN) assert.ok(coincide('SRC/x.ts', ['src/x.ts']))
 })
 
+test('verificar: pasosRapidos', () => {
+  const todos = [{ nombre: 'typecheck', cmd: 'a' }, { nombre: 'test', cmd: 'b' }, { nombre: 'build', cmd: 'c' }]
+  assert.deepEqual(pasosRapidos(todos, null), { pasos: todos, faltan: [] })
+  assert.deepEqual(pasosRapidos(todos, []), { pasos: todos, faltan: [] })
+  assert.deepEqual(pasosRapidos(todos, ['test']), { pasos: [todos[1]], faltan: [] })
+  assert.deepEqual(pasosRapidos(todos, ['build', 'typecheck']), { pasos: [todos[0], todos[2]], faltan: [] })
+  assert.deepEqual(pasosRapidos(todos, ['x']), { pasos: [], faltan: ['x'] })
+  assert.deepEqual(pasosRapidos(todos, ['test', 'x']), { pasos: [todos[1]], faltan: ['x'] })
+})
+
+const VERIFICAR = fileURLToPath(new URL('./verificar.mjs', import.meta.url))
+const pasosAB = [{ nombre: 'a', cmd: 'node -e 0' }, { nombre: 'b', cmd: 'node -e "process.exit(1)"' }]
+const temporales = []
+
+/** Corre verificar.mjs con las banderas dadas en un repo temporal con esta config. */
+function corre(config, ...args) {
+  const raiz = repo('rapido', { '.claude/implementador.json': JSON.stringify(config) })
+  temporales.push(raiz)
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: raiz }
+  const r = spawnSync(process.execPath, [VERIFICAR, ...args], { cwd: raiz, encoding: 'utf8', env })
+  return { salida: r.stdout ?? '', codigo: r.status }
+}
+
+test('verificar: --rapido en un repo temporal', () => {
+  const rapida = { verificar: pasosAB, verificarRapido: ['a'] }
+  const completa = corre(rapida)
+  assert.match(completa.salida, /^RESULTADO: ROJO \(b\)$/m)
+  assert.equal(completa.codigo, 1)
+  assert.doesNotMatch(completa.salida, /rápida/)
+
+  const verde = corre(rapida, '--rapido')
+  assert.match(verde.salida, /^RESULTADO: VERDE$/m)
+  assert.match(verde.salida, /^verificar \(.*, rápida\): /m)
+  assert.equal(verde.codigo, 0)
+
+  const roto = corre({ verificar: pasosAB, verificarRapido: ['x'] }, '--rapido')
+  assert.match(roto.salida, /^ERROR: verificarRapido nombra pasos que no existen: x \(pasos: a, b\)/)
+  assert.equal(roto.codigo, 2)
+  assert.doesNotMatch(roto.salida, /RESULTADO/)
+
+  const sinClave = corre({ verificar: pasosAB }, '--rapido')
+  assert.match(sinClave.salida, /^RESULTADO: ROJO \(b\)$/m)
+  assert.doesNotMatch(sinClave.salida, /rápida/)
+  assert.equal(sinClave.codigo, 1)
+})
+
+test('config: verificarRapido y generados por defecto', () => {
+  assert.equal(configDe(ESTRICTO).verificarRapido, null)
+  assert.deepEqual(configDe(ESTRICTO).generados, [])
+})
+
+test('guardia: --rapido permitido', () => {
+  const R = ESTRICTO
+  deja(bash(R, 'node ~/.claude/flujos/verificar.mjs --rapido'))
+  deja(bash(R, 'node ~/.claude/flujos/verificar.mjs --rapido 2>&1 | tail -n 40'), 'revisor')
+  deja(bash(R, 'node ~/.claude/flujos/verificar.mjs --rapido'), 'revisor')
+})
+
+test('alcance: generados', () => {
+  assert.equal(alcanceDe('dist/server/server.js', ['src/a.ts'], ['dist/**']), 'generado')
+  assert.equal(alcanceDe('dist/server/server.js', ['src/a.ts']), 'fuera')
+  assert.equal(alcanceDe('dist/server/server.js', ['src/a.ts'], []), 'fuera')
+  assert.equal(alcanceDe('src/a.ts', ['src/a.ts'], ['src/**']), 'permitido')
+  assert.equal(alcanceDe('dist/x.js', ['dist/x.js'], ['dist/**']), 'permitido')
+  assert.equal(alcanceDe('dist/x.js', [], ['dist/**']), 'permitido')
+  assert.equal(alcanceDe('src/b.ts', ['src/a.ts'], ['dist/**']), 'fuera')
+  assert.equal(alcanceDe('dist/x.js', ['src/a.ts'], ['./dist/**']), 'generado')
+})
+
+const ESTADO = fileURLToPath(new URL('./estado.mjs', import.meta.url))
+
+/** Repo temporal con `src/a.ts` y `dist/x.js` versionados y luego modificados; corre estado.mjs con `args(sha)`. */
+function estadoCon(config, args) {
+  const raiz = repo('generados', {
+    '.claude/implementador.json': JSON.stringify(config),
+    'src/a.ts': 'a\n',
+    'dist/x.js': 'x\n',
+  })
+  temporales.push(raiz)
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
+  fs.writeFileSync(path.join(raiz, 'dist/x.js'), 'x2\n')
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: raiz }
+  const r = spawnSync(process.execPath, [ESTADO, ...args(sha)], { cwd: raiz, encoding: 'utf8', env })
+  return { salida: r.stdout ?? '', codigo: r.status }
+}
+
+test('estado: --cambios y --diff con generados', () => {
+  const con = { generados: ['dist/**'] }
+  const cambios = (sha) => ['--cambios', sha, '--permitidos', 'src/a.ts']
+  const diffDe = (...extra) => (sha) => ['--diff', sha, '--permitidos', 'src/a.ts', ...extra]
+
+  const ok = estadoCon(con, cambios)
+  assert.match(ok.salida, /^ {2}~ M dist\/x\.js/m)
+  assert.match(ok.salida, /^ {2}✓ M src\/a\.ts$/m)
+  assert.match(ok.salida, /^CAMBIOS desde \w+ \(2\):$/m)
+  assert.match(ok.salida, /ALCANCE: OK\s*$/)
+  assert.equal(ok.codigo, 0)
+
+  const sin = estadoCon({}, cambios)
+  assert.match(sin.salida, /^ {2}✗ M dist\/x\.js {3}← FUERA DE ALCANCE$/m)
+  assert.match(sin.salida, /ALCANCE: FUERA \(1\)\s*$/)
+
+  const recortado = estadoCon(con, diffDe())
+  assert.match(recortado.salida, /GENERADOS \(omitidos/)
+  assert.match(recortado.salida, /dist\/x\.js/)
+  assert.doesNotMatch(recortado.salida, /diff --git a\/dist\/x\.js/)
+  assert.match(recortado.salida, /diff --git a\/src\/a\.ts/)
+
+  const explicito = estadoCon(con, diffDe('--', 'dist/x.js'))
+  assert.match(explicito.salida, /diff --git a\/dist\/x\.js/)
+  assert.doesNotMatch(explicito.salida, /GENERADOS \(omitidos/)
+
+  const sinClave = estadoCon({}, diffDe())
+  assert.match(sinClave.salida, /diff --git a\/dist\/x\.js/)
+  assert.doesNotMatch(sinClave.salida, /GENERADOS/)
+})
+
+test('estado: el preflight avisa solo si existen las claves', () => {
+  const pre = (config) => estadoCon(config, () => [])
+  const con = pre({ verificar: pasosAB, verificarRapido: ['a'], generados: ['dist/**', 'x.gen.ts'] })
+  assert.match(con.salida, /^VERIFICACIÓN RÁPIDA \(--rapido\): node -e 0$/m)
+  assert.match(con.salida, /^GENERADOS \(no cuentan para el alcance\): dist\/\*\*, x\.gen\.ts$/m)
+
+  const roto = pre({ verificar: pasosAB, verificarRapido: ['x'] })
+  assert.match(roto.salida, /^VERIFICACIÓN RÁPIDA: ERROR \(pasos inexistentes: x\)$/m)
+
+  const sin = pre({ verificar: pasosAB })
+  assert.doesNotMatch(sin.salida, /VERIFICACIÓN RÁPIDA|GENERADOS/)
+})
+
 test.after(() => {
-  for (const r of [ESTRICTO, GENERICO]) fs.rmSync(r, { recursive: true, force: true })
+  for (const r of [ESTRICTO, GENERICO, ...temporales]) fs.rmSync(r, { recursive: true, force: true })
 })
