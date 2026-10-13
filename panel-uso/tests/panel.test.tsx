@@ -3045,6 +3045,76 @@ async function colorDe(ui: Ui, etiqueta: string): Promise<unknown> {
   return (await coloresDe(ui, etiqueta))[0]
 }
 
+describe('leyenda de colores en el panel', () => {
+  function preparar(on: On) {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on)
+    on('session.id', () => ({ value: 's1' }))
+    motorControlado(on, 'claude-opus-5-5')
+  }
+
+  /** Los Text entre «Esfuerzo» y «Esta sesión» (sin ellos). */
+  async function entreEsfuerzoYSesion(ui: Ui): Promise<{ text?: string | undefined; props: Record<string, unknown> }[]> {
+    const textos = await ui.findAll({ type: 'Text' })
+    const desde = textos.findIndex(t => t.text === 'Esfuerzo')
+    const hasta = textos.findIndex(t => t.text === 'Esta sesión')
+
+    expect(desde).toBeGreaterThanOrEqual(0)
+    expect(hasta).toBeGreaterThan(desde)
+
+    return textos.slice(desde + 1, hasta)
+  }
+
+  test('la leyenda explica los 3 colores de las barras entre Esfuerzo y Esta sesión', async ($, on) => {
+    preparar(on)
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    const trozo = await entreEsfuerzoYSesion(ui)
+    const indices = trozo.flatMap((t, i) => (t.text === '■' ? [i] : []))
+
+    expect(indices).toHaveLength(3)
+    expect(indices.map(i => trozo[i]?.props.color)).toEqual(['claude', 'cyan_FOR_SUBAGENTS_ONLY', 'purple_FOR_SUBAGENTS_ONLY'])
+    expect(indices.map(i => (trozo[i + 1]?.text ?? '').trim())).toEqual(['normal', 'flujo', 'subagentes'])
+    expect(indices.map(i => trozo[i + 1]?.props.dimColor)).toEqual([true, true, true])
+    await ui.unmount()
+  })
+
+  test('la leyenda cabe en 32 y en 49 columnas', async ($, on) => {
+    preparar(on)
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+
+    for (const pane of [PANE, PANE_ANCHO]) {
+      const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
+      const trozo = await entreEsfuerzoYSesion(ui)
+      const primero = trozo.findIndex(t => t.text === '■')
+      const largo = trozo.slice(primero).reduce((n, t) => n + (t.text ?? '').length, 0)
+
+      expect(primero).toBeGreaterThanOrEqual(0)
+      expect(largo).toBeLessThanOrEqual(32)
+      await ui.unmount()
+    }
+  })
+
+  test('la leyenda sale aunque no haya respuestas anotadas', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const trozo = await entreEsfuerzoYSesion(ui)
+
+    expect(trozo.filter(t => t.text === '■')).toHaveLength(3)
+    await ui.unmount()
+  })
+})
+
 describe('actividad en el panel', () => {
   function preparar(on: On, modelo = 'claude-opus-5-5') {
     mock.clock(on, { now: AHORA })

@@ -1071,6 +1071,23 @@ export const register: Register = on => {
           )}
         </Box>
 
+        {/* Leyenda de los tramos de las barras de las dos tablas. */}
+        <Box marginTop={1}>
+          {[
+            { color: 'claude', nombre: 'normal' },
+            { color: COLOR_FLUJO, nombre: 'flujo' },
+            { color: COLOR_SUB, nombre: 'subagentes' },
+          ].flatMap((entrada, i) => [
+            ...(i === 0 ? [] : [<Text key={`separador-${entrada.nombre}`}>{'  '}</Text>]),
+            <Text key={`color-${entrada.nombre}`} color={entrada.color}>
+              ■
+            </Text>,
+            <Text key={`nombre-${entrada.nombre}`} dimColor wrap="truncate-end">
+              {' ' + entrada.nombre}
+            </Text>,
+          ])}
+        </Box>
+
         {/* La hora anotada se redondea a la hora entera: «desde» mentiría en la sesión. */}
         {tabla('Esta sesión', 'n', ses === null ? null : unirOrigenes(ses), null, undefined, true, true)}
 
