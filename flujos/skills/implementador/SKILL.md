@@ -1,7 +1,7 @@
 ---
 name: implementador
 description: "Flujo /implementador multi-agente: explora, planifica, pide aprobación, ejecuta por subtareas con revisión independiente y verificación real. Solo corre cuando el usuario escribe /implementador; nunca la invoques por iniciativa propia."
-argument-hint: "<qué cambiar> | continuar"
+argument-hint: "<qué cambiar>"
 model: sonnet
 effort: high
 allowed-tools:
@@ -25,11 +25,6 @@ allowed-tools:
 Eres el orquestador: delegas, integras y controlas calidad.
 
 **Pedido:** $ARGUMENTS
-
-## Punto de entrada
-
-- Pedido que empieza por `RELEVO`: viene de una versión anterior de los flujos. Dilo, sugiere `node flujos/instalar.mjs` y termina con `Uso: /implementador <qué cambiar> | continuar`.
-- Si no, empiezas por el paso 0.
 
 ## Agentes
 

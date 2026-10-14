@@ -1,4 +1,4 @@
-// Flujo `/implementador` o `/documentar` en curso. Puro: sin `$`, para poder probarlo solo.
+// Flujo `/implementador` en curso. Puro: sin `$`, para poder probarlo solo.
 
 import type { FilaSemana, Flujo, Semana } from '../types'
 import { duracion } from './formato'
@@ -11,7 +11,6 @@ export type Senal =
   | { tipo: 'pregunta'; plan: boolean }
   | { tipo: 'agente'; nombre: string }
   | { tipo: 'agente-fin'; nombre: string; bien: boolean }
-  | { tipo: 'escritura'; destino: 'mapa' | 'reglas' | 'doc' }
 
 /**
  * Un paso del flujo tal como se dibuja: ya pasado, el actual o por venir.
@@ -22,7 +21,7 @@ export type Senal =
  * `exploradores` solo está en «Exploración»: es el total del flujo; falta si es 0 o si el nodo está pendiente.
  * `veces` son los lanzamientos del agente propio del paso: «Plan» y «Ejecución» en `/implementador`,
  * «Ejecución» y «Revisión» en un `/implementador-ligero` guardado de antes de los modos (legado). `revisiones` son los revisores lanzados con el flujo
- * en ese paso (solo `/implementador`). Los dos faltan si son menos de 1, si el nodo está pendiente o en `/documentar`.
+ * en ese paso (solo `/implementador`). Los dos faltan si son menos de 1 o si el nodo está pendiente.
  */
 export type Nodo = { etiqueta: string; estado: 'pasado' | 'actual' | 'pendiente'; ms?: number; exploradores?: number; veces?: number; revisiones?: number; esperaUsuario?: number }
 
@@ -30,17 +29,16 @@ export type Nodo = { etiqueta: string; estado: 'pasado' | 'actual' | 'pendiente'
 export const PASOS: Record<Flujo['nombre'], readonly string[]> = {
   implementador: ['Preflight', 'Exploración', 'Plan', 'Revisión del plan', 'Aprobación', 'Ejecución', 'Verificación final', 'Cierre'],
   'implementador-ligero': ['Preflight', 'Exploración', 'Escalado', 'Plan breve', 'Aprobación', 'Ejecución', 'Revisión', 'Cierre'],
-  documentar: ['Preflight', 'Modo', 'Ficha', 'Lectura', 'Escritura', 'Revisión', 'Cierre'],
 }
-
-/** Los pasos de `/documentar` cuando el pedido es auditar. */
-export const PASOS_AUDITAR: readonly string[] = ['Preflight', 'Modo', 'Plan de auditoría', 'Lectura', 'Corrección', 'Revisión', 'Cierre']
 
 const SKILLS: readonly string[] = Object.keys(PASOS)
 
-/** Los pasos del flujo `f`, según su nombre y variante. */
+/**
+ * Los pasos del flujo `f`, según su nombre. Un flujo guardado con un nombre que ya no existe
+ * (`documentar`, hasta 0.12.0) no tiene pasos.
+ */
 export function pasosDe(f: Flujo): readonly string[] {
-  return f.nombre === 'documentar' && f.variante === 'auditar' ? PASOS_AUDITAR : PASOS[f.nombre]
+  return PASOS[f.nombre] ?? []
 }
 
 /** El nombre de la skill sin `/` ni prefijo `plugin:`. */
@@ -49,8 +47,8 @@ function nombreDeSkill(skill: string): string {
 }
 
 /**
- * Flujo nuevo si `skill` es una de las tres (con o sin `/` y con o sin prefijo `plugin:`); `null` si no.
- * La variante `auditar` solo existe en `documentar`, cuando el pedido lo dice. `t` es la hora (ms) de inicio.
+ * Flujo nuevo si `skill` es `implementador` o `implementador-ligero` (con o sin `/` y con o sin prefijo `plugin:`); `null` si no.
+ * `t` es la hora (ms) de inicio.
  * `implementador-ligero` abre el flujo viejo de ese nombre (legado de antes de los modos); nunca se escribe `modo`.
  * `base` es lo que la sesión ya llevaba gastado (ver `baseDeUso`); sin ella o vacía, el flujo no lleva `usoBase`.
  */
@@ -59,11 +57,8 @@ export function iniciarFlujo(skill: string, texto: string, t = 0, base?: Flujo['
 
   if (!SKILLS.includes(nombre)) return null
 
-  const auditar = nombre === 'documentar' && /\*\*Pedido:\*\*\s*auditar\b/.test(texto)
-
   return {
     nombre: nombre as Flujo['nombre'],
-    variante: auditar ? 'auditar' : null,
     paso: 0,
     ejecuto: false,
     estado: 'en curso',
@@ -137,15 +132,6 @@ export function senalDeHerramienta(tool: string, args: unknown, agentId?: string
     const plan = Array.isArray(preguntas) && preguntas.some(q => texto(q, 'header').trim().toLowerCase() === 'plan')
 
     return { tipo: 'pregunta', plan }
-  }
-
-  if (tool === 'Edit' || tool === 'Write') {
-    const ruta = texto(args, 'file_path').replace(/\\/g, '/')
-
-    if (ruta.endsWith('.claude/documentar/cobertura.md')) return { tipo: 'escritura', destino: 'mapa' }
-    if (ruta.endsWith('.claude/documentar.md')) return { tipo: 'escritura', destino: 'reglas' }
-
-    return { tipo: 'escritura', destino: 'doc' }
   }
 
   return null
@@ -231,28 +217,6 @@ function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
   }
 }
 
-/** Qué cambia en `/documentar` (con o sin auditar) con la señal `s`. */
-function cambioDeDocumentacion(f: Flujo, s: Senal): Cambio {
-  const p = f.paso
-
-  switch (s.tipo) {
-    case 'pregunta':
-      return p < 2 ? { paso: 2 } : {}
-    case 'agente':
-      if (s.nombre === 'lector') return { paso: 3 }
-      if (s.nombre === 'revisor-doc') return { paso: 5 }
-
-      return {}
-    case 'escritura':
-      if (s.destino === 'doc') return { paso: 4 }
-      if (s.destino === 'mapa') return p >= 5 ? { paso: 6 } : {}
-
-      return {}
-    default:
-      return {}
-  }
-}
-
 /**
  * `f` con los campos de tiempo completos. El atom `flujo` sobrevive a `/reload-plugins`, así que puede traer
  * la forma anterior (0.9.3: sin `inicio`, `desde`, `tiempos` ni `fin`): ahí el flujo empieza en `t` (0 sin ella).
@@ -303,7 +267,7 @@ export function avanzar(actual: Flujo | null, s: Senal, t?: number): Flujo | nul
   if (!actual || actual.estado !== 'en curso') return actual
 
   const f = completar(actual, t)
-  const cambio = f.nombre === 'documentar' ? cambioDeDocumentacion(f, s) : cambioDeImplementacion(f, s)
+  const cambio = cambioDeImplementacion(f, s)
 
   if (cambio.paso === undefined || cambio.paso === f.paso) return { ...f, ...cambio }
 
@@ -368,10 +332,10 @@ export function anotarFilaExplorador<T extends readonly string[]>(filas: T, f: F
 /**
  * Si la señal `s` abre una tanda nueva de exploradores o revisores: un `agente` `explorador` o `revisor` lanzado
  * cuando no había otro de su tipo en vuelo (el explorador en el paso 1 solo abre tanda si no hay ninguno).
- * Es falso sin flujo, con el flujo terminado, en `/documentar` y con cualquier otra señal.
+ * Es falso sin flujo, con el flujo terminado y con cualquier otra señal.
  */
 export function abreTanda(f: Flujo | null, s: Senal): boolean {
-  if (f === null || f.estado !== 'en curso' || f.nombre === 'documentar' || s.tipo !== 'agente') return false
+  if (f === null || f.estado !== 'en curso' || s.tipo !== 'agente') return false
 
   if (s.nombre === 'explorador') return f.paso !== 1 || (f.exploradores ?? 0) === 0
 
@@ -459,13 +423,12 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
   const pasos = pasosDe(f)
   const enCurso = f.estado === 'en curso'
   const lanzados = exploradoresLanzados(f)
-  const implementacion = f.nombre !== 'documentar'
   const ligero = f.nombre === 'implementador-ligero'
   const lista: Nodo[] = pasos.map((etiqueta, i) => {
     const estado = enCurso ? (i < f.paso ? 'pasado' : i === f.paso ? 'actual' : 'pendiente') : i <= f.paso ? 'pasado' : 'pendiente'
     const nodo: Nodo = etiqueta === 'Exploración' && estado !== 'pendiente' && lanzados >= 1 ? { etiqueta, estado, exploradores: lanzados } : { etiqueta, estado }
 
-    if (implementacion && estado !== 'pendiente') {
+    if (estado !== 'pendiente') {
       const revisiones = f.revisiones?.[i] ?? 0
       const veces = etiqueta === 'Plan' ? (f.planes ?? 0) : etiqueta === 'Ejecución' ? ejecucionesLanzadas(f) : ligero && etiqueta === 'Revisión' ? revisiones : 0
 
@@ -512,5 +475,5 @@ export function resumenFlujo(sinCompletar: Flujo | null, t?: number): string {
   const actual = nodos(f, t).find(n => n.estado === 'actual')
   const total = t === undefined ? '' : ` · ${duracion(Math.max((f.fin ?? t) - f.inicio - esperaTotal(f, f.fin === null ? t : undefined), 0))}`
 
-  return `/${f.nombre}${f.variante === 'auditar' ? ' auditar' : ''} · ${actual?.etiqueta ?? ''}${total}`
+  return `/${f.nombre}${actual ? ` · ${actual.etiqueta}` : ''}${total}`
 }

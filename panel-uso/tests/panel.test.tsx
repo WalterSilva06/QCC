@@ -5,7 +5,6 @@ import type { Engine } from 'claude-code/testing'
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
   PASOS,
-  PASOS_AUDITAR,
   abrirEspera,
   abreTanda,
   anotarFilaExplorador,
@@ -19,7 +18,6 @@ import {
   marcarOrquestador,
   nodos,
   nombreOrquestador,
-  pasosDe,
   resumenFlujo,
   senalAlTerminar,
   senalDeHerramienta,
@@ -1720,7 +1718,6 @@ describe('flujo (puro)', () => {
   const agente = (nombre: string): Senal => ({ tipo: 'agente', nombre })
   const agenteFin = (nombre: string, bien = true): Senal => ({ tipo: 'agente-fin', nombre, bien })
   const pregunta = (plan: boolean): Senal => ({ tipo: 'pregunta', plan })
-  const escritura = (destino: 'mapa' | 'reglas' | 'doc'): Senal => ({ tipo: 'escritura', destino })
 
   /** Inicia el flujo y devuelve el paso en que queda tras cada señal. */
   function pasos(skill: string, senales: Senal[], texto = ''): number[] {
@@ -1738,25 +1735,22 @@ describe('flujo (puro)', () => {
   const bash = (command: string) => senalDeHerramienta('Bash', { command }, undefined)
   const doc = (f: Flujo | null) => (f ? `${f.estado}:${f.paso}` : 'null')
 
-  test('iniciarFlujo: solo las tres skills (con o sin / y prefijo); auditar por el pedido', async () => {
+  test('iniciarFlujo: solo implementador y el ligero (con o sin / y prefijo)', async () => {
     const base = { paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
 
-    expect(iniciarFlujo('implementador', '')).toEqual({ ...base, nombre: 'implementador', variante: null })
-    expect(iniciarFlujo('/implementador-ligero', '')).toEqual({ ...base, nombre: 'implementador-ligero', variante: null })
-    expect(iniciarFlujo('claude-config:implementador', '')).toEqual({ ...base, nombre: 'implementador', variante: null })
-    expect(iniciarFlujo('/mi-plugin:documentar', '')).toEqual({ ...base, nombre: 'documentar', variante: null })
-    expect(iniciarFlujo('documentar', '**Pedido:**   auditar la guía')).toEqual({ ...base, nombre: 'documentar', variante: 'auditar' })
-    expect(iniciarFlujo('documentar', '**Pedido:** auditoría')).toEqual({ ...base, nombre: 'documentar', variante: null })
-    expect(iniciarFlujo('documentar', '**Pedido:** documentar el panel')).toEqual({ ...base, nombre: 'documentar', variante: null })
-    // Auditar solo existe en documentar.
-    expect(iniciarFlujo('implementador', '**Pedido:** auditar')?.variante).toBeNull()
+    expect(iniciarFlujo('implementador', '')).toEqual({ ...base, nombre: 'implementador' })
+    expect(iniciarFlujo('/implementador-ligero', '')).toEqual({ ...base, nombre: 'implementador-ligero' })
+    expect(iniciarFlujo('claude-config:implementador', '')).toEqual({ ...base, nombre: 'implementador' })
+    // /documentar ya no existe: no abre flujo, ni con un pedido de auditar.
+    expect(iniciarFlujo('documentar', '')).toBeNull()
+    expect(iniciarFlujo('/mi-plugin:documentar', '**Pedido:** auditar')).toBeNull()
+    expect(iniciarFlujo('implementador', '**Pedido:** auditar') as Flujo).not.toHaveProperty('variante')
     expect(iniciarFlujo('simplify', '')).toBeNull()
     expect(iniciarFlujo('/implementador:otra', '')).toBeNull()
     expect(iniciarFlujo('', '')).toBeNull()
     // Con la hora, el flujo y su primer tramo empiezan ahí, sin tiempos ni fin.
     expect(iniciarFlujo('implementador', '', 5_000)).toEqual({
       nombre: 'implementador',
-      variante: null,
       paso: 0,
       ejecuto: false,
       estado: 'en curso',
@@ -1768,7 +1762,7 @@ describe('flujo (puro)', () => {
   })
 
   test('iniciarFlujo con RELEVO no escribe modo', async () => {
-    const base = { variante: null, paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const base = { paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
     const relevo = '**Pedido:** RELEVO · inicio\nPEDIDO: arreglar el panel'
     const uso: Flujo['usoBase'] = { 'Opus 5.5|high|principal': [100, 10] }
 
@@ -1782,8 +1776,8 @@ describe('flujo (puro)', () => {
 
     expect(iniciarFlujo('implementador', relevo, 5_000, uso)).toEqual({ ...base, nombre: 'implementador', inicio: 5_000, desde: 5_000, usoBase: uso })
     expect(iniciarFlujo('implementador', relevo) as Flujo).not.toHaveProperty('modo')
-    // Con la marca, documentar no cambia.
-    expect(iniciarFlujo('documentar', relevo)).toEqual({ ...base, nombre: 'documentar' })
+    // Con la marca, documentar sigue sin abrir flujo.
+    expect(iniciarFlujo('documentar', relevo)).toBeNull()
   })
 
   test('senalDeHerramienta: estado.mjs con sus opciones, verificar.mjs, ~ y $HOME, y no un cat', async () => {
@@ -1810,7 +1804,7 @@ describe('flujo (puro)', () => {
     expect(senalDeHerramienta('Bash', { command: 3 }, undefined)).toBeNull()
   })
 
-  test('senalDeHerramienta: Agent, AskUserQuestion (header Plan), Edit/Write (mapa, reglas, doc) y nada de un subagente', async () => {
+  test('senalDeHerramienta: Agent, AskUserQuestion (header Plan), Edit/Write no mueven y nada de un subagente', async () => {
     expect(senalDeHerramienta('Agent', { subagent_type: 'explorador' }, undefined)).toEqual(agente('explorador'))
     expect(senalDeHerramienta('Agent', { subagent_type: '' }, undefined)).toBeNull()
     expect(senalDeHerramienta('Agent', { prompt: 'x' }, undefined)).toBeNull()
@@ -1820,16 +1814,9 @@ describe('flujo (puro)', () => {
     expect(senalDeHerramienta('AskUserQuestion', { questions: [{ header: 'Planes' }] }, undefined)).toEqual(pregunta(false))
     expect(senalDeHerramienta('AskUserQuestion', {}, undefined)).toEqual(pregunta(false))
 
-    const rutas: [string, 'mapa' | 'reglas' | 'doc'][] = [
-      ['D:\\repo\\.claude\\documentar\\cobertura.md', 'mapa'],
-      ['/repo/.claude/documentar.md', 'reglas'],
-      ['D:\\repo\\.claude\\documentar.md', 'reglas'],
-      ['/repo/MODS.md', 'doc'],
-      ['/repo/.claude/documentar/otra.md', 'doc'],
-    ]
-    for (const [file_path, destino] of rutas) {
-      expect(senalDeHerramienta('Edit', { file_path }, undefined)).toEqual(escritura(destino))
-      expect(senalDeHerramienta('Write', { file_path }, undefined)).toEqual(escritura(destino))
+    for (const file_path of ['/repo/MODS.md', 'D:\\repo\\.claude\\documentar\\cobertura.md', '/repo/.claude/documentar.md']) {
+      expect(senalDeHerramienta('Edit', { file_path }, undefined)).toBeNull()
+      expect(senalDeHerramienta('Write', { file_path }, undefined)).toBeNull()
     }
 
     expect(senalDeHerramienta('Read', { file_path: '/repo/MODS.md' }, undefined)).toBeNull()
@@ -1876,7 +1863,7 @@ describe('flujo (puro)', () => {
   })
 
   test('planificador lleva al paso 2 y cuenta el plan', async () => {
-    const f: Flujo = { nombre: 'implementador', variante: null, paso: 1, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const f: Flujo = { nombre: 'implementador', paso: 1, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
 
     const plan = avanzar(f, agente('planificador'), 1_000)
     expect(plan).toMatchObject({ paso: 2, planes: 1 })
@@ -1902,7 +1889,6 @@ describe('flujo (puro)', () => {
 
     const f: Flujo = {
       nombre: 'implementador',
-      variante: null,
       paso: 3,
       ejecuto: false,
       planes: 1,
@@ -1974,45 +1960,6 @@ describe('flujo (puro)', () => {
     expect(pasos('implementador-ligero', [agente('planificador'), pregunta(false)])).toEqual([0, 0])
   })
 
-  test('documentar: Ficha, Lectura, Escritura, Revisión y Cierre; el mapa antes de la revisión no avanza; las reglas no cuentan', async () => {
-    const secuencia = [
-      estado('preflight'),
-      pregunta(false),
-      agente('lector'),
-      escritura('mapa'),
-      escritura('reglas'),
-      escritura('doc'),
-      escritura('reglas'),
-      agente('revisor-doc'),
-      escritura('doc'),
-      escritura('mapa'),
-    ]
-
-    expect(pasos('documentar', secuencia)).toEqual([0, 2, 3, 3, 3, 4, 4, 5, 4, 4])
-    // Tras la revisión, el mapa lleva al Cierre.
-    expect(pasos('documentar', [pregunta(true), agente('lector'), escritura('doc'), agente('revisor-doc'), escritura('mapa')])).toEqual([2, 3, 4, 5, 6])
-    // Ya pasada la Ficha, otra pregunta no retrocede; lo ajeno al flujo tampoco lo mueve.
-    expect(pasos('documentar', [agente('lector'), pregunta(false), verificar, agente('ejecutor'), estado('base')])).toEqual([3, 3, 3, 3, 3])
-    // Una pregunta en Preflight lleva a Ficha; en Modo también.
-    expect(pasos('documentar', [pregunta(false), pregunta(false)])).toEqual([2, 2])
-  })
-
-  test('documentar auditar: mismos pasos con sus nombres', async () => {
-    const f = iniciarFlujo('documentar', '**Pedido:** auditar')
-
-    expect(f?.variante).toBe('auditar')
-    expect(pasos('documentar', [pregunta(false), agente('lector'), escritura('doc'), agente('revisor-doc'), escritura('mapa')], '**Pedido:** auditar')).toEqual([
-      2, 3, 4, 5, 6,
-    ])
-    expect(PASOS_AUDITAR).toEqual(['Preflight', 'Modo', 'Plan de auditoría', 'Lectura', 'Corrección', 'Revisión', 'Cierre'])
-    expect(PASOS.documentar).toEqual(['Preflight', 'Modo', 'Ficha', 'Lectura', 'Escritura', 'Revisión', 'Cierre'])
-    expect(PASOS.implementador).toEqual(['Preflight', 'Exploración', 'Plan', 'Revisión del plan', 'Aprobación', 'Ejecución', 'Verificación final', 'Cierre'])
-    expect(PASOS['implementador-ligero']).toEqual(['Preflight', 'Exploración', 'Escalado', 'Plan breve', 'Aprobación', 'Ejecución', 'Revisión', 'Cierre'])
-    expect(pasosDe(f as Flujo)).toBe(PASOS_AUDITAR)
-    expect(pasosDe(iniciarFlujo('documentar', '') as Flujo)).toBe(PASOS.documentar)
-    expect(resumenFlujo(avanzar(avanzar(f, pregunta(false)), agente('lector')))).toBe('/documentar auditar · Lectura')
-  })
-
   test('PASOS.implementador: Plan en el paso 2 y Revisión del plan en el 3', async () => {
     expect(PASOS.implementador).toHaveLength(8)
     expect(PASOS.implementador[2]).toBe('Plan')
@@ -2032,7 +1979,7 @@ describe('flujo (puro)', () => {
       agente('explorador'),
       agente('ejecutor'),
       pregunta(true),
-      escritura('doc'),
+      agenteFin('revisor'),
     ]
 
     for (const s of senales) expect(avanzar(null, s)).toBeNull()
@@ -2047,7 +1994,6 @@ describe('flujo (puro)', () => {
   test('terminarFlujo: completo, detenido por CIERRE … DETENIDO, interrumpido; idempotente', async () => {
     const f: Flujo = {
       nombre: 'implementador',
-      variante: null,
       paso: 6,
       ejecuto: true,
       estado: 'en curso',
@@ -2168,7 +2114,7 @@ describe('flujo (puro)', () => {
   })
 
   test('nodos y resumenFlujo: pasado, actual, pendiente y Terminado al final', async () => {
-    const f: Flujo = { nombre: 'implementador', variante: null, paso: 5, ejecuto: true, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const f: Flujo = { nombre: 'implementador', paso: 5, ejecuto: true, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
     const lista = nodos(f)
 
     expect(lista.map(n => n.etiqueta)).toEqual([...PASOS.implementador, 'Terminado'])
@@ -2189,16 +2135,19 @@ describe('flujo (puro)', () => {
     expect(nodos(ligero).filter(n => n.estado === 'pasado')).toHaveLength(8)
     expect(resumenFlujo(ligero)).toBe('/implementador-ligero · Terminado · detenido')
 
-    const cortado = terminarFlujo({ ...f, nombre: 'documentar', variante: 'auditar', paso: 3 }, 'abort') as Flujo
-    expect(nodos(cortado).at(-1)?.etiqueta).toBe('Terminado · interrumpido')
-    expect(resumenFlujo(cortado)).toBe('/documentar auditar · Terminado · interrumpido')
-
-    expect(resumenFlujo({ ...f, nombre: 'documentar', variante: 'auditar', paso: 3 })).toBe('/documentar auditar · Lectura')
+    // Un flujo `documentar` guardado hasta 0.12.0 (con su variante) no lanza: no tiene pasos y se resume sin ellos.
+    const viejo = { ...f, nombre: 'documentar', variante: 'auditar', paso: 3 } as unknown as Flujo
+    expect(nodos(viejo, 1_000)).toEqual([{ etiqueta: 'Terminado', estado: 'pendiente' }])
+    expect(resumenFlujo(viejo)).toBe('/documentar')
+    expect(resumenFlujo(terminarFlujo(viejo, 'abort'))).toBe('/documentar · Terminado · interrumpido')
+    expect(() => avanzar(viejo, agente('explorador'), 1_000)).not.toThrow()
+    // La variante guardada se ignora: no aparece en el resumen.
+    expect(resumenFlujo({ ...f, variante: 'auditar' } as unknown as Flujo)).not.toContain('auditar')
     expect(resumenFlujo(null)).toBe('sin flujo en esta sesión')
   })
 
   test('resumenFlujo no muestra el modo aunque el flujo guardado lo traiga', async () => {
-    const f: Flujo = { nombre: 'implementador', variante: null, paso: 2, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const f: Flujo = { nombre: 'implementador', paso: 2, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
 
     expect(resumenFlujo({ ...f, modo: 'ligero' }, 4_000)).toBe('/implementador · Plan · 4 s')
     expect(resumenFlujo({ ...f, modo: 'normal' }, 4_000)).toBe('/implementador · Plan · 4 s')
@@ -2212,7 +2161,6 @@ describe('flujo (puro)', () => {
     const guardado: Flujo = {
       nombre: 'implementador',
       modo: 'ligero',
-      variante: null,
       paso: 3,
       ejecuto: false,
       planes: 1,
@@ -2242,7 +2190,6 @@ describe('flujo (puro)', () => {
   test('las funciones no mutan el flujo que reciben', async () => {
     const original: Flujo = {
       nombre: 'implementador',
-      variante: null,
       paso: 4,
       ejecuto: false,
       estado: 'en curso',
@@ -2360,7 +2307,6 @@ describe('flujo (puro)', () => {
     // Desde otro paso, un explorador abre una tanda nueva: reinicia el contador y `exploro`.
     const f: Flujo = {
       nombre: 'implementador',
-      variante: null,
       paso: 3,
       ejecuto: false,
       exploradores: 2,
@@ -2388,7 +2334,6 @@ describe('flujo (puro)', () => {
   test('un flujo con la forma 0.9.4 (sin exploradores ni exploro) no lanza: su explorador en vuelo, al volver, pasa a Plan', async () => {
     const viejo: Flujo = {
       nombre: 'implementador',
-      variante: null,
       paso: 1,
       ejecuto: false,
       estado: 'en curso',
@@ -2435,7 +2380,7 @@ describe('flujo (puro)', () => {
     expect(nodos(ligero as Flujo)[1].exploradores).toBe(2)
   })
 
-  test('nodos: Exploración lleva exploradores solo si hubo y no está pendiente; /documentar nunca', async () => {
+  test('nodos: Exploración lleva exploradores solo si hubo y no está pendiente', async () => {
     const A = agente('explorador')
     const F = agenteFin('explorador')
     const nuevo = iniciarFlujo('implementador', '', 0) as Flujo
@@ -2465,10 +2410,6 @@ describe('flujo (puro)', () => {
     expect(atras.paso).toBe(0)
     expect(nodos(atras)[1]).toEqual({ etiqueta: 'Exploración', estado: 'pendiente' })
     expect(nodos(atras, 3_000)[1].exploradores).toBeUndefined()
-
-    // /documentar no tiene Exploración, aunque el flujo traiga el campo.
-    const documentar = { ...(iniciarFlujo('documentar', '', 0) as Flujo), totalExploradores: 3 }
-    expect(nodos(documentar, 1_000).some(n => n.exploradores !== undefined)).toBe(false)
   })
 
   test('un flujo con la forma 0.9.5 (exploradores sin totalExploradores) no lanza', async () => {
@@ -2476,7 +2417,6 @@ describe('flujo (puro)', () => {
     const F = agenteFin('explorador')
     const viejo: Flujo = {
       nombre: 'implementador',
-      variante: null,
       paso: 1,
       ejecuto: false,
       estado: 'en curso',
@@ -2571,7 +2511,7 @@ describe('flujo (puro)', () => {
     expect(lista.filter((_, i) => ![5, 6].includes(i)).some(n => n.veces !== undefined || n.revisiones !== undefined)).toBe(false)
   })
 
-  test('contadores en /implementador-ligero (Ejecución y Revisión) y nunca en /documentar', async () => {
+  test('contadores en /implementador-ligero (Ejecución y Revisión)', async () => {
     const senales = [agente('planificador'), estado('base'), agente('ejecutor'), agente('ejecutor'), agente('revisor'), agente('revisor')]
     let f = iniciarFlujo('implementador-ligero', '', 0)
     for (const s of senales) f = avanzar(f, s, 1_000)
@@ -2583,17 +2523,11 @@ describe('flujo (puro)', () => {
     expect(lista.some(n => n.revisiones !== undefined)).toBe(false)
     expect(lista[3]).toEqual({ etiqueta: 'Plan breve', estado: 'pasado' })
     expect(f?.planes).toBeUndefined()
-
-    // /documentar ignora los campos aunque el atom los traiga.
-    const documentar: Flujo = { ...(iniciarFlujo('documentar', '', 0) as Flujo), paso: 5, planes: 2, ejecuciones: 2, revisiones: { 5: 1 } }
-    expect(nodos(documentar, 1_000).some(n => n.veces !== undefined || n.revisiones !== undefined)).toBe(false)
-    expect(avanzar(documentar, agente('revisor-doc'), 1_000)).toMatchObject({ planes: 2, ejecuciones: 2, revisiones: { 5: 1 } })
   })
 
   test('un flujo con la forma 0.9.7 (sin planes, ejecuciones ni revisiones) no lanza: Ejecución toma `ejecuto` como cota y cuenta desde ahí', async () => {
     const viejo: Flujo = {
       nombre: 'implementador',
-      variante: null,
       paso: 5,
       ejecuto: true,
       totalExploradores: 2,
@@ -2724,7 +2658,6 @@ describe('flujo (puro)', () => {
     const muyViejo = { nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso' } as unknown as Flujo
     const viejo: Flujo = {
       nombre: 'implementador',
-      variante: null,
       paso: 5,
       ejecuto: true,
       totalExploradores: 2,
@@ -2878,8 +2811,6 @@ describe('flujo (puro)', () => {
 
     const terminado = terminarFlujo(base, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
     expect(abreTanda(terminado, agente('revisor'))).toBe(false)
-    expect(abreTanda(iniciarFlujo('documentar', '', 0), agente('revisor'))).toBe(false)
-    expect(abreTanda(iniciarFlujo('documentar', '', 0), agente('explorador'))).toBe(false)
   })
 
   /** Una sesión con esas filas, ya ordenadas como las deja `resumir` (de mayor a menor total). */
@@ -3871,8 +3802,8 @@ describe('flujo en el panel', () => {
   test('skill.prompt y tool.call pasan intactos: mismo texto y mismo resultado', async ($, on) => {
     const motor = preparar(on)
 
-    const texto = '**Pedido:** auditar la guía\n\nsegunda línea'
-    expect(await $.skill.prompt({ skill: 'documentar', text: texto })).toEqual({ text: texto })
+    const texto = '**Pedido:** arreglar el panel\n\nsegunda línea'
+    expect(await $.skill.prompt({ skill: 'implementador', text: texto })).toEqual({ text: texto })
     expect(await $.skill.prompt({ skill: 'simplify', text: 'otra' })).toEqual({ text: 'otra' })
 
     const resultados = [
@@ -4262,10 +4193,10 @@ describe('flujo en el panel', () => {
   test('session.end borra el flujo', async ($, on) => {
     preparar(on)
     on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
-    await $.skill.prompt({ skill: 'documentar', text: '' })
+    await $.skill.prompt({ skill: 'implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect((await desdeFlujo(ui, 2))[1]).toBe('/documentar · Preflight · 0 s')
+    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Preflight · 0 s')
 
     await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
     expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])

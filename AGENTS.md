@@ -3,7 +3,7 @@
 Herramientas personales para Claude Code, en dos partes separadas:
 
 - **`panel-uso/`**: mod (plugin) con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Ver [MODS.md](MODS.md).
-- **`flujos/`**: los flujos `/implementador` (un solo flujo, con un solo modo) y `/documentar`, con sus agentes y herramientas. Se instalan copiándolos a `~/.claude`. Ver [FLUJOS.md](FLUJOS.md).
+- **`flujos/`**: el flujo `/implementador` (un solo flujo, con un solo modo), con sus agentes y herramientas. Se instalan copiándolos a `~/.claude`. Ver [FLUJOS.md](FLUJOS.md).
 
 [README.md](README.md) es la entrada al repo: resume la instalación y enlaza a todo.
 
@@ -16,8 +16,6 @@ MODS.md                           documentación del mod panel-uso
 FLUJOS.md                         documentación de los flujos
 .claude/implementador.json        pasos de verificación para /implementador
 .claude/implementador.md          reglas de /implementador para este repo (clasificación, plan, revisor)
-.claude/documentar.md             reglas de /documentar para este repo
-.claude/documentar/cobertura.md   mapa de cobertura de la documentación
 flujos/
   instalar.mjs                    copia los flujos a ~/.claude (o los trae con --traer)
   skills/<nombre>/SKILL.md        → ~/.claude/skills/<nombre>/SKILL.md

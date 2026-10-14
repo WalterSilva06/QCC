@@ -13,14 +13,6 @@ Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `pa
     { "nombre": "build", "cmd": "pnpm run build" },
     { "nombre": "test", "cmd": "pnpm run test" }
   ],
-  // Nombres de pasos de `verificar` (o de los detectados) que corre `verificar.mjs --rapido`.
-  // La usa el revisor de las subtareas no críticas. Ausente o vacía = todos los pasos.
-  // Un nombre que no existe da `ERROR: verificarRapido nombra pasos que no existen: …` (exit 2).
-  "verificarRapido": ["typecheck", "test"],
-  // Globs de lo que regenera el build o una herramienta (p. ej. dist/**), nunca código fuente.
-  // En `estado.mjs --cambios` salen con `~` y no cuentan como FUERA; `--diff` los omite y los
-  // lista en `GENERADOS` (se piden con `-- <ruta>`). Un glob ancho ocultaría cambios reales del diff.
-  "generados": ["dist/**"],
   "guardia": {
     // Archivos o carpetas (con / final) o globs que ningún subagente escribe, con el motivo.
     // Se suman a los de siempre: lockfiles, node_modules/, dist/, .env*, .claude/, .git/.
@@ -32,8 +24,6 @@ Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `pa
     "inmutables": ["migrations/"],
     // Programas negados, con el motivo (se suman a los CLIs de nube, deploy y red).
     "externos": { "deno": "las Edge Functions se despliegan a mano" },
-    // Programas negados por defecto que este proyecto sí deja usar (p. ej. tests con docker).
-    "permitir": ["docker"],
     // Scripts del gestor JS negados (se suman a dev, start, serve, preview, watch, deploy,
     // release y publish, con sus variantes `nombre:*`).
     "scriptsNegados": ["db:*"],

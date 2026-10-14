@@ -10,11 +10,7 @@
 // Resume la salida para que un agente no gaste contexto en cientos de líneas verdes; cuando
 // algo falla, muestra el detalle. Corre con CI=1 (sin modo watch ni prompts).
 //
-//   node ~/.claude/flujos/verificar.mjs                 todos los pasos
-//   node ~/.claude/flujos/verificar.mjs --sin build     sin esos pasos (lista con comas)
-//   node ~/.claude/flujos/verificar.mjs --solo test     solo esos pasos
-//   node ~/.claude/flujos/verificar.mjs --rapido        solo los pasos de `"verificarRapido": ["a", "b"]` (sin la clave, todos)
-//   node ~/.claude/flujos/verificar.mjs --pasos         muestra los pasos y su origen, sin correr
+//   node ~/.claude/flujos/verificar.mjs
 //
 // Termina en `RESULTADO: VERDE` (exit 0), `RESULTADO: ROJO (<pasos>)` (exit 1) o
 // `RESULTADO: SIN PASOS` (exit 3: el proyecto no tiene verificación conocida).
@@ -103,45 +99,10 @@ export function pasosDe(raiz) {
   return { origen: 'ninguno', pasos: [] }
 }
 
-function lista(args, nombre) {
-  const k = args.indexOf(nombre)
-  return k >= 0 ? String(args[k + 1] ?? '').split(',').map((s) => s.trim()).filter(Boolean) : null
-}
-
-/** `{ pasos, faltan }`: los pasos nombrados (en el orden de `todos`) y los nombres que no existen; sin nombres, todos. */
-export function pasosRapidos(todos, nombres) {
-  if (!nombres?.length) return { pasos: todos, faltan: [] }
-  return {
-    pasos: todos.filter((p) => nombres.includes(p.nombre)),
-    faltan: nombres.filter((n) => !todos.some((p) => p.nombre === n)),
-  }
-}
-
 function main() {
-  const args = process.argv.slice(2)
-  const { pasos: todos, origen: origenBase } = pasosDe(RAIZ)
-  const rapidoCfg = configDe(RAIZ).verificarRapido
-  let partida = todos
-  let origen = origenBase
-  if (args.includes('--rapido')) {
-    const { pasos: rapidos, faltan } = pasosRapidos(todos, rapidoCfg)
-    if (faltan.length) {
-      console.log(`ERROR: verificarRapido nombra pasos que no existen: ${faltan.join(', ')} (pasos: ${todos.map((p) => p.nombre).join(', ')})`)
-      process.exitCode = 2
-      return
-    }
-    partida = rapidos
-    if (rapidoCfg) origen = `${origenBase}, rápida`
-  }
-  const sin = lista(args, '--sin') ?? (args.includes('--sin-build') ? ['build'] : [])
-  const solo = lista(args, '--solo')
-  const pasos = partida.filter((p) => !sin.includes(p.nombre) && (!solo || solo.includes(p.nombre))).map(conDetalle)
+  const { pasos: todos, origen } = pasosDe(RAIZ)
+  const pasos = todos.map(conDetalle)
 
-  if (args.includes('--pasos')) {
-    console.log(`PASOS (${origen}):${todos.length ? '' : ' ninguno'}`)
-    for (const p of todos) console.log(`  ${p.nombre.padEnd(10)} ${p.cmd}`)
-    return
-  }
   if (!pasos.length) {
     console.log(`verificar: sin pasos (origen: ${origen}) en ${RAIZ}`)
     console.log('Define los comandos en .claude/implementador.json → "verificar": [{ "nombre": "test", "cmd": "…" }]')

@@ -18,12 +18,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { evaluar, registroDe, configDe, coincide, aRegex, RAIZ } from './guardia.mjs'
-import { pasosDe, pasosRapidos } from './verificar.mjs'
+import { evaluar, registroDe, configDe, coincide, RAIZ } from './guardia.mjs'
+import { pasosDe } from './verificar.mjs'
 
-export { coincide, aRegex }
-
-const DIR = path.dirname(fileURLToPath(import.meta.url))
 const AGENTES = path.join(os.homedir(), '.claude', 'agents')
 const WIN = process.platform === 'win32'
 const TOPE_DIFF = 3000
@@ -40,14 +37,9 @@ export function listaPermitidos(texto) {
     .filter(Boolean)
 }
 
-/**
- * Cómo cuenta una ruta cambiada para el alcance: `'permitido'` (sin lista, o en la lista),
- * `'generado'` (cae en los globs de `generados` de la config: no cuenta) o `'fuera'`.
- */
-export function alcanceDe(ruta, permitidos, generados = []) {
-  if (!permitidos.length || coincide(ruta, permitidos)) return 'permitido'
-  const globs = generados.map((s) => String(s).trim().replace(/\\/g, '/').replace(/^\.\//, '')).filter(Boolean)
-  return globs.length && coincide(ruta, globs) ? 'generado' : 'fuera'
+/** ¿La ruta cambiada cae dentro del alcance? Sin lista de permitidos, todo cae. */
+export function enAlcance(ruta, permitidos) {
+  return !permitidos.length || coincide(ruta, permitidos)
 }
 
 // ── Git ─────────────────────────────────────────────────────────────────────
@@ -165,7 +157,6 @@ function preflight() {
   const head = git(['log', '-1', '--format=%h %s'], { opcional: true })?.trim() || '(sin commits)'
   const sucios = git(['status', '--porcelain=v1', '--untracked-files=all']).split('\n').filter(Boolean)
   const base = foto()
-  const fork = process.env.CLAUDE_CODE_FORK_SUBAGENT
   const config = configDe(RAIZ)
   const reglas = fs.existsSync(path.join(RAIZ, '.claude', 'implementador.md'))
   const { pasos, origen } = pasosDe(RAIZ)
@@ -181,21 +172,7 @@ function preflight() {
   console.log(`REGLAS DEL PROYECTO: ${reglas ? '.claude/implementador.md' : 'no hay (.claude/implementador.md); rigen CLAUDE.md y las reglas comunes'}`)
   console.log(`CONFIG: ${config.archivo ? '.claude/implementador.json' : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
   console.log(`VERIFICACIÓN (${origen}): ${pasos.length ? pasos.map((p) => p.cmd).join(' → ') : 'SIN PASOS'}`)
-  if (config.verificarRapido) {
-    const { pasos: rapidos, faltan } = pasosRapidos(pasos, config.verificarRapido)
-    console.log(
-      faltan.length
-        ? `VERIFICACIÓN RÁPIDA: ERROR (pasos inexistentes: ${faltan.join(', ')})`
-        : `VERIFICACIÓN RÁPIDA (--rapido): ${rapidos.map((p) => p.cmd).join(' → ')}`,
-    )
-  }
-  if (config.generados.length) console.log(`GENERADOS (no cuentan para el alcance): ${config.generados.join(', ')}`)
   console.log(`GUARDIA: ${autoprueba()}`)
-  console.log(
-    fork === '0'
-      ? 'FORK MODE: apagado (CLAUDE_CODE_FORK_SUBAGENT=0)'
-      : `FORK MODE: CLAUDE_CODE_FORK_SUBAGENT=${fork ?? 'sin definir'} — manda si Agent ofrece run_in_background (se apaga en ~/.claude/settings.json → env)`,
-  )
 }
 
 function cambios(base, desde, permitidos) {
@@ -212,16 +189,14 @@ function cambios(base, desde, permitidos) {
     if (!mapa.has(clave(f.objetivo))) mapa.set(clave(f.objetivo), { estado: '·', ruta: f.objetivo, soloRegistro: true })
   }
   const lista = [...mapa.values()].sort((a, b) => a.ruta.localeCompare(b.ruta))
-  const generados = configDe(RAIZ).generados
   let fuera = 0
   console.log(`CAMBIOS desde ${corto(base)} (${lista.length}):`)
   for (const c of lista) {
-    const alcance = alcanceDe(c.ruta, permitidos, generados)
-    if (alcance === 'fuera') fuera++
-    const marca = permitidos.length ? { permitido: '✓', generado: '~', fuera: '✗' }[alcance] : ' '
+    const dentro = enAlcance(c.ruta, permitidos)
+    if (!dentro) fuera++
+    const marca = permitidos.length ? (dentro ? '✓' : '✗') : ' '
     const nota = [
-      alcance === 'fuera' ? 'FUERA DE ALCANCE' : '',
-      alcance === 'generado' ? 'generado: no cuenta para el alcance («generados» de .claude/implementador.json)' : '',
+      dentro ? '' : 'FUERA DE ALCANCE',
       c.soloRegistro ? 'solo en el registro: ruta ignorada por git o edición sin efecto' : '',
     ]
       .filter(Boolean)
@@ -239,18 +214,10 @@ function cambios(base, desde, permitidos) {
 
 function diff(base, permitidos, rutas) {
   const ahora = foto(permitidos)
-  const generados = configDe(RAIZ).generados
-  let omitidos = []
-  if (!rutas.length && permitidos.length && generados.length) {
-    omitidos = git(['diff', '--name-only', '-z', '--no-renames', base, ahora])
-      .split('\0')
-      .filter((r) => r && alcanceDe(r, permitidos, generados) === 'generado')
-  }
-  const filtro = omitidos.length ? ['--', '.', ...omitidos.map((r) => `:(exclude,literal)${r}`)] : ['--', ...rutas]
+  const filtro = ['--', ...rutas]
   const stat = git(['diff', '--stat=150', '--no-renames', base, ahora, ...filtro]).trimEnd()
   const cuerpo = git(['diff', '--no-renames', '--no-color', base, ahora, ...filtro]).trimEnd()
   console.log(`DIFF ${corto(base)} → árbol actual${rutas.length ? ` (${rutas.join(', ')})` : ''}`)
-  if (omitidos.length) console.log(`GENERADOS (omitidos del diff; pídelos con -- <ruta>): ${omitidos.join(', ')}`)
   if (!cuerpo) {
     console.log('(sin cambios)')
     return

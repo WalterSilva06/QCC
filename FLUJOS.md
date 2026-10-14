@@ -6,8 +6,7 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 
 | Comando | Uso | Para qué |
 |---|---|---|
-| `/implementador` | `<qué cambiar> \| continuar` | Cambios en cualquier proyecto con git: explora, clasifica, planifica, revisa el plan, pide aprobación, ejecuta por subtareas con revisión independiente y cierra con verificación real. |
-| `/documentar` | `consultar <duda o idea> \| <tema> [--directo] [--profundo] \| auditar <archivo.md> [--profundo] \| siguiente \| estado` | Documentar un proyecto o carpeta, con o sin git: acuerda una ficha antes de escribir, lee las fuentes grandes con un agente lector, escribe en `.md` en la raíz y lleva un mapa de cobertura. |
+| `/implementador` | `<qué cambiar>` | Cambios en cualquier proyecto con git: explora, clasifica, planifica, revisa el plan, pide aprobación, ejecuta por subtareas con revisión independiente y cierra con verificación real. |
 
 ## Roles y modelos
 
@@ -23,8 +22,9 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 | Revisor por subtarea | Sonnet high si `Crítica: sí`; Sonnet medium si `Crítica: no` |
 | Revisión final | Opus high, siempre (también con una sola subtarea) |
 
-- **Criticidad:** el plan marca `Crítica: sí | no` por subtarea (ante la duda, sí; sin el campo, sí). El orquestador corre `verificar.mjs` antes de cada revisor (`--rapido` si `Crítica: no`, con los pasos de `verificarRapido` de `.claude/implementador.json` o todos sin la clave; la completa si `sí` o sin campo) y se lo pasa en `VERIFICACIÓN DEL ORQUESTADOR`, así que el revisor no lo repite. El ejecutor, la verificación final y la revisión final siempre corren la completa. Las reglas del proyecto pueden listar rutas críticas que obligan a `Crítica: sí`. Las claves `verificarRapido` y `generados` están en `flujos/herramientas/config.ejemplo.md`.
-- **Fork mode:** los subagentes heredan el modelo de la sesión, así que el planificador y la revisión final pierden Opus. El flujo avisa y «Cancelar» es la opción recomendada.
+- **Criticidad:** el plan marca `Crítica: sí | no` por subtarea (ante la duda, sí; sin el campo, sí) y eso decide el esfuerzo del revisor de esa subtarea. Las reglas del proyecto pueden listar rutas críticas que obligan a `Crítica: sí`.
+- **Verificación:** el orquestador corre `verificar.mjs` tras cada ejecutor y se lo pasa al revisor en `VERIFICACIÓN DEL ORQUESTADOR`, así que el revisor no lo repite. La revisión final corre la suya.
+- **Fork mode:** los subagentes heredarían el modelo de la sesión y el planificador y la revisión final perderían Opus. Si está activo, el flujo avisa y termina.
 - **Topes de reporte:** explorador ≤ 25 líneas, ejecutor ≤ 10, revisor ≤ 12 y revisión final ≤ 15.
 - **Digest `YA REVISADO`:** una línea por subtarea ya revisada. La revisión final recibe ese digest y no recibe los reportes de los ejecutores ni de los revisores.
 - **Contexto del revisor:** además del digest `YA REVISADO`, `REVISIÓN ANTERIOR` lleva solo los PROBLEMAS y CRITERIOS del propio revisor de la vuelta previa (también en los ciclos de la revisión final), nunca el reporte del ejecutor.
@@ -44,13 +44,7 @@ node flujos/instalar.mjs --forzar     pisa la copia instalada aunque sea más nu
 ```
 
 - Si la copia instalada es más nueva que la del repo (alguien la editó en `~/.claude`), `instalar.mjs` la **frena** y termina con exit 1, para no perder ese cambio. Se resuelve con `--traer` o con `--forzar`.
-- Nunca borra: un archivo quitado del repo sigue instalado hasta que se borre a mano. Hoy hay que borrar a mano el agente del ligero viejo, `~/.claude/agents/planificador-ligero.md`, y la skill `~/.claude/skills/implementador-ligero/`, que ya no existen en el repo.
 - No toca `~/.claude/flujos/registros/` (bitácoras locales de cada proyecto, no van al repo).
-- `/implementador` llama a sus herramientas y a `comun.md` y `pasos.md` por la ruta fija `~/.claude/flujos/…` (`/documentar` no usa ninguna). Todos los flujos **corren desde la copia instalada**, no desde el repo: un cambio en `flujos/` no rige hasta instalarlo.
+- `/implementador` llama a sus herramientas y a `comun.md` y `pasos.md` por la ruta fija `~/.claude/flujos/…`. El flujo **corre desde la copia instalada**, no desde el repo: un cambio en `flujos/` no rige hasta instalarlo.
 
-## Pendiente de confirmar
-
-- Uso detallado de cada comando (pasos, opciones y qué devuelve). Se documenta en una corrida aparte de `/documentar`.
-- Agentes de los flujos (`explorador`, `planificador`, `revisor-plan`, `ejecutor`, `revisor`, `lector`, `revisor-doc`): qué hace cada uno y en qué flujo entra.
-- Herramientas (`estado.mjs`, `verificar.mjs`, `guardia.mjs`): opciones y qué bloquea la guardia.
-- Configuración: formato de `.claude/implementador.json` y de `.claude/documentar.md`.
+El detalle de cada paso y herramienta está en `flujos/herramientas/comun.md` y `pasos.md`; el de cada agente, en `flujos/agents/`; el formato de `.claude/implementador.json`, en `flujos/herramientas/config.ejemplo.md`.

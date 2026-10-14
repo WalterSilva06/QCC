@@ -1,4 +1,4 @@
-`.claude/implementador.md` (reglas del proyecto) manda sobre este archivo y el `CLAUDE.md` del proyecto rige para todos los agentes; sin ellos, estos valores y lo que se lea del repo. `.claude/implementador.json` (opcional): `verificar`, `verificarRapido`, `generados` y `guardia` (ejemplo en `~/.claude/flujos/config.ejemplo.md`).
+`.claude/implementador.md` (reglas del proyecto) manda sobre este archivo y el `CLAUDE.md` del proyecto rige para todos los agentes; sin ellos, estos valores y lo que se lea del repo. `.claude/implementador.json` (opcional): `verificar` y `guardia` (ejemplo en `~/.claude/flujos/config.ejemplo.md`).
 
 ## 1. Herramientas
 
@@ -6,13 +6,13 @@ Desde la raíz del repo, con Bash (`~` = carpeta del usuario):
 
 | Comando | Qué hace |
 |---|---|
-| `node ~/.claude/flujos/estado.mjs` | Preflight: rama, sucios previos, `BASE_GLOBAL`, `DESDE_GLOBAL`, reglas y config, pasos de verificación, guardia, fork mode |
+| `node ~/.claude/flujos/estado.mjs` | Preflight: rama, sucios previos, `BASE_GLOBAL`, `DESDE_GLOBAL`, reglas y config, pasos de verificación, guardia |
 | `node ~/.claude/flujos/estado.mjs --base` | Foto nueva: `BASE=<sha> DESDE=<iso>` |
-| `node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <DESDE> --permitidos "<a,b>"` | Qué cambió desde la foto y qué cae fuera (las rutas de `generados` salen con `~` y no cuentan). Termina en `ALCANCE: OK` o `ALCANCE: FUERA (n)` |
+| `node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <DESDE> --permitidos "<a,b>"` | Qué cambió desde la foto y qué cae fuera. Termina en `ALCANCE: OK` o `ALCANCE: FUERA (n)` |
 | `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<a,b>" [-- <rutas>]` | Diff desde la foto (solo el revisor) |
-| `node ~/.claude/flujos/verificar.mjs [--rapido]` | Pasos de verificación (config o detectados). `--rapido`: solo los de `verificarRapido` (sin la clave, todos). Termina en `RESULTADO: VERDE`, `RESULTADO: ROJO (…)` o `RESULTADO: SIN PASOS` |
+| `node ~/.claude/flujos/verificar.mjs` | Pasos de verificación (config o detectados). Termina en `RESULTADO: VERDE`, `RESULTADO: ROJO (…)` o `RESULTADO: SIN PASOS` |
 
-Si estado.mjs o verificar.mjs fallan por un error propio (`ERROR:` o excepción), no por tests rojos, detente y avisa; un `ERROR:` de `--rapido` (lo corre el orquestador antes de cada revisor) no detiene el flujo: corre la completa y anótalo en `VERIFICACIÓN DEL ORQUESTADOR`. Sin git no hay flujo: dilo y termina.
+Si estado.mjs o verificar.mjs fallan por un error propio (`ERROR:` o excepción), no por tests rojos, detente y avisa. Sin git no hay flujo: dilo y termina.
 
 **`SIN PASOS`:** en el preflight, pregunta con AskUserQuestion qué comandos verifican el proyecto (o seguir solo con revisión) y sugiere dejarlos en `.claude/implementador.json` (no lo escribes tú). El cierre dice «sin verificación automática».
 
@@ -56,7 +56,7 @@ Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea (<c> críticas) · rev
 ```
 
 - La Clasificación la hace el planificador, con §2 y las reglas del proyecto; ante la duda, CRÍTICO.
-- `Crítica: sí` si la subtarea toca algo de un criterio de §2 o de las reglas del proyecto; `no` solo si todo lo que toca es UI, textos, estilos o documentación sin criterio. Ante la duda, `sí`. Con Clasificación «sin criterios», todas `no`. Un plan sin el campo (p. ej. en `continuar`) se trata como si todas fueran `Crítica: sí`.
+- `Crítica: sí` si la subtarea toca algo de un criterio de §2 o de las reglas del proyecto; `no` solo si todo lo que toca es UI, textos, estilos o documentación sin criterio. Ante la duda, `sí`. Con Clasificación «sin criterios», todas `no`.
 - Subtareas pequeñas: ≤ 4 archivos de código más sus tests, cada una verificable sola, en orden de dependencia (migración → tipos → servidor → UI → docs).
 - Lo que no está en «Archivos permitidos» no se toca. Las migraciones ya versionadas no se editan: se crea una nueva con la convención de nombres del proyecto. Si hay migración, la Reversión aclara que, aplicada a una base viva, revertirla exige otra migración.
 - Sin tests: la lógica de negocio los escribe primero, con la infraestructura de tests del proyecto. Lo que no tiene infraestructura de tests (típicamente la UI) se verifica con typecheck y build, y la verificación visual va a «Queda para ti».
@@ -88,7 +88,7 @@ PEDIDO: <literal del usuario>
 BUSCA: <2–5 preguntas concretas de su área: archivos, tests, acoplamientos, datos>
 PISTAS: <archivos o símbolos ya conocidos | ninguna>
 ```
-De 1 a 5, uno por área sin solapar (parte por carpeta o capa, no por pregunta); uno solo si el pedido es de una sola área, nombra los archivos o no tiene división natural. Todas las llamadas en el **mismo mensaje**, cada una con su ÁREA y sus BUSCA, sin repetir las de otro. En fork mode, uno.
+De 1 a 5, uno por área sin solapar (parte por carpeta o capa, no por pregunta); uno solo si el pedido es de una sola área, nombra los archivos o no tiene división natural. Todas las llamadas en el **mismo mensaje**, cada una con su ÁREA y sus BUSCA, sin repetir las de otro.
 
 **Planificador** (siempre; clasifica y planifica) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
 ```
@@ -133,14 +133,13 @@ BASE: <sha>
 PERMITIDOS: "<lista separada por comas>"
 SUCIOS PREVIOS (no son del flujo): <lista | ninguno>
 VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cuenta)
-VERIFICAR: completa | rápida
-VERIFICACIÓN DEL ORQUESTADOR: <completa | rápida> · <pasos que corrió> · <línea RESULTADO>
+VERIFICACIÓN DEL ORQUESTADOR: <pasos que corrió> · <línea RESULTADO>
 REVISIÓN ANTERIOR: (opcional)
 PROBLEMAS: <los PROBLEMAS literales del reporte previo de este mismo revisor>
 CRITERIOS: <las líneas CRITERIOS literales de ese reporte>
 Confirma esos puntos y que la corrección no rompió nada; no repitas lo ya aprobado.
 ```
-`VERIFICAR`: `completa` si la subtarea es `Crítica: sí` o no trae el campo; `rápida` si es `no`; queda como respaldo. `VERIFICACIÓN DEL ORQUESTADOR` va siempre que corriste `verificar.mjs` tras el ejecutor (§6); falta solo en `continuar` con un despacho viejo. `REVISIÓN ANTERIOR` va solo cuando ese mismo revisor vuelve a revisar tras un RECHAZADO: es su propio reporte, nunca algo del ejecutor. Las correcciones van al mismo revisor (tabla de tu skill) con el `VERIFICAR` de su subtarea.
+`VERIFICACIÓN DEL ORQUESTADOR` va siempre: es tu `verificar.mjs` tras el ejecutor (§6). `REVISIÓN ANTERIOR` va solo cuando ese mismo revisor vuelve a revisar tras un RECHAZADO: es su propio reporte, nunca algo del ejecutor. Las correcciones van al mismo revisor (tabla de tu skill).
 
 **Revisión final** (siempre, también con una sola subtarea o con todas `Crítica: no`) — un solo revisor, sin overrides (Opus high), como el revisor de arriba, con:
 - `QUÉ REVISAR: cambio completo` si hay una sola subtarea, o `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)` con 2 o más.
@@ -150,7 +149,6 @@ Confirma esos puntos y que la corrección no rompió nada; no repitas lo ya apro
 - En sus ciclos, el bloque opcional `REVISIÓN ANTERIOR:` (como en el revisor) con los PROBLEMAS y CRITERIOS literales de su reporte previo.
 - Además:
 ```
-VERIFICAR: completa
 CRÍTICO: <criterios #n de la Clasificación y por qué, para mirarlos primero | ninguno>
 ASPECTOS: <los que aplican de la tabla de abajo, separados por comas>
 YA REVISADO:
@@ -174,7 +172,7 @@ Qué mira cada aspecto está en el agente `revisor`. «Solo texto»: todos los a
   - `ALCANCE: FUERA` → AskUserQuestion: «Aceptar» (amplía el alcance) / «Restaurar» (corrección que deja esos archivos como en la base) / «Detener».
   - `ESTADO: BLOQUEADO` (con o sin `NECESITA_ALCANCE:`) → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / detener. No cuenta como ciclo.
   - `ESTADO: FALLA`, reporte sin `RESULTADO: VERDE` (salvo proyecto `SIN PASOS`) o salida parcial (tope de turnos) → cuenta como ciclo: Corrección con la falla. No mandes al revisor algo rojo.
-  - Sin FUERA ni BLOQUEADO, corre tu `verificar.mjs`: `--rapido` si la subtarea es `Crítica: no`; la completa si es `sí`, si falta el campo o si la corrección viene de la revisión final (en ese caso actualiza `VERIFICACIÓN FINAL`). Un ROJO nuevo (que no estuviera ya en la verificación inicial) cuenta como ciclo: Corrección con la falla y sin revisor. Con VERDE o SIN PASOS va el revisor, con esa línea en `VERIFICACIÓN DEL ORQUESTADOR`.
+  - Sin FUERA ni BLOQUEADO, corre tu `verificar.mjs` (si la corrección viene de la revisión final, actualiza `VERIFICACIÓN FINAL`). Un ROJO nuevo (que no estuviera ya en la verificación inicial) cuenta como ciclo: Corrección con la falla y sin revisor. Con VERDE o SIN PASOS va el revisor, con esa línea en `VERIFICACIÓN DEL ORQUESTADOR`.
 - **Revisor:** APROBADO → anota su línea para `YA REVISADO` (sus OBSERVACIONES en ≤ 12 palabras) y sigue. RECHAZADO → Corrección con la lista PROBLEMAS y revisión de nuevo con su `REVISIÓN ANTERIOR`; un ciclo = corrección + revisión. Sin VEREDICTO claro = RECHAZADO.
 - **Revisión final:** RECHAZADO → Corrección con sus PROBLEMAS y revisión final de nuevo con el mismo despacho más `REVISIÓN ANTERIOR` (un ciclo). Hasta 2 ciclos si la Clasificación del plan es CRÍTICO y 1 si es «sin criterios». Si falla o vuelve sin VEREDICTO claro, se relanza una vez; si sigue igual, cuenta como RECHAZADO.
 - **Ciclos agotados** → DETENIDO: no despachas más y cierras.
@@ -195,9 +193,3 @@ Consumo: contexto final por rol <…> (subagent_tokens: no es gasto) · gasto re
 ```
 
 `subagent_tokens` es solo el contexto del último turno de cada agente: no lo sumes ni lo presentes como consumo.
-
-## 8. `continuar`
-
-`continuar` entra por /implementador y sigue en esta misma skill.
-
-Con el pedido `continuar`: no explores ni planifiques de nuevo, y la BASE que imprima un estado.mjs nuevo NO es la base global. Busca en la conversación el último plan, si fue aprobado, `BASE_GLOBAL`/`DESDE_GLOBAL` y la BASE y el estado de cada subtarea; mira el árbol con `estado.mjs --cambios` contra la base global. Plan sin aprobar → pide aprobación. Retoma en la primera subtarea no aprobada, con los ciclos que le queden. Sin plan en la conversación: dilo y termina.

@@ -154,18 +154,14 @@ export function configDe(raiz) {
   const crudo = leerJson(archivo)
   const g = crudo?.guardia ?? {}
   const pkg = leerJson(path.join(raiz, 'package.json'))
-  const externos = { ...EXTERNOS_BASE, ...(g.externos ?? {}) }
-  for (const p of g.permitir ?? []) delete externos[String(p).toLowerCase()]
   const config = {
     archivo: crudo ? archivo : null,
     invalido: fs.existsSync(archivo) && !crudo,
     verificar: Array.isArray(crudo?.verificar) ? crudo.verificar : null,
-    verificarRapido: Array.isArray(crudo?.verificarRapido) && crudo.verificarRapido.length ? crudo.verificarRapido.map(String) : null,
-    generados: Array.isArray(crudo?.generados) ? crudo.generados.map(String) : [],
     protegidos: { ...PROTEGIDOS_BASE, ...(g.protegidos ?? {}) },
     secretos: (g.secretos ?? []).map(String),
     inmutables: [...INMUTABLES_BASE, ...(g.inmutables ?? [])],
-    externos,
+    externos: { ...EXTERNOS_BASE, ...(g.externos ?? {}) },
     scriptsNegados: [...SCRIPTS_NEGADOS_BASE, ...(g.scriptsNegados ?? [])],
     scriptsPermitidos: Array.isArray(g.scriptsPermitidos) ? g.scriptsPermitidos.map(String) : null,
     nodeNegado: (g.nodeNegado ?? []).map(String),
