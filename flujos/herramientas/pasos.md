@@ -20,6 +20,6 @@
 - Con 2 o más subtareas: `estado.mjs --base --paso 5` → `ejecutor` → `estado.mjs --cambios … --paso 5` → tu `verificar.mjs` → `revisor` (el de tu tabla según su `Crítica`; comun.md §5 y §6), también en las correcciones → hasta **2 ciclos**; agotados → DETENIDO.
 - Con una sola subtarea: `estado.mjs --base --paso 5` → `ejecutor` → `estado.mjs --cambios … --paso 6` → tu `verificar.mjs`, que ya es la verificación final (no se repite en el paso 6) → revisión final con `VERIFICACIÓN FINAL`, sin revisor por subtarea. Hasta **2 ciclos** de ejecutor/verificación; sus correcciones repiten ese tramo (`--cambios … --paso 6` → `verificar.mjs` → revisión final).
 
-**6. Verificación final** — tu `verificar.mjs` (con una sola subtarea ya lo corriste en el paso 5). ROJO → 1 ciclo (corrección + revisión). Después, siempre, revisión final (comun.md §5), con los ciclos de comun.md §6. Las correcciones de este paso llevan `estado.mjs --cambios … --paso 6`.
+**6. Verificación final** — tu `verificar.mjs` (con una sola subtarea ya lo corriste en el paso 5). Con 2 o más, córrelo siempre después del último revisor, aunque ya tengas un VERDE previo: es la señal con la que el panel marca este paso. ROJO → 1 ciclo (corrección + revisión). Después, siempre, revisión final (comun.md §5), con los ciclos de comun.md §6. Las correcciones de este paso llevan `estado.mjs --cambios … --paso 6`.
 
 **7. Cierre** — comun.md §7 (`estado.mjs --cambios … --paso 7`).

@@ -30,7 +30,7 @@ La Clasificación (criterios #1–#10) y el formato completo del plan están en 
 
 ## 4. Reglas del orquestador
 
-- **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
+- **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Cada estado.mjs y cada verificar.mjs va en su propia llamada a Bash, nunca encadenados (`&&`, `;`, `|`) entre sí ni con otro comando: el panel lee una sola señal por llamada y pierde la otra. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
 - **Cada llamada a Agent lleva `run_in_background: false`** (el resultado vuelve en este turno) y nunca `isolation`. `model` y `effort`: exactamente los de la tabla de tu skill.
 - Solo los agentes `explorador`, `planificador`, `revisor-plan`, `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración (hasta 5 exploradores en paralelo, solo en el caso de §5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5), nunca la conversación ni el razonamiento de otro agente. Ningún revisor recibe reportes de ejecutores ni de otros revisores: el revisor por subtarea recibe `VERIFICACIÓN DEL ORQUESTADOR` y la revisión final el digest `YA REVISADO` (§6) y `VERIFICACIÓN FINAL`; ninguno repite verificar.mjs. En sus ciclos, cada uno recibe su propia `REVISIÓN ANTERIOR`.
