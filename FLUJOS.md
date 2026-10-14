@@ -17,7 +17,7 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 | Orquestador | Sonnet high (frontmatter de la skill `implementador`) |
 | Explorador | Haiku high, uno por defecto; hasta 5 en paralelo con áreas independientes y grandes |
 | Planificador | Opus high; clasifica y planifica |
-| Revisor del plan | Sonnet medium; se omite con «sin criterios» y 1–2 subtareas (lo suple el orquestador) |
+| Revisor del plan | Sonnet medium; se omite con «sin criterios», ninguna subtarea crítica y 1–2 subtareas (lo suple el orquestador) |
 | Ejecutor | Sonnet high |
 | Revisor por subtarea | Sonnet high si `Crítica: sí`; Sonnet medium si `Crítica: no` |
 | Revisión final | Opus high, siempre (también con una sola subtarea) |

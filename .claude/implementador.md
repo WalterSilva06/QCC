@@ -14,7 +14,7 @@ CRÍTICO, además de lo que diga `comun.md` §2: una subtarea que toca alguna de
 | `panel-uso/hooks/register.tsx` | #7 | hooks que envuelven `next` (`tool.call`, `turn.step`, `turn.complete`, `skill.prompt`): un fallo frena una petición al modelo o una herramienta |
 
 - **#6 además:** cualquier cambio en la forma de un atom que sobrevive a `/reload-plugins` (`flujo`, `filasExploradores`, y los tipos de `panel-uso/types/index.d.ts`). Un flujo guardado con la forma anterior sigue vivo tras recargar.
-- **Excepción en `flujos/**`:** una subtarea cuyos archivos permitidos son solo `.md` de `flujos/agents/` o `flujos/herramientas/config.ejemplo.md` es `Crítica: no` si no cambia su frontmatter (herramientas, modelo) ni las líneas `!` de una skill; ante la duda, `sí`. Quedan siempre `Crítica: sí`: `comun.md`, `pasos.md`, `SKILL.md` (tabla de overrides y líneas `!`), cualquier `.mjs`, `.claude/implementador.md` y `.claude/implementador.json`. La Clasificación del plan sigue citando #1 y #5 (el revisor del plan corre y la revisión final Opus tiene 2 ciclos).
+- **Excepción en `flujos/**`:** una subtarea cuyos archivos permitidos son solo `.md` de `flujos/agents/` o `flujos/herramientas/config.ejemplo.md` es `Crítica: no` si no cambia su frontmatter (herramientas, modelo); ante la duda, `sí`. Quedan siempre `Crítica: sí`: `comun.md`, `pasos.md`, `SKILL.md` (tabla de overrides y líneas `!`), cualquier `.mjs`, `.claude/implementador.md` y `.claude/implementador.json`. La Clasificación del plan sigue citando #1 y #5 (el revisor del plan corre y la revisión final Opus tiene 2 ciclos).
 
 Sin criterios: textos, colores y anchos del panel, funciones puras de `formato.ts` y `semana.ts` con tests, FLUJOS.md, MODS.md, README, AGENTS.md.
 
