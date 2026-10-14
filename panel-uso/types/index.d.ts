@@ -136,6 +136,16 @@ export type Flujo = {
   tiempos: Record<number, number>
   /** Ms esperando al usuario (`AskUserQuestion`) por índice de paso, sin la espera abierta; no está en `tiempos`. Si falta, 0. */
   esperaUsuario?: Record<number, number>
+  /** Tokens por índice de paso, `[total, salida]`: suma del usage de cada petición (hilo principal y subagentes) que respondió con el flujo en curso en ese paso. Falta si no hubo ninguna; falta el paso sin gasto. */
+  gasto?: Record<number, [number, number]>
+  /**
+   * Un registro por explorador, por `agentId`, en orden de primera aparición. `descripcion` es la que se le dio al lanzarlo; `desde` la hora (ms) del lanzamiento;
+   * `ms` su duración final; `gasto` el total de los cuatro campos del usage de sus `turn.step` (nunca `totalTokens`); `llamada` el `tool_use_id`
+   * del `Agent` que lo lanzó (falta en los registros de la 0.17.0), para cerrar el suyo si vuelve sin `agentId`;
+   * `config` los modelos y esfuerzos observados de sus peticiones («Haiku 5.5 high»), en orden de primera aparición y sin repetir.
+   * Cada campo falta hasta que se conoce. Si falta el campo entero (atom 0.16.0 o anterior) o no es una lista, no hay detalle por explorador.
+   */
+  detalleExploradores?: { id: string; descripcion?: string; desde?: number; ms?: number; gasto?: number; llamada?: string; config?: string[] }[]
   /** Hora (ms) en que empezó la espera abierta al usuario; `null` o ausente si no hay. */
   preguntaDesde?: number | null
   /** Hora (ms) en que terminó; `null` mientras está en curso. */
@@ -146,6 +156,13 @@ export type Flujo = {
   consumo?: FilaSemana[]
   /** Modelo y esfuerzo del hilo principal (el orquestador) en su última petición durante el flujo, p. ej. «Opus 5.5 high». Falta hasta la primera. */
   orquestador?: string
+  /** `subagent_type` del último `Agent` que lanzó el hilo principal durante el flujo; sirve para atribuir las peticiones de los subagentes. Falta hasta el primero. */
+  ultimoAgente?: string
+  /**
+   * Modelo y esfuerzo observados de cada agente, por índice de paso y por agente (`planificador`, `revisor-plan`, `ejecutor`, `revisor`, `explorador`),
+   * en orden de primera aparición y sin repetir: `{ 5: { revisor: ['Sonnet 5.5 high', 'Sonnet 5.5 medium'] } }`. Solo se escribe lo observado: nunca `{}` ni `[]`.
+   */
+  configs?: Record<number, Record<string, string[]>>
 }
 
 declare module 'claude-code' {

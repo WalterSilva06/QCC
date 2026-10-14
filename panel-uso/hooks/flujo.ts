@@ -1,8 +1,9 @@
 // Flujo `/implementador` en curso. Puro: sin `$`, para poder probarlo solo.
 
 import type { FilaSemana, Flujo, Semana } from '../types'
-import { duracion } from './formato'
+import { duracion, tokens, totalConSalida } from './formato'
 import { familia, idDeFila, nombreEsfuerzo } from './semana'
+import type { Uso } from './semana'
 
 /** Lo que una herramienta o un agente hace y que mueve el flujo de paso. */
 export type Senal =
@@ -21,8 +22,26 @@ export type Senal =
  * `exploradores` solo está en «Exploración»: es el total del flujo; falta si es 0 o si el nodo está pendiente.
  * `veces` son los lanzamientos del agente propio del paso: «Plan» y «Ejecución». `revisiones` son los revisores lanzados con el flujo
  * en ese paso. Los dos faltan si son menos de 1 o si el nodo está pendiente.
+ * `gasto` son los tokens `[total, salida]` del paso (`Flujo.gasto`); falta si no hubo, si el nodo está pendiente y en «Terminado».
+ * `porExplorador` solo está en «Exploración»: un registro por explorador, en orden de lanzamiento. Falta si no se conoce la descripción
+ * de todos los lanzados (o el flujo no trae `detalleExploradores`); entonces el paso dibuja una sola línea con el total.
+ * `configs` son los modelos y esfuerzos observados del paso, por agente (`Flujo.configs`), solo con textos no vacíos; falta si no hay ninguno o si el nodo está pendiente.
  */
-export type Nodo = { etiqueta: string; estado: 'pasado' | 'actual' | 'pendiente'; ms?: number; exploradores?: number; veces?: number; revisiones?: number; esperaUsuario?: number }
+export type Nodo = {
+  etiqueta: string
+  estado: 'pasado' | 'actual' | 'pendiente'
+  ms?: number
+  exploradores?: number
+  veces?: number
+  revisiones?: number
+  esperaUsuario?: number
+  gasto?: [number, number]
+  porExplorador?: PorExplorador[]
+  configs?: Record<string, string[]>
+}
+
+/** Un explorador de la línea de «Exploración»: su descripción, su duración (ms), su gasto total en tokens y los modelos y esfuerzos observados; cada dato falta si no se conoce. */
+export type PorExplorador = { descripcion: string; ms?: number; gasto?: number; config?: string[] }
 
 /** Los pasos de cada flujo, en orden. */
 export const PASOS: Record<Flujo['nombre'], readonly string[]> = {
@@ -421,6 +440,244 @@ export function marcarOrquestador(actual: Flujo | null, nombre: string): Flujo |
 }
 
 /**
+ * Anota el `subagent_type` del último `Agent` que lanzó el hilo principal, para atribuir después las peticiones de los subagentes.
+ * Va aparte de `avanzar`. Sin flujo, terminado, con el nombre vacío o si ya era ese, devuelve la misma referencia.
+ */
+export function marcarAgente(actual: Flujo | null, nombre: string): Flujo | null {
+  const agente = typeof nombre === 'string' ? nombre.trim() : ''
+
+  if (actual === null || actual.estado !== 'en curso' || agente === '' || actual.ultimoAgente === agente) return actual
+
+  return { ...actual, ultimoAgente: agente }
+}
+
+/** `n` si es un número finito; si no, 0. */
+function cuenta(n: unknown): number {
+  return typeof n === 'number' && Number.isFinite(n) ? n : 0
+}
+
+/**
+ * Suma el uso de una petición al gasto del paso en que está el flujo: `[total, salida]`, con el total de los cuatro campos.
+ * Un campo que no es un número finito cuenta 0. Sin flujo, terminado, sin uso o con total 0, devuelve la misma referencia.
+ * Nunca muta `actual` ni su `gasto`.
+ */
+export function sumarGasto(actual: Flujo | null, uso: Uso | null | undefined): Flujo | null {
+  if (actual === null || actual.estado !== 'en curso' || uso === null || uso === undefined) return actual
+
+  const salida = cuenta(uso.output_tokens)
+  const total = cuenta(uso.input_tokens) + salida + cuenta(uso.cache_read_input_tokens) + cuenta(uso.cache_creation_input_tokens)
+
+  if (total <= 0) return actual
+
+  const [antes, antesSalida] = actual.gasto?.[actual.paso] ?? [0, 0]
+
+  return { ...actual, gasto: { ...actual.gasto, [actual.paso]: [antes + total, antesSalida + salida] } }
+}
+
+type Explorador = NonNullable<Flujo['detalleExploradores']>[number]
+
+/**
+ * Lo que se sabe de un explorador al anotarlo: `hasta` es la hora (ms) en que volvió, para sacar `ms` si hay `desde`;
+ * `llamada` es el `tool_use_id` del `Agent` que lo lanzó.
+ */
+export type DatoExplorador = { descripcion?: string; desde?: number; ms?: number; hasta?: number; llamada?: string }
+
+/** `n` si es un número finito. */
+function finito(n: unknown): n is number {
+  return typeof n === 'number' && Number.isFinite(n)
+}
+
+/** Los registros por explorador de `f`; vacío si el campo falta o no es una lista (atom 0.16.0 o anterior), sin los elementos mal formados. */
+function detalleDe(f: Flujo): Explorador[] {
+  const lista: unknown = f.detalleExploradores
+
+  if (!Array.isArray(lista)) return []
+
+  return lista.filter((e): e is Explorador => typeof e === 'object' && e !== null && typeof (e as { id?: unknown }).id === 'string')
+}
+
+/** `f` con `despues` en lugar de `previo` (o al final si `previo` no existía); el mismo `f` si `despues` no cambia nada. */
+function guardarExplorador(f: Flujo, previo: Explorador | undefined, despues: Explorador): Flujo {
+  const antes: Explorador = previo ?? { id: despues.id }
+
+  if (!(Object.keys(despues) as (keyof Explorador)[]).some(k => despues[k] !== antes[k])) return f
+
+  const lista = detalleDe(f)
+
+  return { ...f, detalleExploradores: previo === undefined ? [...lista, despues] : lista.map(e => (e === previo ? despues : e)) }
+}
+
+/**
+ * Anota lo que se sabe del explorador `id` (su `agentId`), fusionándolo con lo que ya había; crea el registro si falta, en orden de aparición.
+ * `descripcion` va sin espacios en los bordes y se ignora si queda vacía; `desde` y `llamada` no pisan uno ya anotado (una `llamada` vacía
+ * se ignora); `ms` vale si es finito y no negativo. Sin `ms`, con `hasta` y con `desde` ya conocido, `ms` es `hasta − desde` (nunca negativo).
+ * Sin flujo, terminado, con `id` vacío o sin nada nuevo que anotar, devuelve la misma referencia. Nunca muta `f`.
+ */
+export function anotarExplorador(f: Flujo | null, id: string, dato: DatoExplorador): Flujo | null {
+  if (f === null || f.estado !== 'en curso' || id === '') return f
+
+  const previo = detalleDe(f).find(e => e.id === id)
+  const antes: Explorador = previo ?? { id }
+  const descripcion = typeof dato.descripcion === 'string' ? dato.descripcion.trim() : ''
+  const desde = antes.desde ?? (finito(dato.desde) ? dato.desde : undefined)
+  const llamada = typeof dato.llamada === 'string' && dato.llamada !== '' ? dato.llamada : undefined
+  const ms = finito(dato.ms) && dato.ms >= 0 ? dato.ms : desde !== undefined && finito(dato.hasta) ? Math.max(dato.hasta - desde, 0) : undefined
+
+  return guardarExplorador(f, previo, {
+    ...antes,
+    ...(descripcion !== '' ? { descripcion } : {}),
+    ...(antes.desde === undefined && desde !== undefined ? { desde } : {}),
+    ...(antes.llamada === undefined && llamada !== undefined ? { llamada } : {}),
+    ...(ms !== undefined ? { ms } : {}),
+  })
+}
+
+/**
+ * Fija el tiempo de un explorador cuyo `Agent` terminó sin dar su `agentId` (falló o volvió sin él): el registro de esa `llamada`
+ * (`tool_use_id`) recibe `ms = hasta − desde` (nunca negativo), si tiene `desde` y aún no tiene `ms`. Así su cifra no sigue creciendo.
+ * Si ningún registro tiene esa `llamada` (o no se pasa), toma el primero abierto sin `llamada` (de un atom anterior) con la `description`
+ * de `args`: nunca uno de otra llamada, aunque comparta la descripción.
+ * Sin flujo, terminado, sin ese registro o con `hasta` no finito, devuelve la misma referencia. Nunca muta `f`.
+ */
+export function cerrarExploradorSinId(f: Flujo | null, args: unknown, hasta: number, llamada?: string): Flujo | null {
+  if (f === null || f.estado !== 'en curso' || !finito(hasta)) return f
+
+  const lista = detalleDe(f)
+  const descripcion = texto(args, 'description').trim()
+  const propio = llamada === undefined || llamada === '' ? undefined : lista.find(e => e.llamada === llamada)
+  const previo = propio ?? (descripcion === '' ? undefined : lista.find(e => e.llamada === undefined && e.descripcion === descripcion && !finito(e.ms) && finito(e.desde)))
+
+  if (previo === undefined || finito(previo.ms) || !finito(previo.desde)) return f
+
+  return guardarExplorador(f, previo, { ...previo, ms: Math.max(hasta - previo.desde, 0) })
+}
+
+/**
+ * Suma el uso de una petición de un subagente al gasto de su registro por explorador: el total de los cuatro campos (nunca `totalTokens`).
+ * Solo cuenta si `agentId` está definido y hay exploradores en vuelo o ese id ya tiene registro (lo crea si falta).
+ * Sin flujo, terminado, sin uso, con total 0 o sin nada que sumar, devuelve la misma referencia. Nunca muta `f`.
+ */
+export function sumarGastoDeExplorador(f: Flujo | null, agentId: string | null | undefined, uso: Uso | null | undefined): Flujo | null {
+  if (f === null || f.estado !== 'en curso' || uso === null || uso === undefined || agentId === null || agentId === undefined || agentId === '') return f
+
+  const total = cuenta(uso.input_tokens) + cuenta(uso.output_tokens) + cuenta(uso.cache_read_input_tokens) + cuenta(uso.cache_creation_input_tokens)
+
+  if (total <= 0) return f
+
+  const previo = detalleDe(f).find(e => e.id === agentId)
+
+  if (previo === undefined && (f.exploradores ?? 0) < 1) return f
+
+  const antes: Explorador = previo ?? { id: agentId }
+
+  return guardarExplorador(f, previo, { ...antes, gasto: (antes.gasto ?? 0) + total })
+}
+
+/** `x` si es un objeto (no una lista); vacío si no (atom roto). */
+function objetoDe(x: unknown): Record<string, unknown> {
+  return typeof x === 'object' && x !== null && !Array.isArray(x) ? (x as Record<string, unknown>) : {}
+}
+
+/** Los textos no vacíos de `x`; vacío si no es una lista. */
+function textosValidos(x: unknown): string[] {
+  return Array.isArray(x) ? x.filter((e): e is string => typeof e === 'string' && e.trim() !== '') : []
+}
+
+/** `x` si es una lista de solo textos; si no (campo roto), vacía. */
+function listaDeTextos(x: unknown): string[] {
+  return Array.isArray(x) && x.every(e => typeof e === 'string') ? (x as string[]) : []
+}
+
+/** `f` con `config` anotada para `agente` en el paso actual (al final de su lista); el mismo `f` si ya estaba. */
+function anotarEnPaso(f: Flujo, agente: string, config: string): Flujo {
+  const porPaso = objetoDe(f.configs)
+  const delPaso = objetoDe(porPaso[f.paso])
+  const lista = listaDeTextos(delPaso[agente])
+
+  if (lista.includes(config)) return f
+
+  return { ...f, configs: { ...porPaso, [f.paso]: { ...delPaso, [agente]: [...lista, config] } } as NonNullable<Flujo['configs']> }
+}
+
+/**
+ * Anota el modelo y esfuerzo (`nombre`, p. ej. «Sonnet 5.5 high») de una petición del subagente `agentId`, según el rol que tiene en vuelo, en este orden:
+ * `explorador` si `agentId` ya tiene registro o hay exploradores en vuelo (en su registro, que crea si falta, y en `configs`); `revisor` si hay revisores
+ * en vuelo; el `ultimoAgente` si es `planificador`, `revisor-plan` o `ejecutor`. Va a `configs` del paso actual, sin repetir y en orden de aparición.
+ * Sin flujo, terminado, con `agentId` o `nombre` vacíos, sin rol o sin nada nuevo que anotar, devuelve la misma referencia. Nunca muta `f`.
+ */
+export function anotarConfig(f: Flujo | null, agentId: string | null | undefined, nombre: string): Flujo | null {
+  if (f === null || f.estado !== 'en curso' || typeof agentId !== 'string' || agentId === '') return f
+
+  const config = typeof nombre === 'string' ? nombre.trim() : ''
+
+  if (config === '') return f
+
+  const previo = detalleDe(f).find(e => e.id === agentId)
+
+  if (previo !== undefined || (f.exploradores ?? 0) > 0) {
+    const propias = listaDeTextos(previo?.config)
+    const conRegistro = propias.includes(config) ? f : guardarExplorador(f, previo, { ...(previo ?? { id: agentId }), config: [...propias, config] })
+
+    return anotarEnPaso(conRegistro, 'explorador', config)
+  }
+
+  if ((f.revisores ?? 0) > 0) return anotarEnPaso(f, 'revisor', config)
+
+  const agente: unknown = f.ultimoAgente
+
+  return agente === 'planificador' || agente === 'revisor-plan' || agente === 'ejecutor' ? anotarEnPaso(f, agente, config) : f
+}
+
+/**
+ * Del `Agent` que terminó: el `agentId` y la duración (`totalDurationMs`) de su resultado y la `description` de sus argumentos.
+ * `null` si el resultado no trae un `agentId` de texto no vacío; no lanza con un resultado de cualquier forma. Cada campo falta si no es válido.
+ */
+export function datosDeExplorador(args: unknown, resultado: unknown): { id: string; descripcion?: string; ms?: number } | null {
+  if (typeof resultado !== 'object' || resultado === null) return null
+
+  const { agentId, totalDurationMs } = resultado as { agentId?: unknown; totalDurationMs?: unknown }
+
+  if (typeof agentId !== 'string' || agentId.trim() === '') return null
+
+  const descripcion = texto(args, 'description').trim()
+
+  return {
+    id: agentId,
+    ...(descripcion !== '' ? { descripcion } : {}),
+    ...(finito(totalDurationMs) && totalDurationMs >= 0 ? { ms: totalDurationMs } : {}),
+  }
+}
+
+/**
+ * Un registro por explorador para «Exploración», en orden de lanzamiento. Solo si todos los lanzados (`lanzados`) tienen descripción;
+ * `undefined` si no, o si el flujo no trae `detalleExploradores` o no es una lista. Con la hora `t`, el explorador sin `ms` pero con `desde` lleva su tiempo en curso.
+ */
+function porExploradorDe(f: Flujo, lanzados: number, t?: number): PorExplorador[] | undefined {
+  const descritos = detalleDe(f).filter(e => typeof e.descripcion === 'string' && e.descripcion !== '')
+
+  if (lanzados < 1 || descritos.length < lanzados) return undefined
+
+  return descritos.map(e => {
+    const ms = finito(e.ms) && e.ms >= 0 ? e.ms : t !== undefined && finito(e.desde) ? Math.max((f.fin ?? t) - e.desde, 0) : undefined
+    const gasto = cuenta(e.gasto)
+    const config = textosValidos(e.config)
+
+    return { descripcion: e.descripcion as string, ...(ms !== undefined ? { ms } : {}), ...(gasto > 0 ? { gasto } : {}), ...(config.length > 0 ? { config } : {}) }
+  })
+}
+
+/**
+ * Lo observado en el paso `i` de `f`, por agente, solo con textos no vacíos; `undefined` si no hay nada.
+ * Tolera un `configs` o un paso mal formados (atom roto): cuentan como vacíos.
+ */
+function configsDelPaso(f: Flujo, i: number): Record<string, string[]> | undefined {
+  const pares = Object.entries(objetoDe(objetoDe(f.configs)[i])).map(([agente, lista]): [string, string[]] => [agente, textosValidos(lista)])
+  const con = pares.filter(([, lista]) => lista.length > 0)
+
+  return con.length === 0 ? undefined : Object.fromEntries(con)
+}
+
+/**
  * Los pasos del flujo más un último nodo «Terminado», cada uno pasado, actual o pendiente.
  * Con la hora `t` (ms) cada nodo trae su `ms` (trabajo, sin la espera al usuario) y, si esperó, su `esperaUsuario`;
  * sin ella, ninguno. «Terminado» lleva el trabajo total y la espera total del flujo.
@@ -440,6 +697,18 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
 
       if (veces >= 1) nodo.veces = veces
       if (revisiones >= 1) nodo.revisiones = revisiones
+
+      const porExplorador = etiqueta === 'Exploración' ? porExploradorDe(f, lanzados, t) : undefined
+
+      if (porExplorador !== undefined) nodo.porExplorador = porExplorador
+
+      const configs = configsDelPaso(f, i)
+
+      if (configs !== undefined) nodo.configs = configs
+
+      const gasto = f.gasto?.[i]
+
+      if (gasto !== undefined && cuenta(gasto[0]) > 0) nodo.gasto = [cuenta(gasto[0]), cuenta(gasto[1])]
     }
 
     if (t === undefined || estado === 'pendiente') return nodo
@@ -487,41 +756,135 @@ function lineaDeAgente(a: (typeof AGENTE_DE_PASO)[keyof typeof AGENTE_DE_PASO]):
   return `${a.agente} · ${a.config}`
 }
 
-/**
- * Las líneas de agente de un nodo, sin sangría: quién trabaja en ese paso y con qué modelo.
- * Vacío para un nodo pendiente, para «Aprobación» y «Terminado…», y cuando el paso no lanzó ese agente.
- * `orquestador` es el nombre del modelo del hilo principal; sin él (o sin `ms`) no hay línea en «Preflight» y «Cierre».
- */
-export function detallePaso(n: Nodo, orquestador?: string): string[] {
-  if (n.estado === 'pendiente') return []
+/** `descripcion` sin el prefijo «Explorar » (con o sin mayúsculas, y el «:» o los espacios que queden pegados); igual si no lo tiene o si no quedaría nada. */
+function sinPrefijoExplorar(descripcion: string): string {
+  const resto = descripcion.trim().replace(/^explorar[\s:]+/i, '').trim()
 
+  return resto === '' ? descripcion.trim() : resto
+}
+
+/**
+ * La línea de un explorador: `descripción · Haiku high · 3 min 20 s · 96,2k`. La descripción va sin el prefijo «Explorar »;
+ * la duración y el gasto faltan si no se conocen (o si el gasto es 0). La config es la observada (forma corta: `Haiku high, max`) o `Haiku high` sin dato.
+ * Con `ancho` (columnas): si a la descripción le quedarían menos de 8, se quita la config del modelo; después la descripción se recorta con «…»
+ * a lo que sobre (por caracteres, no por unidades de código). Si ni «…» cabe junto a las cifras, van las cifras solas, sin descripción, y se
+ * quita el gasto antes que la duración; si ni la primera cabe, se recorta con «…». Con `ancho` ≥ 1 la línea nunca pasa de `ancho`.
+ */
+export function lineaDeExplorador(d: PorExplorador, ancho?: number): string {
+  const descripcion = Array.from(sinPrefijoExplorar(d.descripcion))
+  const medidas = [d.ms === undefined ? '' : duracion(d.ms), d.gasto !== undefined && d.gasto > 0 ? tokens(d.gasto) : ''].filter(c => c !== '')
+  const armar = (cifras: string[]): string => (cifras.length === 0 ? '' : ` · ${cifras.join(' · ')}`)
+  const observadas = textosValidos(d.config)
+  const completas: string[] = [observadas.length > 0 ? textoDeConfig(observadas, true) : AGENTE_DE_PASO.explorador.config, ...medidas]
+
+  if (ancho === undefined) return `${descripcion.join('')}${armar(completas)}`
+
+  const cifras = ancho - Array.from(armar(completas)).length < 8 ? medidas : completas
+  const sufijo = armar(cifras)
+  const sobra = ancho - Array.from(sufijo).length
+
+  if (descripcion.length <= sobra) return `${descripcion.join('')}${sufijo}`
+  if (sobra >= 1) return `${descripcion.slice(0, sobra - 1).join('').trimEnd()}…${sufijo}`
+
+  for (let n = medidas.length; n > 0; n--) {
+    const solas = medidas.slice(0, n).join(' · ')
+    if (Array.from(solas).length <= ancho) return solas
+  }
+
+  return `${Array.from(medidas[0] ?? '').slice(0, Math.max(ancho - 1, 0)).join('').trimEnd()}…`
+}
+
+/**
+ * El texto de una lista de nombres observados («Sonnet 5.5 high»): agrupa por modelo (lo anterior al último espacio) y junta los esfuerzos
+ * de cada grupo con «, »; los grupos van unidos con «, ». `corta` quita la versión del modelo (` 5.5`) y reagrupa sin repetir esfuerzos.
+ */
+function textoDeConfig(nombres: readonly string[], corta: boolean): string {
+  const grupos = new Map<string, string[]>()
+
+  for (const nombre of nombres.map(n => n.trim())) {
+    const i = nombre.lastIndexOf(' ')
+    const modelo = i === -1 ? nombre : nombre.slice(0, i).trim()
+    const esfuerzo = i === -1 ? '' : nombre.slice(i + 1)
+    const grupo = corta ? modelo.replace(/ \d+(\.\d+)?$/, '') : modelo
+    const esfuerzos = grupos.get(grupo) ?? []
+
+    if (esfuerzo !== '' && !esfuerzos.includes(esfuerzo)) esfuerzos.push(esfuerzo)
+
+    grupos.set(grupo, esfuerzos)
+  }
+
+  return [...grupos].map(([modelo, esfuerzos]) => (esfuerzos.length === 0 ? modelo : `${modelo} ${esfuerzos.join(', ')}`)).join(', ')
+}
+
+/**
+ * La línea de un agente cuya config se observó: `agente · forma larga`. Con `ancho`, si no cabe va la forma corta (sin la versión del modelo)
+ * y, si tampoco cabe, se corta a `ancho − 1` caracteres (no unidades de código) con «…». Sin lista, la línea fija de `AGENTE_DE_PASO`.
+ */
+function lineaObservada(a: (typeof AGENTE_DE_PASO)[keyof typeof AGENTE_DE_PASO], observadas: readonly string[] | undefined, ancho?: number): string {
+  if (observadas === undefined || observadas.length === 0) return lineaDeAgente(a)
+
+  const larga = `${a.agente} · ${textoDeConfig(observadas, false)}`
+
+  if (ancho === undefined || Array.from(larga).length <= ancho) return larga
+
+  const corta = Array.from(`${a.agente} · ${textoDeConfig(observadas, true)}`)
+
+  if (corta.length <= ancho) return corta.join('')
+
+  return `${corta.slice(0, Math.max(ancho - 1, 0)).join('').trimEnd()}…`
+}
+
+/** Las líneas de agente de un nodo no pendiente, sin la de gasto. */
+function lineasDeAgente(n: Nodo, orquestador?: string, ancho?: number): string[] {
   const veces = n.veces ?? 0
   const revisiones = n.revisiones ?? 0
   const exploradores = n.exploradores ?? 0
+  const configs = n.configs ?? {}
 
   switch (n.etiqueta) {
     case 'Preflight':
     case 'Cierre':
       return n.ms !== undefined && orquestador !== undefined ? [`orquestador ${orquestador}`] : []
-    case 'Exploración':
-      return exploradores >= 1 ? [`${exploradores} ${exploradores === 1 ? AGENTE_DE_PASO.explorador.agente : `${AGENTE_DE_PASO.explorador.agente}es`} · ${AGENTE_DE_PASO.explorador.config}`] : []
+    case 'Exploración': {
+      if (n.porExplorador !== undefined && n.porExplorador.length > 0) return n.porExplorador.map(d => lineaDeExplorador(d, ancho))
+
+      const observadas = textosValidos(configs.explorador)
+      const config = observadas.length > 0 ? textoDeConfig(observadas, true) : AGENTE_DE_PASO.explorador.config
+
+      return exploradores >= 1 ? [`${exploradores} ${exploradores === 1 ? AGENTE_DE_PASO.explorador.agente : `${AGENTE_DE_PASO.explorador.agente}es`} · ${config}`] : []
+    }
     case 'Plan':
-      return veces >= 1 ? [lineaDeAgente(AGENTE_DE_PASO.planificador)] : []
+      return veces >= 1 ? [lineaObservada(AGENTE_DE_PASO.planificador, configs.planificador, ancho)] : []
     case 'Revisión del plan':
-      return n.ms !== undefined ? [lineaDeAgente(AGENTE_DE_PASO.revisorPlan)] : []
+      return n.ms !== undefined ? [lineaObservada(AGENTE_DE_PASO.revisorPlan, configs['revisor-plan'], ancho)] : []
     case 'Ejecución': {
       const lineas: string[] = []
 
-      if (veces >= 1) lineas.push(lineaDeAgente(AGENTE_DE_PASO.ejecutor))
-      if (revisiones >= 1) lineas.push(lineaDeAgente(AGENTE_DE_PASO.revisorSubtarea))
+      if (veces >= 1) lineas.push(lineaObservada(AGENTE_DE_PASO.ejecutor, configs.ejecutor, ancho))
+      if (revisiones >= 1) lineas.push(lineaObservada(AGENTE_DE_PASO.revisorSubtarea, configs.revisor, ancho))
 
       return lineas
     }
     case 'Verificación final':
-      return revisiones >= 1 ? [lineaDeAgente(AGENTE_DE_PASO.revisorFinal)] : []
+      return revisiones >= 1 ? [lineaObservada(AGENTE_DE_PASO.revisorFinal, configs.revisor, ancho)] : []
     default:
       return []
   }
+}
+
+/**
+ * Las líneas de un nodo, sin sangría: quién trabaja en ese paso y con qué modelo, y al final lo que gastó (`gasto 100k · sal 2k`).
+ * Vacío para un nodo pendiente. «Aprobación» y «Terminado…» no tienen línea de agente, pero «Aprobación» sí la de gasto;
+ * tampoco hay línea de agente cuando el paso no lanzó ese agente.
+ * `orquestador` es el nombre del modelo del hilo principal; sin él (o sin `ms`) no hay línea en «Preflight» y «Cierre».
+ * Si «Exploración» trae `porExplorador`, lleva una línea por explorador (ver `lineaDeExplorador`, con `ancho` columnas por línea) en lugar de la línea con el total.
+ */
+export function detallePaso(n: Nodo, orquestador?: string, ancho?: number): string[] {
+  if (n.estado === 'pendiente') return []
+
+  const lineas = lineasDeAgente(n, orquestador, ancho)
+
+  return n.gasto !== undefined && n.gasto[0] > 0 ? [...lineas, `gasto ${totalConSalida(n.gasto[0], n.gasto[1])}`] : lineas
 }
 
 /**

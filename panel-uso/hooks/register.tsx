@@ -5,23 +5,31 @@ import type { Actividad, Esfuerzo, Flujo, Medida, Semana } from '../types'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
 import {
+  AGENTE_DE_PASO,
   abreTanda,
   abrirEspera,
+  anotarConfig,
+  anotarExplorador,
   anotarFilaExplorador,
   avanzar,
   baseDeUso,
   cerrarEspera,
+  cerrarExploradorSinId,
   congelarConsumo,
   consumoDeFlujo,
   cuadradosDeFila,
+  datosDeExplorador,
   detallePaso,
   iniciarFlujo,
+  marcarAgente,
   marcarOrquestador,
   nodos,
   nombreOrquestador,
   resumenFlujo,
   senalAlTerminar,
   senalDeHerramienta,
+  sumarGasto,
+  sumarGastoDeExplorador,
   terminarFlujo,
 } from './flujo'
 import type { Senal } from './flujo'
@@ -578,7 +586,16 @@ export const register: Register = on => {
       await marcarActividad($, (a, t) => terminarPeticion(a, id, t, pideHerramienta))
     }
 
+    // Con qué modelo y esfuerzo respondió el subagente; el nombre se calcula dentro para que un error lo atrape marcarFlujo.
+    const agentId = e.agentId
+    if (agentId !== undefined) {
+      await marcarFlujo($, f => anotarConfig(f, agentId, nombreOrquestador(r.usage?.model || e.model, e.effort)))
+    }
+
     if (r.usage !== null) {
+      // El gasto cuenta hilo principal y subagentes; va antes de anotarUso para que `turn.complete` no cierre el flujo entre medio.
+      const uso = r.usage
+      await marcarFlujo($, f => sumarGastoDeExplorador(sumarGasto(f, uso), e.agentId, uso))
       try {
         // La marca se decide al llegar la respuesta: en la fila, `turn.complete` ya pudo cerrar el flujo.
         const deFlujo = e.agentId === undefined && (await enFlujo($))
@@ -633,7 +650,11 @@ export const register: Register = on => {
 
     if (s.tipo === 'agente') await vaciarAlAbrirTanda($, s)
 
-    await marcarFlujo($, (f, t) => (s.tipo === 'pregunta' ? abrirEspera(avanzar(f, s, t), t) : avanzar(f, s, t)))
+    await marcarFlujo($, (f, t) => {
+      if (s.tipo === 'pregunta') return abrirEspera(avanzar(f, s, t), t)
+
+      return s.tipo === 'agente' ? marcarAgente(avanzar(f, s, t), s.nombre) : avanzar(f, s, t)
+    })
 
     // Mientras la pregunta espera al usuario, ese tiempo es espera y no trabajo; se cierra siempre, también si falla o se interrumpe.
     if (s.tipo === 'pregunta') {
@@ -647,16 +668,53 @@ export const register: Register = on => {
     const fin = senalAlTerminar(s)
     if (fin === null) return next(e)
 
+    const esExplorador = s.tipo === 'agente' && s.nombre === AGENTE_DE_PASO.explorador.agente
+    const llamada = typeof e.tool_use_id === 'string' ? e.tool_use_id : undefined
+
     // La vuelta se descuenta siempre, también si la herramienta falla; el error de `next` sigue su camino intacto.
     let bien = false
+    let datos: ReturnType<typeof datosDeExplorador> = null
     try {
       const r = await next(e)
       bien = true
+      try {
+        // Lo que dice el resultado de un explorador (su agentId, su duración); leerlo no puede romper la herramienta.
+        if (esExplorador) datos = datosDeExplorador(e, r)
+      } catch {
+        // Sin los datos, la línea del explorador queda sin esa cifra.
+      }
 
       return r
     } finally {
-      await marcarFlujo($, (f, t) => avanzar(f, senalAlTerminar(s, bien) ?? fin, t))
+      const d = datos
+      await marcarFlujo($, (f, t) => {
+        const avanzado = avanzar(f, senalAlTerminar(s, bien) ?? fin, t)
+
+        if (d !== null) return anotarExplorador(avanzado, d.id, { descripcion: d.descripcion, ms: d.ms, hasta: t })
+
+        // Un explorador que falló o volvió sin `agentId` no deja de contar su tiempo si no se fija aquí.
+        return esExplorador ? cerrarExploradorSinId(avanzado, e, t, llamada) : avanzado
+      })
     }
+  })
+
+  // Solo observa: el lanzamiento sigue su camino (nunca se niega) y su resultado, o su error, vuelve tal cual.
+  on('agent.spawn', async ($, e, next) => {
+    const r = await next(e)
+    let id = ''
+    try {
+      const agentId = (r as { agentId?: unknown }).agentId
+      if (typeof e.subagentType === 'string' && e.subagentType.trim() === AGENTE_DE_PASO.explorador.agente && typeof agentId === 'string') id = agentId
+    } catch {
+      // Sin el id, el explorador se anota al volver su resultado.
+    }
+    if (id !== '') {
+      const descripcion = typeof e.description === 'string' ? e.description : ''
+      const llamada = typeof e.tool_use_id === 'string' ? e.tool_use_id : undefined
+      await marcarFlujo($, (f, t) => anotarExplorador(f, id, { descripcion, desde: t, llamada }))
+    }
+
+    return r
   })
 
   on('ui.render', { component: 'Pane', requestId: PANEL }, async ($, e) => {
@@ -917,7 +975,7 @@ export const register: Register = on => {
                 {n.esperaUsuario !== undefined && <Text dimColor>{` · espera ${duracion(n.esperaUsuario)}`}</Text>}
               </Box>,
               // La sangría de 2 va dentro del `Text`: a 32 columnas se trunca con el resto de la línea.
-              ...detallePaso(n, fl.orquestador).map((linea, j) => (
+              ...detallePaso(n, fl.orquestador, Math.max(1, e.props.bodyColumns - 2)).map((linea, j) => (
                 <Text key={`flujo-detalle-${i}-${j}`} dimColor wrap="truncate-end">
                   {`  ${linea}`}
                 </Text>
