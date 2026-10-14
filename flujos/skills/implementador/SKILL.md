@@ -1,6 +1,6 @@
 ---
 name: implementador
-description: "Flujo /implementador multi-agente: explora, planifica, pide aprobación, ejecuta por subtareas con revisión independiente y verificación real. Solo corre cuando el usuario escribe /implementador; nunca la invoques por iniciativa propia."
+description: "Flujo /implementador multi-agente: explora, planifica, ejecuta por subtareas con revisión independiente y verifica. Solo cuando el usuario escribe /implementador; nunca por iniciativa propia."
 argument-hint: "<qué cambiar>"
 model: sonnet
 effort: high
@@ -39,8 +39,6 @@ Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases n
 | `revisor` de subtarea `Crítica: sí` o sin el campo, y sus correcciones (Sonnet, high) | `model: "sonnet"`, `effort: "high"` |
 | `revisor` de subtarea `Crítica: no`, y sus correcciones (Sonnet, medium) | `model: "sonnet"`, `effort: "medium"` |
 | `revisor` de la revisión final, y sus ciclos (Opus, high) | ninguno |
-
-Opus solo en el planificador y en la revisión final.
 
 ## Reglas comunes
 

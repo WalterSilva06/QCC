@@ -1,6 +1,6 @@
 # Reglas de /implementador para claude-config
 
-Valen para `/implementador` en este repo. Mandan sobre `~/.claude/flujos/comun.md`. Salen de corridas reales (12-oct): cada regla cita lo que la motivó.
+Valen para `/implementador` en este repo. Mandan sobre `~/.claude/flujos/comun.md`.
 
 ## Clasificación
 
@@ -8,14 +8,13 @@ CRÍTICO, además de lo que diga `comun.md` §2: una subtarea que toca alguna de
 
 | Ruta | Criterio | Por qué |
 |---|---|---|
-| `flujos/**` (skills, agentes, `estado.mjs`, `verificar.mjs`, `guardia.mjs`, `guardia.test.mjs`, `instalar.mjs`, `comun.md`, `pasos.md`) | #1 y #5 | `guardia.mjs` es la seguridad de los subagentes; lo demás lo usan todos los proyectos del usuario |
+| `flujos/**` (skills, agentes, `estado.mjs`, `verificar.mjs`, `guardia.mjs`, `guardia.test.mjs`, `instalar.mjs`, `comun.md`, `pasos.md`), salvo la excepción de abajo | #1 y #5 | `guardia.mjs` es la seguridad de los subagentes; lo demás lo usan todos los proyectos del usuario |
 | `.claude/implementador.md`, `.claude/implementador.json` | #1 | reglas y config de este flujo (`guardia` en el JSON afloja o aprieta la guardia); solo si el pedido lo dice |
 | `panel-uso/hooks/flujo.ts` | #6 | máquina de estado del flujo, tiempos y esperas |
 | `panel-uso/hooks/register.tsx` | #7 | hooks que envuelven `next` (`tool.call`, `turn.step`, `turn.complete`, `skill.prompt`): un fallo frena una petición al modelo o una herramienta |
 
-No son rutas críticas (documentación): `FLUJOS.md`, `MODS.md` y `README.md`.
-
-- **#6 además:** cualquier cambio en la forma de un atom que sobrevive a `/reload-plugins` (`flujo`, `filasExploradores`, y los tipos de `panel-uso/types/index.d.ts`). Un flujo guardado con la forma anterior sigue vivo tras recargar. Motivo: una corrida dejó el panel entero sin dibujo con un atom de la forma 0.9.3 y solo lo vio el revisor.
+- **#6 además:** cualquier cambio en la forma de un atom que sobrevive a `/reload-plugins` (`flujo`, `filasExploradores`, y los tipos de `panel-uso/types/index.d.ts`). Un flujo guardado con la forma anterior sigue vivo tras recargar.
+- **Excepción en `flujos/**`:** una subtarea cuyos archivos permitidos son solo `.md` de `flujos/agents/` o `flujos/herramientas/config.ejemplo.md` es `Crítica: no` si no cambia su frontmatter (herramientas, modelo) ni las líneas `!` de una skill; ante la duda, `sí`. Quedan siempre `Crítica: sí`: `comun.md`, `pasos.md`, `SKILL.md` (tabla de overrides y líneas `!`), cualquier `.mjs`, `.claude/implementador.md` y `.claude/implementador.json`. La Clasificación del plan sigue citando #1 y #5 (el revisor del plan corre y la revisión final Opus tiene 2 ciclos).
 
 Sin criterios: textos, colores y anchos del panel, funciones puras de `formato.ts` y `semana.ts` con tests, FLUJOS.md, MODS.md, README, AGENTS.md.
 
@@ -29,12 +28,18 @@ Sin criterios: textos, colores y anchos del panel, funciones puras de `formato.t
 
 - Todo cambio visible sube `version` en `panel-uso/.claude-plugin/plugin.json` y actualiza MODS.md; es una subtarea de documentación, no un extra.
 - Un campo nuevo en un atom es opcional, se lee con `?? 0` (o equivalente) y solo se escribe cuando hay algo que anotar: un valor neutro (`0`, `{}`, `null`) rompe los `toEqual` de los tests.
-- Una subtarea que toca estado compartido entre hooks y además tests nuevos con el motor simulado se parte en lógica pura (`flujo.ts`, `semana.ts`, `formato.ts`) y dibujo (`register.tsx`). La que se hizo junta tardó 14 min y 65 de 80 turnos.
+- Una subtarea que toca estado compartido entre hooks y además tests nuevos con el motor simulado se parte en lógica pura (`flujo.ts`, `semana.ts`, `formato.ts`) y dibujo (`register.tsx`).
 - Queda para el usuario: la comprobación visual con `/reload-plugins` a 49 columnas (y a 32), y `node flujos/instalar.mjs` si cambió algo de `flujos/`.
 
 ## Ejecutor
 
-- `claude plugin test panel-uso` corre todo en unos 10 s y no filtra por nombre: acota la salida con una tubería (`| grep …`), sin redirigirla a un archivo (la guardia lo niega).
+- `claude plugin test panel-uso` corre todo en unos 10 s y solo acepta la carpeta (no filtra por nombre ni por archivo). Córrelo siempre con Bash (no PowerShell) y con este patrón exacto:
+
+  ```
+  claude plugin test panel-uso 2>&1 | grep -vE '^\(pass\)' | tail -n 150
+  ```
+
+  Quedan la cabecera `tests\panel.test.tsx:`, cada `(fail)` con su error entero y el resumen (` N pass`, ` N fail`, `Ran N tests…`). El éxito se lee en ` N fail`, no en el código de salida (es el de `tail`). Si un error queda cortado, repite con `tail -n 400`. Nunca sin filtro ni a un archivo. `verificar.mjs` se corre sin tubería.
 - Estilo de AGENTS.md: español, sin punto y coma, comillas simples, JSDoc breve y línea en blanco antes de `return` en `panel-uso/`.
 
 ## Revisor: rechaza también por

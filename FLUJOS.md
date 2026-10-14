@@ -15,9 +15,9 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 | Rol | Modelo y esfuerzo |
 |---|---|
 | Orquestador | Sonnet high (frontmatter de la skill `implementador`) |
-| Explorador | Haiku high, de 1 a 5 en paralelo (uno por área, sin solaparse) |
+| Explorador | Haiku high, uno por defecto; hasta 5 en paralelo con áreas independientes y grandes |
 | Planificador | Opus high; clasifica y planifica |
-| Revisor del plan | Sonnet medium |
+| Revisor del plan | Sonnet medium; se omite con «sin criterios» y 1–2 subtareas (lo suple el orquestador) |
 | Ejecutor | Sonnet high |
 | Revisor por subtarea | Sonnet high si `Crítica: sí`; Sonnet medium si `Crítica: no` |
 | Revisión final | Opus high, siempre (también con una sola subtarea) |
@@ -30,7 +30,7 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 - **Contexto del revisor:** además del digest `YA REVISADO`, `REVISIÓN ANTERIOR` lleva solo los PROBLEMAS y CRITERIOS del propio revisor de la vuelta previa (también en los ciclos de la revisión final), nunca el reporte del ejecutor.
 - **Autochequeo del ejecutor:** antes de reportar repasa una lista corta propia más la sección «Revisor: rechaza también por» de las reglas del proyecto.
 
-El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes (el planificador marca «Plan», paso 2, y el revisor-plan «Revisión del plan», paso 3), del header «Plan» de las preguntas de aprobación, de las opciones de `estado.mjs` y de la línea «CIERRE ·» del cierre. La revisión final cuenta siempre en «Verificación final». El `verificar.mjs` de cada subtarea y su revisor cuentan en «Ejecución»; el `verificar.mjs` que sigue a la última subtarea marca «Verificación final». El orden por subtarea (`--base` → `ejecutor` → `--cambios` → `verificar.mjs` → `revisor`) es parte de lo que lee el panel. Si cambia alguno de esos nombres, opciones o textos, o ese orden, hay que actualizar `panel-uso/hooks/flujo.ts`.
+El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes (el planificador marca «Plan», paso 2, y el revisor-plan «Revisión del plan», paso 3), del header «Plan» de las preguntas de aprobación (si se omite el revisor-plan, la pregunta «Plan» lleva directo a Aprobación), de las opciones de `estado.mjs` y de la línea «CIERRE ·» del cierre. La revisión final cuenta siempre en «Verificación final». El `verificar.mjs` de cada subtarea y su revisor cuentan en «Ejecución»; el `verificar.mjs` que sigue a la última subtarea marca «Verificación final». El orden por subtarea (`--base` → `ejecutor` → `--cambios` → `verificar.mjs` → `revisor`) es parte de lo que lee el panel. Si cambia alguno de esos nombres, opciones o textos, o ese orden, hay que actualizar `panel-uso/hooks/flujo.ts`.
 
 ## Instalación
 
