@@ -1,16 +1,22 @@
 # Reglas de /implementador para claude-config
 
-Valen para `/implementador` en sus dos modos (normal y ligero) en este repo. Mandan sobre `~/.claude/flujos/comun.md`. Salen de corridas reales (12-oct): cada regla cita lo que la motivó.
+Valen para `/implementador` en este repo. Mandan sobre `~/.claude/flujos/comun.md`. Salen de corridas reales (12-oct): cada regla cita lo que la motivó.
 
 ## Clasificación
 
-CRÍTICO, además de lo que diga `comun.md` §2:
+CRÍTICO, además de lo que diga `comun.md` §2: una subtarea que toca alguna de estas rutas es `Crítica: sí`, y el plan cita su criterio.
 
-- **#6 Estado y tiempo:** `panel-uso/hooks/flujo.ts` (máquina de estado del flujo, tiempos, esperas) y cualquier cambio en la forma de un atom que sobrevive a `/reload-plugins` (`flujo`, `filasExploradores`, y los tipos de `panel-uso/types/index.d.ts`). Un flujo guardado con la forma anterior sigue vivo tras recargar. Motivo: una corrida de `/implementador-ligero` (antes de los modos) dejó el panel entero sin dibujo con un atom 0.9.3 y solo lo vio el revisor.
-- **#7 Frontera de ejecución:** los hooks que envuelven `next` en `panel-uso/hooks/register.tsx` (`tool.call`, `turn.step`, `turn.complete`, `skill.prompt`). Un fallo ahí frena una petición al modelo o una herramienta.
-- **#1 y #5 Los flujos mismos:** `flujos/herramientas/guardia.mjs` (seguridad), y `estado.mjs`, `verificar.mjs`, las skills y los agentes (los usan todos los proyectos del usuario, no solo este).
+| Ruta | Criterio | Por qué |
+|---|---|---|
+| `flujos/**` (skills, agentes, `estado.mjs`, `verificar.mjs`, `guardia.mjs`, `guardia.test.mjs`, `instalar.mjs`, `comun.md`, `pasos.md`) | #1 y #5 | `guardia.mjs` es la seguridad de los subagentes; lo demás lo usan todos los proyectos del usuario |
+| `panel-uso/hooks/flujo.ts` | #6 | máquina de estado del flujo, tiempos y esperas |
+| `panel-uso/hooks/register.tsx` | #7 | hooks que envuelven `next` (`tool.call`, `turn.step`, `turn.complete`, `skill.prompt`): un fallo frena una petición al modelo o una herramienta |
 
-Sin criterios (el modo ligero se recomienda si además cabe en ≤ 3 subtareas y ≤ 6 archivos): textos, colores y anchos del panel, funciones puras de `formato.ts` y `semana.ts` con tests, MODS.md, README, AGENTS.md.
+No son rutas críticas (documentación): `FLUJOS.md`, `MODS.md` y `README.md`.
+
+- **#6 además:** cualquier cambio en la forma de un atom que sobrevive a `/reload-plugins` (`flujo`, `filasExploradores`, y los tipos de `panel-uso/types/index.d.ts`). Un flujo guardado con la forma anterior sigue vivo tras recargar. Motivo: una corrida de `/implementador-ligero` (antes de los modos) dejó el panel entero sin dibujo con un atom 0.9.3 y solo lo vio el revisor.
+
+Sin criterios: textos, colores y anchos del panel, funciones puras de `formato.ts` y `semana.ts` con tests, FLUJOS.md, MODS.md, README, AGENTS.md.
 
 ## Cómo buscar
 

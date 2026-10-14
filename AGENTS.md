@@ -3,7 +3,7 @@
 Herramientas personales para Claude Code, en dos partes separadas:
 
 - **`panel-uso/`**: mod (plugin) con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Ver [MODS.md](MODS.md).
-- **`flujos/`**: los flujos `/implementador` (un solo flujo con dos modos, normal y ligero) y `/documentar`, con sus agentes y herramientas. Se instalan copiándolos a `~/.claude`. Ver [FLUJOS.md](FLUJOS.md).
+- **`flujos/`**: los flujos `/implementador` (un solo flujo, con un solo modo) y `/documentar`, con sus agentes y herramientas. Se instalan copiándolos a `~/.claude`. Ver [FLUJOS.md](FLUJOS.md).
 
 [README.md](README.md) es la entrada al repo: resume la instalación y enlaza a todo.
 
@@ -15,7 +15,7 @@ AGENTS.md                         reglas generales (este archivo)
 MODS.md                           documentación del mod panel-uso
 FLUJOS.md                         documentación de los flujos
 .claude/implementador.json        pasos de verificación para /implementador
-.claude/implementador.md          reglas de /implementador para este repo, en ambos modos (clasificación, plan, revisor)
+.claude/implementador.md          reglas de /implementador para este repo (clasificación, plan, revisor)
 .claude/documentar.md             reglas de /documentar para este repo
 .claude/documentar/cobertura.md   mapa de cobertura de la documentación
 flujos/
@@ -54,7 +54,7 @@ Los tres tienen que terminar sin errores antes de dar algo por hecho. Qué no pr
 
 ## Flujo con /implementador
 
-`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador.md` y mandan sobre las comunes y rigen en los dos modos. `/implementador` tiene dos modos con los mismos pasos (`flujos/herramientas/pasos.md`): normal (Opus) y ligero (Sonnet, con la revisión integral en Opus medium). Se recomienda el ligero cuando no hay criterios CRÍTICOS y el cambio se estima en ≤ 3 subtareas y ≤ 6 archivos; entonces el flujo pregunta el modo. Si el plan resulta más grande o crítico, vuelve a normal. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
+`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador.md` y mandan sobre las comunes. `/implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica), revisor por subtarea Sonnet y revisión final Opus high siempre. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
 
 ## Pendiente de confirmar
 

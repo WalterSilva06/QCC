@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Estado git de los flujos /implementador y /implementador-ligero (nivel usuario: sirve para
+// Estado git del flujo /implementador (nivel usuario: sirve para
 // cualquier proyecto con git). El proyecto es el repo que contiene el directorio actual.
 //
 //   node ~/.claude/flujos/estado.mjs                       preflight + foto global

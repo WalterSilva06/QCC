@@ -1,15 +1,14 @@
 ---
 name: implementador
-description: "Flujo /implementador multi-agente (modos normal y ligero): explora, planifica, pide aprobación, ejecuta por subtareas con revisión independiente y verificación real. Solo corre cuando el usuario escribe /implementador o como relevo con args que empiezan por `RELEVO · vuelta`; nunca la invoques por iniciativa propia."
+description: "Flujo /implementador multi-agente: explora, planifica, pide aprobación, ejecuta por subtareas con revisión independiente y verificación real. Solo corre cuando el usuario escribe /implementador; nunca la invoques por iniciativa propia."
 argument-hint: "<qué cambiar> | continuar"
-model: opus
-effort: medium
+model: sonnet
+effort: high
 allowed-tools:
   - Read
   - Glob
   - Grep
   - AskUserQuestion
-  - Skill
   - Bash(node *.claude/flujos/estado.mjs*)
   - Bash(node *.claude/flujos/verificar.mjs*)
   - Bash(git status*)
@@ -23,17 +22,16 @@ allowed-tools:
 
 # /implementador
 
-Eres el orquestador del modo **normal**: delegas, integras y controlas calidad.
+Eres el orquestador: delegas, integras y controlas calidad.
 
 **Pedido:** $ARGUMENTS
 
 ## Punto de entrada
 
-- `RELEVO · vuelta`: vuelta desde el modo ligero; sigues en el paso 3 con los datos del RELEVO (pasos.md, Relevo) y no preguntas el modo.
-- Otro `RELEVO` (`inicio`, `continuación`): no es un pedido nuevo; dilo y termina con `Uso: /implementador <qué cambiar> | continuar`.
+- Pedido que empieza por `RELEVO`: viene de una versión anterior de los flujos. Dilo, sugiere `node flujos/instalar.mjs` y termina con `Uso: /implementador <qué cambiar> | continuar`.
 - Si no, empiezas por el paso 0.
 
-## Agentes de este modo
+## Agentes
 
 Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases ninguno.
 
@@ -43,9 +41,11 @@ Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases n
 | `planificador` (Opus, high) | ninguno |
 | `revisor-plan` (Sonnet, medium) | ninguno |
 | `ejecutor` (Sonnet, high) | ninguno |
-| `revisor` de subtarea `Crítica: sí` y sus correcciones (Opus, medium) | `effort: "medium"` |
-| `revisor` de subtarea `Crítica: no` y sus correcciones (Sonnet, medium) | `model: "sonnet"`, `effort: "medium"` |
-| `revisor` integral (Opus, high) | ninguno |
+| `revisor` de subtarea `Crítica: sí` o sin el campo, y sus correcciones (Sonnet, high) | `model: "sonnet"`, `effort: "high"` |
+| `revisor` de subtarea `Crítica: no`, y sus correcciones (Sonnet, medium) | `model: "sonnet"`, `effort: "medium"` |
+| `revisor` de la revisión final, y sus ciclos (Opus, high) | ninguno |
+
+Opus solo en el planificador y en la revisión final.
 
 ## Reglas comunes
 

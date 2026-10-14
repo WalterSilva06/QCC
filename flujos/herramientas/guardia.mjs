@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Guardia de los subagentes de /implementador y /implementador-ligero (nivel usuario: sirve
+// Guardia de los subagentes de /implementador (nivel usuario: sirve
 // para cualquier proyecto).
 //
 // Hook PreToolUse que declaran en su frontmatter `ejecutor` (argumento `ejecutor`) y

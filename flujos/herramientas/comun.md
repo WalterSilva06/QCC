@@ -12,7 +12,7 @@ Desde la raíz del repo, con Bash (`~` = carpeta del usuario):
 | `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<a,b>" [-- <rutas>]` | Diff desde la foto (solo el revisor) |
 | `node ~/.claude/flujos/verificar.mjs [--rapido]` | Pasos de verificación (config o detectados). `--rapido`: solo los de `verificarRapido` (sin la clave, todos). Termina en `RESULTADO: VERDE`, `RESULTADO: ROJO (…)` o `RESULTADO: SIN PASOS` |
 
-Si estado.mjs o verificar.mjs fallan por un error propio (`ERROR:` o excepción), no por tests rojos, detente y avisa; un `ERROR:` de `--rapido` (lo corre el revisor) no detiene el flujo. Sin git no hay flujo: dilo y termina.
+Si estado.mjs o verificar.mjs fallan por un error propio (`ERROR:` o excepción), no por tests rojos, detente y avisa; un `ERROR:` de `--rapido` (lo corre el orquestador antes de cada revisor) no detiene el flujo: corre la completa y anótalo en `VERIFICACIÓN DEL ORQUESTADOR`. Sin git no hay flujo: dilo y termina.
 
 **`SIN PASOS`:** en el preflight, pregunta con AskUserQuestion qué comandos verifican el proyecto (o seguir solo con revisión) y sugiere dejarlos en `.claude/implementador.json` (no lo escribes tú). El cierre dice «sin verificación automática».
 
@@ -30,8 +30,6 @@ CRÍTICO si se cumple **cualquiera** (cita los números en el plan; si no aplica
 8. **Amplitud:** más de 6 archivos de código, más de 2 capas (datos · servidor · UI) o más de ~300 líneas.
 9. **Irreversible:** borra datos, renombra columnas o APIs, o contradice una decisión registrada del proyecto (CLAUDE.md, ADRs).
 10. **Sin red:** lógica de negocio sin tests que el cambio altera.
-
-Modo ligero recomendado (paso 2): ningún criterio CRÍTICO, ≤ 3 subtareas y ≤ 6 archivos en total (tests incluidos), estimados por el orquestador.
 
 ## 3. Formato del plan
 
@@ -52,11 +50,12 @@ S1 · <objetivo de la subtarea>
 
 S2 · …
 
-Verificación final: verificar.mjs <+ revisión integral, si aplica>
+Verificación final: verificar.mjs + revisión final (siempre)
 Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>
-Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea (<c> críticas) · revisión integral <sí | no> (modelos y esfuerzos: los del modo)
+Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea (<c> críticas) · revisión final
 ```
 
+- La Clasificación la hace el planificador, con §2 y las reglas del proyecto; ante la duda, CRÍTICO.
 - `Crítica: sí` si la subtarea toca algo de un criterio de §2 o de las reglas del proyecto; `no` solo si todo lo que toca es UI, textos, estilos o documentación sin criterio. Ante la duda, `sí`. Con Clasificación «sin criterios», todas `no`. Un plan sin el campo (p. ej. en `continuar`) se trata como si todas fueran `Crítica: sí`.
 - Subtareas pequeñas: ≤ 4 archivos de código más sus tests, cada una verificable sola, en orden de dependencia (migración → tipos → servidor → UI → docs).
 - Lo que no está en «Archivos permitidos» no se toca. Las migraciones ya versionadas no se editan: se crea una nueva con la convención de nombres del proyecto. Si hay migración, la Reversión aclara que, aplicada a una base viva, revertirla exige otra migración.
@@ -68,9 +67,9 @@ Costo: <n> ejecutor(es) · <n> revisión(es) por subtarea (<c> críticas) · rev
 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
 - **Cada llamada a Agent lleva `run_in_background: false`** (el resultado vuelve en este turno) y nunca `isolation`. `model` y `effort`: exactamente los de la tabla de tu skill.
-- Solo los agentes `explorador`, `planificador`, `revisor-plan`, `ejecutor` y `revisor`; la herramienta Skill solo para el relevo (pasos.md). Uno a la vez, salvo en la Exploración (de 1 a 5 exploradores en paralelo, §5).
-- Contexto mínimo: cada agente recibe solo su plantilla (§5). Nunca la conversación ni el razonamiento de otro agente. Al revisor no le pasas nada del reporte del ejecutor.
-- Preguntas al usuario solo con AskUserQuestion (elegir el modo, aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
+- Solo los agentes `explorador`, `planificador`, `revisor-plan`, `ejecutor` y `revisor`. Uno a la vez, salvo en la Exploración (de 1 a 5 exploradores en paralelo, §5).
+- Contexto mínimo: cada agente recibe solo su plantilla (§5). Nunca la conversación ni el razonamiento de otro agente. Al revisor nunca le pasas nada del reporte del ejecutor: sí recibe `VERIFICACIÓN DEL ORQUESTADOR` y, si vuelve a revisar, su propia `REVISIÓN ANTERIOR`. A la revisión final no le pasas reportes de ejecutores ni de revisores por subtarea: solo el digest `YA REVISADO` (§6) y, en sus ciclos, su propia `REVISIÓN ANTERIOR`.
+- Preguntas al usuario solo con AskUserQuestion (aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance). Nunca terminas el turno para esperar respuesta.
 - Sin plan aprobado no se despacha ningún ejecutor. Si el plan cambia a mitad de camino, se vuelve a aprobar.
 - Nunca: commit, push, ramas, stash, reset, checkout, restore, deploy, migraciones contra bases vivas, regenerar tipos desde un servicio, scripts que peguen a servicios vivos, servidores de desarrollo. No ofreces commits. Lo externo va a «Queda para ti».
 - No declaras éxito sin `RESULTADO: VERDE` de tu propia corrida final de verificar.mjs. Lo verificado solo con typecheck y build (UI) es «pendiente de verificación visual», nunca «verificado».
@@ -91,10 +90,9 @@ PISTAS: <archivos o símbolos ya conocidos | ninguna>
 ```
 De 1 a 5, uno por área sin solapar (parte por carpeta o capa, no por pregunta); uno solo si el pedido es de una sola área, nombra los archivos o no tiene división natural. Todas las llamadas en el **mismo mensaje**, cada una con su ÁREA y sus BUSCA, sin repetir las de otro. En fork mode, uno.
 
-**Planificador** (siempre) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
+**Planificador** (siempre; clasifica y planifica) — `subagent_type: "planificador"`, `description: "Planificar <tema>"`
 ```
 PEDIDO: <literal>
-CLASIFICACIÓN: <criterios #n y por qué | sin criterios>
 BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
 EXPLORACIÓN: <reporte del explorador (con varios, la fusión de §6), sin lo que no aplica>
 PLAN VIGENTE: <solo al re-planificar: el plan aprobado, completo>
@@ -103,7 +101,6 @@ AJUSTES DEL USUARIO: <solo al re-planificar: solo el ajuste>
 **Revisor del plan** (siempre) — `subagent_type: "revisor-plan"`, `description: "Revisar plan <tema>"`
 ```
 PEDIDO: <literal>
-CLASIFICACIÓN: <criterios #n y por qué | sin criterios>
 BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
 EXPLORACIÓN: <reporte fusionado de §6, el mismo que recibió el planificador>
 PLAN: <el texto literal del planificador, completo (todas las subtareas con todos sus campos), con tus completados menores y sus PREGUNTAS; nunca un resumen>
@@ -137,15 +134,29 @@ PERMITIDOS: "<lista separada por comas>"
 SUCIOS PREVIOS (no son del flujo): <lista | ninguno>
 VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cuenta)
 VERIFICAR: completa | rápida
+VERIFICACIÓN DEL ORQUESTADOR: <completa | rápida> · <pasos que corrió> · <línea RESULTADO>
+REVISIÓN ANTERIOR: (opcional)
+PROBLEMAS: <los PROBLEMAS literales del reporte previo de este mismo revisor>
+CRITERIOS: <las líneas CRITERIOS literales de ese reporte>
+Confirma esos puntos y que la corrección no rompió nada; no repitas lo ya aprobado.
 ```
-`VERIFICAR`: `completa` si la subtarea es `Crítica: sí` o no trae el campo; `rápida` si es `no`. Las correcciones van al mismo revisor (tabla de tu skill) con el `VERIFICAR` de su subtarea.
+`VERIFICAR`: `completa` si la subtarea es `Crítica: sí` o no trae el campo; `rápida` si es `no`; queda como respaldo. `VERIFICACIÓN DEL ORQUESTADOR` va siempre que corriste `verificar.mjs` tras el ejecutor (§6); falta solo en `continuar` con un despacho viejo. `REVISIÓN ANTERIOR` va solo cuando ese mismo revisor vuelve a revisar tras un RECHAZADO: es su propio reporte, nunca algo del ejecutor. Las correcciones van al mismo revisor (tabla de tu skill) con el `VERIFICAR` de su subtarea.
 
-**Revisión integral** (con ≥ 2 subtareas) — un solo revisor, como el revisor de arriba, con `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)`, `BASE_GLOBAL`, `PERMITIDOS` = unión, `VERIFICACIÓN FINAL: <tu salida de verificar.mjs>` y además:
+**Revisión final** (siempre, también con una sola subtarea o con todas `Crítica: no`) — un solo revisor, sin overrides (Opus high), como el revisor de arriba, con:
+- `QUÉ REVISAR: cambio completo` si hay una sola subtarea, o `QUÉ REVISAR: integración entre subtareas (contratos, tipos, datos de punta a punta)` con 2 o más.
+- `BASE: <BASE_GLOBAL>` y `PERMITIDOS` = la unión.
+- `SUBTAREA(S)`: objetivo, archivos permitidos y riesgos de cada una, copiados del plan.
+- `VERIFICACIÓN FINAL: <la línea RESULTADO de tu verificar.mjs>` (no lleva `VERIFICACIÓN DEL ORQUESTADOR`).
+- En sus ciclos, el bloque opcional `REVISIÓN ANTERIOR:` (como en el revisor) con los PROBLEMAS y CRITERIOS literales de su reporte previo.
+- Además:
 ```
 VERIFICAR: completa
 CRÍTICO: <criterios #n de la Clasificación y por qué, para mirarlos primero | ninguno>
 ASPECTOS: <los que aplican de la tabla de abajo, separados por comas>
+YA REVISADO:
+S<n>: APROBADO (<c> ciclos) · obs: <≤ 12 palabras | ninguna>
 ```
+(una línea `Sn` por subtarea)
 
 | Aspecto | Va en ASPECTOS |
 |---|---|
@@ -157,14 +168,15 @@ Qué mira cada aspecto está en el agente `revisor`. «Solo texto»: todos los a
 
 ## 6. Después de cada agente
 
-- **Explorador(es):** con varios, vuelven todos en el mismo turno; fusiónalos en un solo reporte con ARCHIVOS, TESTS, ACOPLAMIENTOS, DATOS y DUDAS, sin duplicados (la misma `ruta:línea` una vez) y con las contradicciones como DUDA. Si uno falla o vuelve sin reporte, sigue con los demás y lee poco su área o relanza ese solo, una vez. Si sus DUDAS cambian el plan, resuélvelas leyendo tú (poco) o llévalas al plan como pregunta.
-- **Revisor del plan:** `APROBADO` → sigue a la aprobación. `AJUSTAR` → no se relanza al planificador ni al `revisor-plan`: el orquestador aplica lo menor o aditivo (un campo faltante, un archivo olvidado, un «hecho cuando» vago, otro orden) y muestra qué cambió. Lo que cambia el enfoque (contratos, tipos o datos de varias subtareas, o el reparto de archivos entre ellas) no lo rediseña: va tal cual bajo el plan, en «Revisión del plan: para decidir», y lo decide el usuario en la aprobación. Si falla o vuelve sin VEREDICTO claro, se repite una vez; si sigue igual, se sigue sin ella avisando «revisión del plan no disponible». Si responde con el problema «plan resumido», se re-despacha una vez con el plan íntegro, sin contar como esa repetición. No cuenta como ciclo.
+- **Explorador(es):** con varios, vuelven todos en el mismo turno; fusiona sin reescribir: con uno solo, su reporte pasa tal cual; con varios, se unen las secciones ARCHIVOS, TESTS, ACOPLAMIENTOS, DATOS y DUDAS con cada `ruta:línea` una sola vez y las contradicciones como DUDA. Al planificador y al revisor del plan solo les pasas lo que aplica al pedido. Si uno falla o vuelve sin reporte, sigue con los demás y lee poco su área o relanza ese solo, una vez. Si sus DUDAS cambian el plan, resuélvelas leyendo tú (poco) o llévalas al plan como pregunta.
+- **Revisor del plan:** `APROBADO` → sigue a la aprobación. `AJUSTAR` → no se relanza al planificador ni al `revisor-plan`: el orquestador aplica lo menor o aditivo (un campo faltante, un archivo olvidado, un «hecho cuando» vago, otro orden) y muestra qué cambió. Lo que cambia el enfoque (contratos, tipos o datos de varias subtareas, o el reparto de archivos entre ellas) no lo rediseña: va tal cual bajo el plan, en «Revisión del plan: para decidir», y lo decide el usuario en la aprobación. Ante la duda entre menor y que cambia el enfoque, va a «para decidir». Si falla o vuelve sin VEREDICTO claro, se repite una vez; si sigue igual, se sigue sin ella avisando «revisión del plan no disponible». Si responde con el problema «plan resumido», se re-despacha una vez con el plan íntegro, sin contar como esa repetición. No cuenta como ciclo.
 - **Ejecutor:** siempre `estado.mjs --cambios <BASE_Sn> --desde <DESDE_Sn> --permitidos "<…>"`.
   - `ALCANCE: FUERA` → AskUserQuestion: «Aceptar» (amplía el alcance) / «Restaurar» (corrección que deja esos archivos como en la base) / «Detener».
   - `ESTADO: BLOQUEADO` (con o sin `NECESITA_ALCANCE:`) → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / detener. No cuenta como ciclo.
   - `ESTADO: FALLA`, reporte sin `RESULTADO: VERDE` (salvo proyecto `SIN PASOS`) o salida parcial (tope de turnos) → cuenta como ciclo: Corrección con la falla. No mandes al revisor algo rojo.
-- **Revisor:** APROBADO → sigue. RECHAZADO → Corrección con la lista PROBLEMAS y revisión de nuevo; un ciclo = corrección + revisión. Sin VEREDICTO claro = RECHAZADO.
-- **Revisión integral:** RECHAZADO → una Corrección con sus PROBLEMAS y, hecha, la integral de nuevo con el mismo despacho (un ciclo). Si falla o vuelve sin VEREDICTO claro, se relanza una vez; si sigue igual, cuenta como RECHAZADO.
+  - Sin FUERA ni BLOQUEADO, corre tu `verificar.mjs`: `--rapido` si la subtarea es `Crítica: no`; la completa si es `sí`, si falta el campo o si la corrección viene de la revisión final (en ese caso actualiza `VERIFICACIÓN FINAL`). Un ROJO nuevo (que no estuviera ya en la verificación inicial) cuenta como ciclo: Corrección con la falla y sin revisor. Con VERDE o SIN PASOS va el revisor, con esa línea en `VERIFICACIÓN DEL ORQUESTADOR`.
+- **Revisor:** APROBADO → anota su línea para `YA REVISADO` (sus OBSERVACIONES en ≤ 12 palabras) y sigue. RECHAZADO → Corrección con la lista PROBLEMAS y revisión de nuevo con su `REVISIÓN ANTERIOR`; un ciclo = corrección + revisión. Sin VEREDICTO claro = RECHAZADO.
+- **Revisión final:** RECHAZADO → Corrección con sus PROBLEMAS y revisión final de nuevo con el mismo despacho más `REVISIÓN ANTERIOR` (un ciclo). Hasta 2 ciclos si la Clasificación del plan es CRÍTICO y 1 si es «sin criterios». Si falla o vuelve sin VEREDICTO claro, se relanza una vez; si sigue igual, cuenta como RECHAZADO.
 - **Ciclos agotados** → DETENIDO: no despachas más y cierras.
 
 ## 7. Cierre
@@ -173,10 +185,9 @@ Corre `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<
 
 ```
 CIERRE · <título> — COMPLETO | DETENIDO en <paso>
-Modo: normal | ligero | ligero → normal (<motivo>)
 Cambios: <archivo — qué, una línea c/u>
 Verificación final: <tabla y RESULTADO, copiados>
-Revisión: S1 APROBADO (0 ciclos) · …
+Revisión: S1 APROBADO (0 ciclos) · … · final APROBADO (<c> ciclos)
 Riesgos pendientes: <… | ninguno>
 Queda para ti: <… | nada>
 Reversión: <solo si DETENIDO o con riesgos: comandos exactos (git restore --source=<BASE> --worktree -- <archivos>; borrar nuevos). No los corres sin OK>
@@ -187,6 +198,6 @@ Consumo: contexto final por rol <…> (subagent_tokens: no es gasto) · gasto re
 
 ## 8. `continuar`
 
-`continuar` entra por /implementador. Si el último RELEVO de la conversación es `inicio` o `continuación` y la tarea no cerró, relevo `continuación` a `implementador-ligero` con ESTADO; si es `vuelta`, no hay ninguno o hay fork mode, sigue en normal.
+`continuar` entra por /implementador y sigue en esta misma skill.
 
 Con el pedido `continuar`: no explores ni planifiques de nuevo, y la BASE que imprima un estado.mjs nuevo NO es la base global. Busca en la conversación el último plan, si fue aprobado, `BASE_GLOBAL`/`DESDE_GLOBAL` y la BASE y el estado de cada subtarea; mira el árbol con `estado.mjs --cambios` contra la base global. Plan sin aprobar → pide aprobación. Retoma en la primera subtarea no aprobada, con los ciclos que le queden. Sin plan en la conversación: dilo y termina.

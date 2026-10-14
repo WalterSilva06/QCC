@@ -102,9 +102,9 @@ export type Actividad = Record<string, ActividadFila>
 
 /** El flujo `/implementador` o `/documentar` de la sesión y dónde va. */
 export type Flujo = {
-  /** La skill que lo inició. `implementador-ligero` es de flujos guardados de antes de los modos. */
+  /** La skill que lo inició. `implementador-ligero` es legado: de flujos guardados de antes de los modos (0.9.x). */
   nombre: 'implementador' | 'implementador-ligero' | 'documentar'
-  /** Modo de `/implementador`: lo escribe un relevo o un flujo abierto con `RELEVO`. Si falta, es `normal` (también en los flujos guardados de antes). */
+  /** Legado de 0.10–0.11: ya no se escribe ni se lee; se tolera en flujos guardados y se ignora. */
   modo?: 'normal' | 'ligero'
   /** `auditar`: `/documentar` con pedido de auditoría (otros pasos); `null` en el resto. */
   variante: 'auditar' | null

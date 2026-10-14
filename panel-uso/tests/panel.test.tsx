@@ -4,8 +4,6 @@ import type { Engine } from 'claude-code/testing'
 
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
-  ESFUERZO_LIGERO,
-  MODELO_LIGERO,
   PASOS,
   PASOS_AUDITAR,
   abrirEspera,
@@ -17,14 +15,11 @@ import {
   congelarConsumo,
   consumoDeFlujo,
   cuadradosDeFila,
-  esRelevo,
   iniciarFlujo,
   marcarOrquestador,
   nodos,
   nombreOrquestador,
   pasosDe,
-  pedidoDelOrquestador,
-  relevarFlujo,
   resumenFlujo,
   senalAlTerminar,
   senalDeHerramienta,
@@ -1772,105 +1767,23 @@ describe('flujo (puro)', () => {
     })
   })
 
-  test('iniciarFlujo con RELEVO abre implementador con el modo de la skill', async () => {
+  test('iniciarFlujo con RELEVO no escribe modo', async () => {
     const base = { variante: null, paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
     const relevo = '**Pedido:** RELEVO · inicio\nPEDIDO: arreglar el panel'
     const uso: Flujo['usoBase'] = { 'Opus 5.5|high|principal': [100, 10] }
 
-    expect(iniciarFlujo('implementador-ligero', relevo)).toEqual({ ...base, nombre: 'implementador', modo: 'ligero' })
-    expect(iniciarFlujo('implementador', relevo)).toEqual({ ...base, nombre: 'implementador', modo: 'normal' })
-    expect(iniciarFlujo('/claude-config:implementador-ligero', relevo)).toEqual({ ...base, nombre: 'implementador', modo: 'ligero' })
-    expect(iniciarFlujo('implementador-ligero', relevo, 5_000, uso)).toEqual({
-      ...base,
-      nombre: 'implementador',
-      modo: 'ligero',
-      inicio: 5_000,
-      desde: 5_000,
-      usoBase: uso,
-    })
-    expect(iniciarFlujo('implementador', relevo, 5_000, uso)).toEqual({
-      ...base,
-      nombre: 'implementador',
-      modo: 'normal',
-      inicio: 5_000,
-      desde: 5_000,
-      usoBase: uso,
-    })
-    // Sin la marca, igual que antes: el ligero sigue abriendo el flujo viejo y el normal no lleva modo.
-    expect(iniciarFlujo('implementador-ligero', '**Pedido:** arreglar el panel')).toEqual({ ...base, nombre: 'implementador-ligero' })
-    expect(iniciarFlujo('implementador', '**Pedido:** arreglar el panel')).toEqual({ ...base, nombre: 'implementador' })
+    // Con o sin la marca: implementador abre implementador y el ligero abre el flujo viejo (legado), nunca con modo.
+    for (const texto of [relevo, '**Pedido:** arreglar el panel']) {
+      expect(iniciarFlujo('implementador', texto)).toEqual({ ...base, nombre: 'implementador' })
+      expect(iniciarFlujo('/claude-config:implementador', texto)).toEqual({ ...base, nombre: 'implementador' })
+      expect(iniciarFlujo('implementador-ligero', texto)).toEqual({ ...base, nombre: 'implementador-ligero' })
+      expect(iniciarFlujo('/claude-config:implementador-ligero', texto)).toEqual({ ...base, nombre: 'implementador-ligero' })
+    }
+
+    expect(iniciarFlujo('implementador', relevo, 5_000, uso)).toEqual({ ...base, nombre: 'implementador', inicio: 5_000, desde: 5_000, usoBase: uso })
+    expect(iniciarFlujo('implementador', relevo) as Flujo).not.toHaveProperty('modo')
     // Con la marca, documentar no cambia.
     expect(iniciarFlujo('documentar', relevo)).toEqual({ ...base, nombre: 'documentar' })
-  })
-
-  test('relevarFlujo conserva paso, tiempos, usoBase y contadores y solo fija el modo', async () => {
-    const antes: Flujo = {
-      nombre: 'implementador',
-      variante: null,
-      paso: 5,
-      ejecuto: true,
-      estado: 'en curso',
-      inicio: 1_000,
-      desde: 4_000,
-      tiempos: { 3: 500, 4: 700 },
-      esperaUsuario: { 4: 900 },
-      preguntaDesde: null,
-      fin: null,
-      usoBase: { 'Opus 5.5|high|principal': [100, 10] },
-      totalExploradores: 2,
-      planes: 1,
-      ejecuciones: 1,
-      revisiones: { 5: 1 },
-    }
-    const inicio = '**Pedido:** RELEVO · inicio\nPEDIDO: arreglar el panel'
-    const vuelta = '**Pedido:** RELEVO · vuelta\nPEDIDO: arreglar el panel'
-
-    const ligero = relevarFlujo(antes, 'implementador-ligero', inicio)
-    expect(ligero).toEqual({ ...antes, modo: 'ligero' })
-    expect(antes.modo).toBeUndefined()
-
-    const normal = relevarFlujo(ligero, 'implementador', vuelta)
-    expect(normal).toEqual({ ...antes, modo: 'normal' })
-
-    // Con el mismo modo, devuelve el mismo flujo.
-    expect(relevarFlujo(ligero, 'implementador-ligero', vuelta)).toBe(ligero)
-    expect(relevarFlujo(normal, 'implementador', inicio)).toBe(normal)
-  })
-
-  test('relevarFlujo es null sin marca, sin flujo, con el flujo terminado, en documentar o en un implementador-ligero guardado, o con otra skill', async () => {
-    const f: Flujo = { nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
-    const relevo = '**Pedido:** RELEVO · continuación\nPEDIDO: x'
-
-    expect(relevarFlujo(f, 'implementador-ligero', relevo)).not.toBeNull()
-    expect(relevarFlujo(f, 'implementador-ligero', '**Pedido:** arreglar el panel')).toBeNull()
-    expect(relevarFlujo(f, 'implementador-ligero', '')).toBeNull()
-    expect(relevarFlujo(f, 'implementador', '**Pedido:** relevo del panel')).toBeNull()
-    expect(relevarFlujo(null, 'implementador-ligero', relevo)).toBeNull()
-    for (const estado of ['completo', 'detenido', 'interrumpido'] as const) {
-      expect(relevarFlujo({ ...f, estado }, 'implementador-ligero', relevo)).toBeNull()
-    }
-    expect(relevarFlujo({ ...f, nombre: 'documentar' }, 'implementador-ligero', relevo)).toBeNull()
-    expect(relevarFlujo({ ...f, nombre: 'implementador-ligero' }, 'implementador-ligero', relevo)).toBeNull()
-    expect(relevarFlujo({ ...f, nombre: 'implementador-ligero' }, 'implementador', relevo)).toBeNull()
-    expect(relevarFlujo(f, 'documentar', relevo)).toBeNull()
-    expect(relevarFlujo(f, 'simplify', relevo)).toBeNull()
-  })
-
-  test('RELEVO fuera de la posición del pedido no cuenta: la marca va justo después de **Pedido:**', async () => {
-    const base = { variante: null, paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
-    const f: Flujo = { nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
-    // El cuerpo expandido de la skill trae `RELEVO` más abajo, en las instrucciones, aunque el pedido sea normal.
-    const instrucciones = '**Pedido:** arreglar el panel\n\n- Si el pedido empieza con `RELEVO · vuelta`, sigue en el paso 3'
-    const enOtraLinea = '**Pedido:** arreglar el panel\nRELEVO · inicio'
-    const antes = 'RELEVO · inicio\n**Pedido:** arreglar el panel'
-
-    for (const texto of [instrucciones, enOtraLinea, antes]) {
-      expect(esRelevo(texto)).toBe(false)
-      expect(relevarFlujo(f, 'implementador', texto)).toBeNull()
-      expect(relevarFlujo(f, 'implementador-ligero', texto)).toBeNull()
-      expect(iniciarFlujo('implementador', texto)).toEqual({ ...base, nombre: 'implementador' })
-      expect(iniciarFlujo('implementador-ligero', texto)).toEqual({ ...base, nombre: 'implementador-ligero' })
-    }
   })
 
   test('senalDeHerramienta: estado.mjs con sus opciones, verificar.mjs, ~ y $HOME, y no un cat', async () => {
@@ -1949,6 +1862,7 @@ describe('flujo (puro)', () => {
       agente('explorador'),
       agenteFin('explorador'),
       agente('planificador'),
+      agente('revisor-plan'),
       pregunta(true),
       ...subtarea,
       ...subtarea,
@@ -1958,10 +1872,23 @@ describe('flujo (puro)', () => {
       verificar,
     ]
 
-    expect(pasos('implementador', secuencia)).toEqual([0, 0, 1, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
+    expect(pasos('implementador', secuencia)).toEqual([0, 0, 1, 2, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
   })
 
-  test('revisor-plan en Plan: no mueve el paso ni cuenta como plan o revisión; un revisor en Plan sigue yendo a Ejecución', async () => {
+  test('planificador lleva al paso 2 y cuenta el plan', async () => {
+    const f: Flujo = { nombre: 'implementador', variante: null, paso: 1, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+
+    const plan = avanzar(f, agente('planificador'), 1_000)
+    expect(plan).toMatchObject({ paso: 2, planes: 1 })
+    // Un re-plan desde la revisión del plan vuelve al 2 y suma otro.
+    const revisado = avanzar(plan, agente('revisor-plan'), 2_000)
+    expect(revisado?.paso).toBe(3)
+    expect(avanzar(revisado, agente('planificador'), 3_000)).toMatchObject({ paso: 2, planes: 2 })
+    // En el flujo viejo `implementador-ligero` el planificador no mueve nada.
+    expect(pasos('implementador-ligero', [agente('planificador')])).toEqual([0])
+  })
+
+  test('revisor-plan lleva al paso 3', async () => {
     const secuencia = [
       estado('preflight'),
       agente('explorador'),
@@ -1971,7 +1898,7 @@ describe('flujo (puro)', () => {
       pregunta(true),
     ]
 
-    expect(pasos('implementador', secuencia)).toEqual([0, 1, 2, 3, 3, 4])
+    expect(pasos('implementador', secuencia)).toEqual([0, 1, 2, 2, 3, 4])
 
     const f: Flujo = {
       nombre: 'implementador',
@@ -1986,15 +1913,22 @@ describe('flujo (puro)', () => {
       fin: null,
     }
 
-    // Ni al lanzarse ni al volver cambia nada: ni el paso, ni `planes`, ni `revisiones`.
+    // En el paso 3 no cambia nada: ni el paso, ni `planes`, ni `revisiones`; el fin del agente tampoco.
     expect(avanzar(f, agente('revisor-plan'), 1_000)).toEqual(f)
     expect(avanzar(f, agenteFin('revisor-plan'), 1_000)).toEqual(f)
 
-    // El `revisor` de verdad, desde Plan, pasa a Ejecución y se cuenta ahí.
+    // Desde el plan sí lleva al 3, sin contar como plan ni como revisión.
+    const plan: Flujo = { ...f, paso: 2 }
+    expect(avanzar(plan, agente('revisor-plan'), 1_000)).toEqual({ ...f, tiempos: { 2: 1_000 }, desde: 1_000 })
+
+    // El `revisor` de verdad, desde la revisión del plan, pasa a Ejecución y se cuenta ahí.
     expect(avanzar(f, agente('revisor'), 1_000)).toMatchObject({ paso: 5, revisiones: { 5: 1 } })
+
+    // En el flujo viejo `implementador-ligero` no mueve nada.
+    expect(pasos('implementador-ligero', [agente('revisor-plan')])).toEqual([0])
   })
 
-  test('implementador NORMAL: sin planificador salta de Clasificación a Aprobación', async () => {
+  test('implementador NORMAL: sin planificador salta de Plan a Aprobación', async () => {
     expect(
       pasos('implementador', [estado('preflight'), agente('explorador'), agenteFin('explorador'), pregunta(true), estado('base')]),
     ).toEqual([0, 1, 2, 4, 5])
@@ -2072,11 +2006,21 @@ describe('flujo (puro)', () => {
     ])
     expect(PASOS_AUDITAR).toEqual(['Preflight', 'Modo', 'Plan de auditoría', 'Lectura', 'Corrección', 'Revisión', 'Cierre'])
     expect(PASOS.documentar).toEqual(['Preflight', 'Modo', 'Ficha', 'Lectura', 'Escritura', 'Revisión', 'Cierre'])
-    expect(PASOS.implementador).toEqual(['Preflight', 'Exploración', 'Clasificación', 'Plan', 'Aprobación', 'Ejecución', 'Verificación final', 'Cierre'])
+    expect(PASOS.implementador).toEqual(['Preflight', 'Exploración', 'Plan', 'Revisión del plan', 'Aprobación', 'Ejecución', 'Verificación final', 'Cierre'])
     expect(PASOS['implementador-ligero']).toEqual(['Preflight', 'Exploración', 'Escalado', 'Plan breve', 'Aprobación', 'Ejecución', 'Revisión', 'Cierre'])
     expect(pasosDe(f as Flujo)).toBe(PASOS_AUDITAR)
     expect(pasosDe(iniciarFlujo('documentar', '') as Flujo)).toBe(PASOS.documentar)
     expect(resumenFlujo(avanzar(avanzar(f, pregunta(false)), agente('lector')))).toBe('/documentar auditar · Lectura')
+  })
+
+  test('PASOS.implementador: Plan en el paso 2 y Revisión del plan en el 3', async () => {
+    expect(PASOS.implementador).toHaveLength(8)
+    expect(PASOS.implementador[2]).toBe('Plan')
+    expect(PASOS.implementador[3]).toBe('Revisión del plan')
+    expect(PASOS.implementador.slice(4)).toEqual(['Aprobación', 'Ejecución', 'Verificación final', 'Cierre'])
+    // El legado conserva su forma.
+    expect(PASOS['implementador-ligero']).toHaveLength(8)
+    expect(PASOS['implementador-ligero'][3]).toBe('Plan breve')
   })
 
   test('sin flujo o terminado: ninguna señal lo cambia ni lo revive', async () => {
@@ -2153,7 +2097,7 @@ describe('flujo (puro)', () => {
     expect(avanzar(f, pregunta(false), 50_000)).toEqual(f)
     expect(avanzar(f, agenteFin('explorador'), 60_000)).toEqual(f)
 
-    // Salta de Clasificación a Ejecución: el paso 2 suma y los saltados (3 y 4) no tienen tiempo.
+    // Salta de Plan a Ejecución: el paso 2 suma y los saltados (3 y 4) no tienen tiempo.
     f = avanzar(f, estado('base'), 12_000)
     expect(tramo(f)).toEqual({ paso: 5, desde: 12_000, tiempos: { 0: 3_000, 1: 6_000, 2: 2_000 } })
 
@@ -2253,14 +2197,46 @@ describe('flujo (puro)', () => {
     expect(resumenFlujo(null)).toBe('sin flujo en esta sesión')
   })
 
-  test('resumenFlujo muestra el modo escrito y nada sin él', async () => {
-    const f: Flujo = { nombre: 'implementador', variante: null, paso: 3, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+  test('resumenFlujo no muestra el modo aunque el flujo guardado lo traiga', async () => {
+    const f: Flujo = { nombre: 'implementador', variante: null, paso: 2, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
 
-    expect(resumenFlujo({ ...f, modo: 'ligero' }, 4_000)).toBe('/implementador ligero · Plan · 4 s')
-    expect(resumenFlujo({ ...f, modo: 'normal' }, 4_000)).toBe('/implementador normal · Plan · 4 s')
-    expect(resumenFlujo({ ...f, modo: 'ligero' })).toBe('/implementador ligero · Plan')
+    expect(resumenFlujo({ ...f, modo: 'ligero' }, 4_000)).toBe('/implementador · Plan · 4 s')
+    expect(resumenFlujo({ ...f, modo: 'normal' }, 4_000)).toBe('/implementador · Plan · 4 s')
+    expect(resumenFlujo({ ...f, modo: 'ligero' })).toBe('/implementador · Plan')
     expect(resumenFlujo(f, 4_000)).toBe('/implementador · Plan · 4 s')
     expect(resumenFlujo(f)).toBe('/implementador · Plan')
+  })
+
+  test('flujo 0.11.x guardado con modo ligero y paso 3 sigue avanzando y se resume sin modo', async () => {
+    // Mismo largo e índices que antes: solo cambió la etiqueta del paso 3 (de Plan a Revisión del plan).
+    const guardado: Flujo = {
+      nombre: 'implementador',
+      modo: 'ligero',
+      variante: null,
+      paso: 3,
+      ejecuto: false,
+      planes: 1,
+      estado: 'en curso',
+      inicio: 0,
+      desde: 0,
+      tiempos: {},
+      fin: null,
+    }
+
+    expect(resumenFlujo(guardado, 4_000)).toBe('/implementador · Revisión del plan · 4 s')
+    expect(nodos(guardado, 4_000)).toHaveLength(9)
+    expect(nodos(guardado, 4_000).find(n => n.estado === 'actual')).toEqual({ etiqueta: 'Revisión del plan', estado: 'actual', ms: 4_000 })
+
+    // Avanza como un implementador normal: el modo guardado se ignora, no se borra ni se usa.
+    const aprobado = avanzar(guardado, pregunta(true), 5_000)
+    expect(aprobado).toMatchObject({ paso: 4, modo: 'ligero' })
+    const ejecutando = avanzar(aprobado, agente('ejecutor'), 6_000)
+    expect(ejecutando).toMatchObject({ paso: 5, ejecuto: true, ejecuciones: 1 })
+    // El revisor cuenta en Ejecución y la verificación pasa a Verificación final, como en el normal.
+    const revisado = avanzar(ejecutando, agente('revisor'), 7_000)
+    expect(revisado).toMatchObject({ paso: 5, revisiones: { 5: 1 } })
+    expect(avanzar(revisado, verificar, 8_000)?.paso).toBe(6)
+    expect(resumenFlujo(avanzar(revisado, verificar, 8_000), 9_000)).toBe('/implementador · Verificación final · 9 s')
   })
 
   test('las funciones no mutan el flujo que reciben', async () => {
@@ -2409,7 +2385,7 @@ describe('flujo (puro)', () => {
     expect(congelado).toEqual(f)
   })
 
-  test('un flujo con la forma 0.9.4 (sin exploradores ni exploro) no lanza: su explorador en vuelo, al volver, pasa a Clasificación', async () => {
+  test('un flujo con la forma 0.9.4 (sin exploradores ni exploro) no lanza: su explorador en vuelo, al volver, pasa a Plan', async () => {
     const viejo: Flujo = {
       nombre: 'implementador',
       variante: null,
@@ -2427,7 +2403,7 @@ describe('flujo (puro)', () => {
     expect(Number.isNaN(vuelto?.exploradores)).toBe(false)
     expect(avanzar(viejo, agente('explorador'), 2_000)).toMatchObject({ paso: 1, exploradores: 1 })
 
-    // La forma 0.9.3 en Exploración: al volver su explorador pasa a Clasificación.
+    // La forma 0.9.3 en Exploración: al volver su explorador pasa a Plan.
     const v093 = { nombre: 'implementador', variante: null, paso: 1, ejecuto: false, estado: 'en curso' } as unknown as Flujo
     expect(avanzar(v093, agenteFin('explorador'), 5_000)?.paso).toBe(2)
 
@@ -2443,7 +2419,7 @@ describe('flujo (puro)', () => {
     for (const s of [A, A, A, F, F, F]) f = avanzar(f, s, 1_000)
     expect(f).toMatchObject({ totalExploradores: 3, exploradores: 0, paso: 2 })
 
-    // Otra tanda desde Clasificación: el total sigue y suma; los en vuelo reinician.
+    // Otra tanda desde Plan: el total sigue y suma; los en vuelo reinician.
     f = avanzar(f, A, 2_000)
     expect(f).toMatchObject({ totalExploradores: 4, exploradores: 1, paso: 1 })
 
@@ -2551,15 +2527,15 @@ describe('flujo (puro)', () => {
 
     const lista = nodos(f as Flujo)
 
-    expect(lista[3]).toEqual({ etiqueta: 'Plan', estado: 'pasado', veces: 2 })
+    expect(lista[2]).toEqual({ etiqueta: 'Plan', estado: 'pasado', veces: 2 })
     expect(lista[5]).toEqual({ etiqueta: 'Ejecución', estado: 'pasado', veces: 3, revisiones: 3 })
     expect(lista[6]).toEqual({ etiqueta: 'Verificación final', estado: 'actual', revisiones: 2 })
-    expect(lista.filter((_, i) => ![3, 5, 6].includes(i)).some(n => n.veces !== undefined || n.revisiones !== undefined)).toBe(false)
+    expect(lista.filter((_, i) => ![2, 5, 6].includes(i)).some(n => n.veces !== undefined || n.revisiones !== undefined)).toBe(false)
 
     // Se conservan tras terminar.
     const fin = terminarFlujo(f, 'answer', 'CIERRE · ok', 2_000) as Flujo
     expect(fin).toMatchObject({ planes: 2, ejecuciones: 3, revisiones: { 5: 3, 6: 2 } })
-    expect(nodos(fin)[3].veces).toBe(2)
+    expect(nodos(fin)[2].veces).toBe(2)
     expect(nodos(fin)[5]).toMatchObject({ veces: 3, revisiones: 3 })
     expect(nodos(fin)[6].revisiones).toBe(2)
     expect(nodos(fin).at(-1)).toEqual({ etiqueta: 'Terminado', estado: 'actual' })
@@ -2577,6 +2553,22 @@ describe('flujo (puro)', () => {
     expect(() => avanzar(congelado, R, 4_000)).not.toThrow()
     expect(avanzar(congelado, R, 4_000)?.revisiones).toEqual({ 5: 3, 6: 3 })
     expect(congelado.revisiones).toEqual({ 5: 3, 6: 2 })
+  })
+
+  test('una sola subtarea: la revisión final cuenta en Verificación final', async () => {
+    // Una sola subtarea: su ejecutor y su revisor, verificar.mjs y luego la revisión final.
+    const senales = [estado('base'), agente('ejecutor'), estado('cambios'), agente('revisor'), verificar, agente('revisor')]
+    let f = iniciarFlujo('implementador', '', 0)
+    expect(pasos('implementador', senales)).toEqual([5, 5, 5, 5, 6, 6])
+    for (const s of senales) f = avanzar(f, s, 1_000)
+
+    expect(f).toMatchObject({ paso: 6, ejecuciones: 1, revisiones: { 5: 1, 6: 1 } })
+
+    const lista = nodos(f as Flujo)
+
+    expect(lista[5]).toEqual({ etiqueta: 'Ejecución', estado: 'pasado', veces: 1, revisiones: 1 })
+    expect(lista[6]).toEqual({ etiqueta: 'Verificación final', estado: 'actual', revisiones: 1 })
+    expect(lista.filter((_, i) => ![5, 6].includes(i)).some(n => n.veces !== undefined || n.revisiones !== undefined)).toBe(false)
   })
 
   test('contadores en /implementador-ligero (Ejecución y Revisión) y nunca en /documentar', async () => {
@@ -2613,7 +2605,7 @@ describe('flujo (puro)', () => {
     }
 
     expect(nodos(viejo, 2_000)[5]).toMatchObject({ etiqueta: 'Ejecución', veces: 1 })
-    expect(nodos(viejo, 2_000)[3].veces).toBeUndefined()
+    expect(nodos(viejo, 2_000)[2].veces).toBeUndefined()
     expect(avanzar(viejo, agente('ejecutor'), 2_000)?.ejecuciones).toBe(2)
     expect(avanzar(viejo, agente('revisor'), 2_000)?.revisiones).toEqual({ 5: 1 })
     expect(avanzar(viejo, agente('planificador'), 2_000)?.planes).toBe(1)
@@ -2656,7 +2648,7 @@ describe('flujo (puro)', () => {
     const lista = f ? nodos(f, 600_000) : []
     expect(lista[4]).toMatchObject({ etiqueta: 'Aprobación', ms: 10_000, esperaUsuario: 300_000 })
     expect(lista[5]).toMatchObject({ etiqueta: 'Ejecución', ms: 100_000, esperaUsuario: 60_000 })
-    expect(lista[3].esperaUsuario).toBeUndefined()
+    expect(lista[2].esperaUsuario).toBeUndefined()
     expect(lista.at(-1)).toEqual({ etiqueta: 'Terminado', estado: 'actual', ms: 140_000, esperaUsuario: 360_000 })
     expect(resumenFlujo(f, 600_000)).toBe('/implementador · Terminado · 2 min 20 s')
     expect(nodos(f as Flujo).some(n => n.esperaUsuario !== undefined)).toBe(false)
@@ -2695,13 +2687,13 @@ describe('flujo (puro)', () => {
     g = avanzar(g, estado('base'), 40_000) as Flujo
     expect(g).toMatchObject({ paso: 5, desde: 40_000, preguntaDesde: 30_000 })
     // Plan trabajó hasta abrir la pregunta (30 s); el cambio de paso no le suma nada más.
-    expect(g.tiempos[3]).toBe(30_000)
+    expect(g.tiempos[2]).toBe(30_000)
     const enCurso = nodos(g, 50_000)
-    expect(enCurso[3]).toEqual({ etiqueta: 'Plan', estado: 'pasado', ms: 30_000, veces: 1 })
+    expect(enCurso[2]).toEqual({ etiqueta: 'Plan', estado: 'pasado', ms: 30_000, veces: 1 })
     expect(enCurso[5]).toEqual({ etiqueta: 'Ejecución', estado: 'actual', ms: 0, esperaUsuario: 20_000 })
     g = cerrarEspera(g, 70_000) as Flujo
     expect(g.esperaUsuario).toEqual({ 5: 40_000 })
-    expect(nodos(g, 80_000)[3].esperaUsuario).toBeUndefined()
+    expect(nodos(g, 80_000)[2].esperaUsuario).toBeUndefined()
     expect(nodos(g, 80_000)[5]).toEqual({ etiqueta: 'Ejecución', estado: 'actual', ms: 10_000, esperaUsuario: 40_000 })
   })
 
@@ -2983,36 +2975,6 @@ describe('flujo (puro)', () => {
     // Terminado: no cambia.
     const fin = terminarFlujo(opus, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
     expect(marcarOrquestador(fin, 'Sonnet 5.5 high')).toBe(fin)
-  })
-
-  test('pedidoDelOrquestador: Sonnet high solo con /implementador ligero en curso', async () => {
-    const relevo = '**Pedido:** RELEVO · inicio\nPEDIDO: x'
-    const ligero = iniciarFlujo('implementador-ligero', relevo) as Flujo
-    const pedido = { model: 'claude-sonnet-5-5', effort: 'high' }
-
-    expect(MODELO_LIGERO).toBe('claude-sonnet-5-5')
-    expect(ESFUERZO_LIGERO).toBe('high')
-
-    // Sin cambio: no hay flujo, no es /implementador ligero o ya no está en curso.
-    expect(pedidoDelOrquestador(null, 'claude-opus-5-5', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(iniciarFlujo('documentar', relevo) as Flujo, 'claude-opus-5-5', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(iniciarFlujo('implementador', '') as Flujo, 'claude-opus-5-5', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(iniciarFlujo('implementador', relevo) as Flujo, 'claude-opus-5-5', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(relevarFlujo(ligero, 'implementador', relevo), 'claude-opus-5-5', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(terminarFlujo(ligero, 'answer', 'CIERRE · x — COMPLETO', 1_000), 'claude-opus-5-5', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(terminarFlujo(ligero, 'answer', 'CIERRE · x — DETENIDO', 1_000), 'claude-opus-5-5', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(terminarFlujo(ligero, 'abort', undefined, 1_000), 'claude-opus-5-5', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(iniciarFlujo('implementador-ligero', '**Pedido:** x') as Flujo, 'claude-opus-5-5', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(ligero, 'claude-opus-5-5[1m]', 'high')).toBeNull()
-    expect(pedidoDelOrquestador(ligero, 'claude-sonnet-5-5', 'high')).toBeNull()
-
-    // Cambio: ligero en curso con otro modelo u otro esfuerzo.
-    expect(pedidoDelOrquestador(ligero, 'claude-opus-5-5', 'high')).toEqual(pedido)
-    expect(pedidoDelOrquestador(ligero, 'claude-opus-5-5', 'max')).toEqual(pedido)
-    expect(pedidoDelOrquestador(ligero, 'claude-opus-5-5', undefined)).toEqual(pedido)
-    expect(pedidoDelOrquestador(ligero, 'claude-haiku-5-5', 'low')).toEqual(pedido)
-    expect(pedidoDelOrquestador(ligero, 'claude-sonnet-5-5', 'medium')).toEqual(pedido)
-    expect(pedidoDelOrquestador(ligero, 'claude-sonnet-5-5', 3)).toEqual(pedido)
   })
 })
 
@@ -3324,7 +3286,7 @@ function motorStore(on: On, inicial: Record<string, unknown> = {}) {
 
 /**
  * Lo que el panel dibuja de «Flujo» abierta en `/implementador · Ejecución`, texto por texto,
- * con los tiempos del recorrido del test (5 s, 20 s, 3 s, 1 min y 1 min 30 s en curso; `Plan` se saltó y no lleva tiempo)
+ * con los tiempos del recorrido del test (5 s, 20 s, 3 s, 1 min y 1 min 30 s en curso; `Revisión del plan` se saltó y no lleva tiempo)
  * y el conteo de exploradores lanzados (` ×1`) junto a `Exploración`, antes de su tiempo.
  */
 const FLUJO_EJECUCION = [
@@ -3340,11 +3302,11 @@ const FLUJO_EJECUCION = [
   ' 20 s',
   '│',
   '✓ ',
-  'Clasificación',
+  'Plan',
   ' 3 s',
   '│',
   '✓ ',
-  'Plan',
+  'Revisión del plan',
   '│',
   '✓ ',
   'Aprobación',
@@ -3550,101 +3512,30 @@ describe('flujo en el panel', () => {
     return vistos
   }
 
-  const RELEVO_INICIO = '**Pedido:** RELEVO · inicio\nPEDIDO: x'
-
-  test('en modo ligero el hilo principal pide Sonnet high; subagentes, normal y sin flujo no cambian', async ($, on) => {
+  test('turn.step no reescribe el modelo con un flujo guardado en modo ligero', async ($, on) => {
     preparar(on)
     const vistos = motorVisto(on)
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     await ui.press({ key: 'flujo-plegar' })
 
-    // Sin flujo: llega tal cual.
+    // Un flujo `implementador-ligero` (legado de antes de los modos), como el que sigue vivo tras recargar.
+    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
+    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador-ligero · Preflight · 0 s')
+
+    // El hilo principal llega a `next` con el modelo y el esfuerzo originales; los de un subagente, igual.
     await paso($, 'claude-opus-5-5', 'high')
     expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
-
-    // /implementador normal: tampoco cambia.
-    await $.skill.prompt({ skill: 'implementador', text: '' })
-    await paso($, 'claude-opus-5-5', 'high')
-    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
-
-    // Relevo a ligero: el hilo principal pide Sonnet high; un subagente conserva el suyo.
-    await $.skill.prompt({ skill: 'implementador-ligero', text: RELEVO_INICIO })
-    await paso($, 'claude-opus-5-5', 'high')
-    expect(vistos.at(-1)).toEqual({ model: 'claude-sonnet-5-5', effort: 'high' })
-    await paso($, 'claude-opus-5-5', 'high', 'agente-A')
-    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
-    expect((await textosDe(ui)).map(t => t.trim())).toContain('orquestador Sonnet 5.5 high')
-
-    // Vuelta a normal por RELEVO: el hilo principal recupera el modelo de la sesión.
-    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** RELEVO · vuelta\nPEDIDO: x' })
-    await paso($, 'claude-opus-5-5', 'high')
-    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
-    await ui.unmount()
-  })
-
-  test('al terminar el flujo ligero las peticiones vuelven al modelo de la sesión', async ($, on) => {
-    preparar(on)
-    const vistos = motorVisto(on)
-    await $.session.measure(MEDIDA)
-
-    await $.skill.prompt({ skill: 'implementador-ligero', text: RELEVO_INICIO })
-    await paso($, 'claude-opus-5-5', 'high')
-    expect(vistos.at(-1)).toEqual({ model: 'claude-sonnet-5-5', effort: 'high' })
-
-    await $.turn.complete(respuesta('ok'))
-    await paso($, 'claude-opus-5-5', 'high')
-    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
-
-    // Un /implementador-ligero escrito a mano, sin RELEVO, no es el modo ligero de /implementador.
-    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** x' })
-    await paso($, 'claude-opus-5-5', 'high')
-    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
-  })
-
-  test('en ligero la fila anotada y el esfuerzo usan el modelo pedido, no el original', async ($, on) => {
-    const { guardados } = preparar(on)
-    motorVisto(on)
-    await $.session.measure(MEDIDA)
-
-    await $.skill.prompt({ skill: 'implementador-ligero', text: RELEVO_INICIO })
     await paso($, 'claude-opus-5-5', 'medium')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-opus-5-5', effort: 'medium' })
+    await paso($, 'claude-haiku-5-5', 'xhigh', 'agente-A')
+    expect(vistos.at(-1)).toEqual({ model: 'claude-haiku-5-5', effort: 'xhigh' })
 
-    const hora = comoRegistro(guardados.get('uso:s1'))[String(inicioDeHora(AHORA))] ?? {}
-    expect(Object.keys(hora)).toContain('flujo|claude-sonnet-5-5|high')
-    expect(Object.keys(hora).filter(k => k.includes('claude-opus-5-5'))).toEqual([])
-
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    const fila = await ui.find({ type: 'Box', text: /^Esfuerzo/ })
-    expect(fila?.text).toContain('high')
-    expect(fila?.text).toContain('claude-sonnet-5-5')
-    expect(fila?.text).not.toContain('medium')
-    await ui.unmount()
-  })
-
-  test('en ligero, si next lanza, el error llega intacto y la fila baja', async ($, on) => {
-    preparar(on)
-    const motor = motorControlado(on, 'claude-sonnet-5-5')
-    await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador-ligero', text: RELEVO_INICIO })
+    // La fila «orquestador» anota el modelo real de la petición del hilo principal.
     await paso($, 'claude-opus-5-5', 'high')
-
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    const abrir = motor.detener('principal')
-    motor.fallan.add('principal')
-    const resultado = paso($, 'claude-opus-5-5', 'high').then(
-      () => null,
-      (err: unknown) => err,
-    )
-    await esperar()
-    expect(await colorDe(ui, 'Sonnet 5.5 high')).toBe('success')
-
-    abrir()
-    const error = await resultado
-    expect(error).toBeInstanceOf(Error)
-    expect((error as Error).message).toMatch(/turn\.step/)
-    expect((error as Error).message).not.toMatch(/panel/i)
-    expect(await colorDe(ui, 'Sonnet 5.5 high')).toBe('subtle')
+    const textos = (await textosDe(ui)).map(t => t.trim())
+    expect(textos).toContain('orquestador Opus 5.5 high')
+    expect(textos).not.toContain('orquestador Sonnet 5.5 high')
     await ui.unmount()
   })
 
@@ -3952,13 +3843,13 @@ describe('flujo en el panel', () => {
     // La etiqueta va en un Box que crece; el tiempo, fuera de él.
     const caja = arbol.slice(0, iEtiqueta).reverse().find(n => n.type === 'Box')
     expect(caja?.props.flexGrow).toBe(1)
-    // Los pasos que nunca corrieron (Exploración, Clasificación) no llevan tiempo.
+    // El paso que nunca corrió (Exploración) no lleva tiempo.
     const textos = await textosDe(ui)
     expect(textos.slice(textos.indexOf('Exploración'), textos.indexOf('Exploración') + 2)).toEqual(['Exploración', '│'])
     await ui.unmount()
   })
 
-  test('mientras corre el explorador el paso es Exploración; al volver, Clasificación', async ($, on) => {
+  test('mientras corre el explorador el paso es Exploración; al volver, Plan', async ($, on) => {
     const motor = preparar(on)
     await $.skill.prompt({ skill: 'implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
@@ -3973,7 +3864,7 @@ describe('flujo en el panel', () => {
 
     abrir()
     await corriendo
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Clasificación · 0 s'])
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Plan · 0 s'])
     await ui.unmount()
   })
 
@@ -4145,7 +4036,7 @@ describe('flujo en el panel', () => {
 
     abrirC()
     await c
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Clasificación · 0 s'])
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Plan · 0 s'])
     await ui.unmount()
   })
 
@@ -4284,7 +4175,7 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('si uno de varios exploradores falla, su error llega intacto y al volver el último el paso pasa a Clasificación', async ($, on) => {
+  test('si uno de varios exploradores falla, su error llega intacto y al volver el último el paso pasa a Plan', async ($, on) => {
     const motor = preparar(on)
     await $.skill.prompt({ skill: 'implementador', text: '' })
 
@@ -4308,7 +4199,7 @@ describe('flujo en el panel', () => {
     const error = await b
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).not.toMatch(/panel/i)
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Clasificación · 0 s'])
+    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Plan · 0 s'])
     await ui.unmount()
   })
 
@@ -4680,76 +4571,23 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('el relevo a modo ligero sigue el mismo flujo: conserva paso, tiempos y filas de exploradores y muestra el modo', async ($, on) => {
-    // Como `explorando`, pero con un reloj del test: con la hora fija el flujo no acumularía tiempo.
-    const reloj = { t: AHORA }
-    on('clock.now', () => ({ value: reloj.t }))
-    on('clock.every', () => ({ value: undefined }))
-    on('clock.after', () => ({ value: undefined }))
-    motorMide(on)
-    motorUsa(on)
-    on('session.id', () => ({ value: 's1' }))
-    motorStore(on)
-    const motor = motorFlujo(on)
-    motorControlado(on, HAIKU)
-    await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
-    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    const abrir = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
-    const vuelos = { A: agente($, 'explorador', 'A'), B: agente($, 'explorador', 'B'), C: agente($, 'explorador', 'C') }
-    await esperar()
-    await paso($, HAIKU, 'high', 'agente-A')
+  test('skill.prompt de /implementador con RELEVO abre flujo nuevo y vacía las filas', async ($, on) => {
+    const { ui, abrir, vuelos } = await explorando($, on)
     expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
     expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
-    reloj.t += 12_000
 
-    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
+    // Ya no hay relevo: una marca RELEVO es un pedido más, el flujo empieza de nuevo y las filas se vacían.
+    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
 
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador ligero · Exploración · 12 s'])
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
-    // Desplegado, el nodo Exploración sigue con sus tres exploradores.
-    await ui.press({ key: 'flujo-plegar' })
-    expect(await textosDe(ui)).toContain(' ×3')
+    const [titulo, resumen] = await desdeFlujo(ui, 2)
+    expect(titulo).toBe('Flujo')
+    expect(resumen).toBe('/implementador · Preflight · 0 s')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(1)
 
     abrir.A()
     abrir.B()
     abrir.C()
     await Promise.all(Object.values(vuelos))
-    await ui.unmount()
-  })
-
-  test('la vuelta a normal por RELEVO no reinicia el flujo', async ($, on) => {
-    const { reloj } = preparar(on)
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
-
-    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** algo' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
-    reloj.t += 5_000
-    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador ligero · Preflight · 5 s'])
-
-    reloj.t += 10_000
-    await agente($, 'planificador')
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador ligero · Plan · 15 s'])
-
-    reloj.t += 5_000
-    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** RELEVO · vuelta\nPEDIDO: x' })
-    const tramo = await desdeFlujo(ui, 8)
-    expect(tramo.slice(0, 2)).toEqual(['Flujo', '/implementador normal · Plan · 20 s'])
-    expect(tramo.slice(2, 5)).toEqual(['✓ ', 'Preflight', ' 15 s'])
-    await ui.unmount()
-  })
-
-  test('RELEVO sin flujo en curso abre /implementador en modo ligero', async ($, on) => {
-    preparar(on)
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])
-
-    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
-
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador ligero · Preflight · 0 s'])
     await ui.unmount()
   })
 
