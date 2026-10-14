@@ -9,6 +9,7 @@ CRÍTICO, además de lo que diga `comun.md` §2: una subtarea que toca alguna de
 | Ruta | Criterio | Por qué |
 |---|---|---|
 | `flujos/**` (skills, agentes, `estado.mjs`, `verificar.mjs`, `guardia.mjs`, `guardia.test.mjs`, `instalar.mjs`, `comun.md`, `pasos.md`) | #1 y #5 | `guardia.mjs` es la seguridad de los subagentes; lo demás lo usan todos los proyectos del usuario |
+| `.claude/implementador.md`, `.claude/implementador.json` | #1 | reglas y config de este flujo (`guardia` en el JSON afloja o aprieta la guardia); solo si el pedido lo dice |
 | `panel-uso/hooks/flujo.ts` | #6 | máquina de estado del flujo, tiempos y esperas |
 | `panel-uso/hooks/register.tsx` | #7 | hooks que envuelven `next` (`tool.call`, `turn.step`, `turn.complete`, `skill.prompt`): un fallo frena una petición al modelo o una herramienta |
 

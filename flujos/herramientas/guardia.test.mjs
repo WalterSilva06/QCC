@@ -125,6 +125,8 @@ test('ejecutor: verificación, lectura y edición dentro del alcance pasan', () 
   deja(edita(R, path.join(R, 'src', 'server', 'citas.ts')))
   deja(edita(R, 'supabase/migrations/20991231000001_prueba.sql', 'Write'))
   deja(edita(R, '.env.example'))
+  deja(edita(R, '.claude/implementador.md'))
+  deja(edita(R, '.claude/implementador.json'))
   if (WIN) deja(edita(R, `/${R[0].toLowerCase()}${R.slice(2).replace(/\\/g, '/')}/src/x.ts`))
 })
 
@@ -189,6 +191,8 @@ test('ejecutor: git que modifica, servicios vivos, dependencias y borrados se ni
   ]) niega(bash(R, c))
   for (const r of [
     '.claude/agents/ejecutor.md',
+    '.claude/settings.json',
+    '.claude/settings.local.json',
     'src/routeTree.gen.ts',
     'supabase/migrations/20261010000001_citas_precio.sql',
     '../otro-repo/x.ts',

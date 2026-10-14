@@ -127,7 +127,7 @@ function autoprueba() {
     const casos = [
       [{ tool_name: 'Bash', tool_input: { command: 'git push' } }, 'ejecutor', true],
       [{ tool_name: 'Bash', tool_input: { command: 'git status --short' } }, 'ejecutor', false],
-      [{ tool_name: 'Write', tool_input: { file_path: '.claude/x.md' } }, 'ejecutor', true],
+      [{ tool_name: 'Write', tool_input: { file_path: '.claude/settings.json' } }, 'ejecutor', true],
       [{ tool_name: 'Edit', tool_input: { file_path: 'src/x.ts' } }, 'revisor', true],
     ]
     for (const [evento, rol, debeNegar] of casos) {

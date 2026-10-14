@@ -37,7 +37,7 @@ La guardia lo bloquea. Si te bloquea, no lo rodees: anótalo en BLOQUEOS.
 - git que modifique (commit, push, add, stash, reset, checkout, restore…) y ramas.
 - Servicios externos, nube y despliegues (CLIs de proveedores, curl y similares); scripts que pegan a servicios vivos o cargan secretos; servidores de desarrollo y modos watch.
 - Dependencias: instalar, quitar o actualizar paquetes con cualquier gestor. Si hace falta una, `BLOQUEADO`.
-- `.env*`, credenciales, `.claude/`, `.git/`, lockfiles, artefactos generados, migraciones ya versionadas (se crea una nueva) y lo que el proyecto proteja en `.claude/implementador.json`.
+- `.env*`, credenciales, `.claude/settings*.json`, `.claude/agents/`, `.git/`, lockfiles, artefactos generados, migraciones ya versionadas (se crea una nueva) y lo que el proyecto proteja en `.claude/implementador.json`.
 
 ## Calidad
 

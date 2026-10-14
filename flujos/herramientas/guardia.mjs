@@ -6,7 +6,7 @@
 // `revisor` (argumento `revisor`): Claude Code lo corre solo mientras ese agente trabaja.
 // Niega lo que un subagente no hace nunca —git que modifica, servicios externos y despliegues,
 // dependencias, secretos, borrados recursivos, servidores que no terminan, archivos
-// protegidos; y al revisor, escribir— y deja cada llamada en el registro del proyecto
+// protegidos (en `.claude/`, solo settings y agentes); y al revisor, escribir— y deja cada llamada en el registro del proyecto
 // (`registros/<proyecto>-<hash>.jsonl`), que `estado.mjs --cambios` cruza con el árbol para el
 // chequeo de alcance (cubre rutas que git ignora).
 //
@@ -216,6 +216,8 @@ function versionado(rel, raiz) {
   return versionados.get(clave)
 }
 
+// El resto de `.claude/` (reglas y config de /implementador) se edita si el plan lo permite.
+const CLAUDE_BLINDADO = /^\.claude\/(settings(\.local)?\.json$|agents(\/|$))/i
 const ARCHIVO_ENV = /(^|\/)\.env(\.[^/]+)?$/i
 const ENV_PLANTILLA = /\.env\.(example|sample|template|dist)$/i
 
@@ -237,7 +239,7 @@ export function motivoRuta(cruda, { raiz = RAIZ, base = raiz, permitirTemporal =
   if (rel === null) return permitirTemporal && esTemporal(texto, abs) ? null : `${texto} queda fuera del repo`
   const r = rel.toLowerCase()
   if (r === '.git' || r.startsWith('.git/')) return '.git/ es de git'
-  if (r === '.claude' || r.startsWith('.claude/')) return '.claude/ es la configuración de Claude Code y de los flujos: un subagente no la toca'
+  if (CLAUDE_BLINDADO.test(r)) return `${rel}: con settings o agentes del proyecto se apaga la guardia; lo edita el usuario`
   if (ARCHIVO_ENV.test(r) && !ENV_PLANTILLA.test(r)) return `${rel} guarda secretos`
   if (/\.(pem|key|p12|pfx)$/.test(r)) return `${rel} es una credencial`
   if (esSecreto(rel, config)) return `${rel} guarda secretos o claves (secreto del proyecto)`

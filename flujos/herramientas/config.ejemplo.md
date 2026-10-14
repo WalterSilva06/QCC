@@ -15,7 +15,7 @@ Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `pa
   ],
   "guardia": {
     // Archivos o carpetas (con / final) o globs que ningún subagente escribe, con el motivo.
-    // Se suman a los de siempre: lockfiles, node_modules/, dist/, .env*, .claude/, .git/.
+    // Se suman a los de siempre: lockfiles, node_modules/, dist/, .env*, .git/ y, en .claude/, settings*.json y agents/.
     "protegidos": { "src/routeTree.gen.ts": "lo regenera el build" },
     // Archivos con claves: ni se editan ni se nombran en un comando (cat, grep…).
     "secretos": ["CUENTAS_PRUEBA.md"],
