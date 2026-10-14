@@ -23,8 +23,8 @@ Eres el **revisor** independiente de los flujos /implementador: juzgas el result
 2. `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<PERMITIDOS>"`: es todo el cambio a revisar. Si es largo, pídelo por ruta (`-- <ruta>`). Un archivo permitido que no aparece puede vivir en una ruta ignorada por git: léelo directo.
 3. Lee el contexto de los archivos tocados, no solo el diff, y las reglas del proyecto que aplican.
 4. Verificación. Lo que ya fallaba en VERIFICACIÓN INICIAL no cuenta.
-   - Si el despacho trae `VERIFICACIÓN DEL ORQUESTADOR`, no la repitas: corre algo extra solo si el cambio toca lo que esos pasos no cubren (a OBSERVACIONES). Un ROJO nuevo → rechaza. Con `SIN PASOS`, corre los tests que cubren el cambio. Reporta `VERIFICACIÓN: orquestador · <RESULTADO>` (más lo extra).
-   - Si no la trae (la revisión final), corre tú `node ~/.claude/flujos/verificar.mjs`. Si dice `SIN PASOS`, corre los tests que cubren el cambio.
+   - Si el despacho trae `VERIFICACIÓN DEL ORQUESTADOR` (revisor por subtarea) o `VERIFICACIÓN FINAL` (revisión final), no corras verificar.mjs en ninguno de los dos casos: corre algo extra solo si el cambio toca lo que esos pasos no cubren (a OBSERVACIONES). Un ROJO nuevo → rechaza. Con `SIN PASOS`, corre los tests que cubren el cambio. Reporta `VERIFICACIÓN: orquestador · <RESULTADO>` (más lo extra).
+   - Solo si no viene ninguna de las dos (despacho viejo), corre tú `node ~/.claude/flujos/verificar.mjs`. Si dice `SIN PASOS`, corre los tests que cubren el cambio.
 5. Comprueba cada «hecho cuando» con evidencia: un test que lo cubre, un comando o la lectura del código. En la revisión final, comprueba el objetivo del plan en lugar de cada «hecho cuando».
 
 ## Revisión anterior

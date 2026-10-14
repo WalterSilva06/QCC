@@ -19,18 +19,20 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 | Planificador | Opus high; clasifica y planifica |
 | Revisor del plan | Sonnet medium; se omite con «sin criterios», ninguna subtarea crítica y 1–2 subtareas (lo suple el orquestador) |
 | Ejecutor | Sonnet high |
-| Revisor por subtarea | Sonnet high si `Crítica: sí`; Sonnet medium si `Crítica: no` |
-| Revisión final | Opus high, siempre (también con una sola subtarea) |
+| Revisor por subtarea | Solo con 2 o más subtareas: Sonnet high si `Crítica: sí`; Sonnet medium si `Crítica: no` |
+| Revisión final | Opus high, siempre; con una sola subtarea va sola (0 revisores por subtarea) |
 
 - **Criticidad:** el plan marca `Crítica: sí | no` por subtarea (ante la duda, sí; sin el campo, sí) y eso decide el esfuerzo del revisor de esa subtarea. Las reglas del proyecto pueden listar rutas críticas que obligan a `Crítica: sí`.
-- **Verificación:** el orquestador corre `verificar.mjs` tras cada ejecutor y se lo pasa al revisor en `VERIFICACIÓN DEL ORQUESTADOR`, así que el revisor no lo repite. La revisión final corre la suya.
+- **Verificación:** el orquestador corre `verificar.mjs` tras cada ejecutor y se lo pasa al revisor en `VERIFICACIÓN DEL ORQUESTADOR`, así que el revisor no lo repite. La revisión final tampoco lo repite: recibe `VERIFICACIÓN FINAL` con la línea del orquestador. Con una sola subtarea va solo la revisión final.
+- **Ejecutor y suite sin filtro:** si las reglas del proyecto dicen que la suite de tests no se puede filtrar, el ejecutor no la corre aparte antes de `verificar.mjs`: va directo a este, que ya la incluye. El patrón filtrado queda para diagnosticar un `test` en ROJO.
+- **Exploración mínima:** con un pedido que nombra 2 archivos o menos, sin acoplamientos ni rutas críticas en las reglas del proyecto, el orquestador mismo hace una exploración corta (quién importa o cita el archivo, sus tests) y se salta el explorador. Ante la duda, explorador.
 - **Fork mode:** los subagentes heredarían el modelo de la sesión y el planificador y la revisión final perderían Opus. Si está activo, el flujo avisa y termina.
 - **Topes de reporte:** explorador ≤ 25 líneas, ejecutor ≤ 10, revisor ≤ 12 y revisión final ≤ 15.
 - **Digest `YA REVISADO`:** una línea por subtarea ya revisada. La revisión final recibe ese digest y no recibe los reportes de los ejecutores ni de los revisores.
 - **Contexto del revisor:** además del digest `YA REVISADO`, `REVISIÓN ANTERIOR` lleva solo los PROBLEMAS y CRITERIOS del propio revisor de la vuelta previa (también en los ciclos de la revisión final), nunca el reporte del ejecutor.
 - **Autochequeo del ejecutor:** antes de reportar repasa una lista corta propia más la sección «Revisor: rechaza también por» de las reglas del proyecto.
 
-El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes (el planificador marca «Plan», paso 2, y el revisor-plan «Revisión del plan», paso 3), del header «Plan» de las preguntas de aprobación (si se omite el revisor-plan, la pregunta «Plan» lleva directo a Aprobación), de las opciones de `estado.mjs` y de la línea «CIERRE ·» del cierre. La revisión final cuenta siempre en «Verificación final». El `verificar.mjs` de cada subtarea y su revisor cuentan en «Ejecución»; el `verificar.mjs` que sigue a la última subtarea marca «Verificación final». El orden por subtarea (`--base` → `ejecutor` → `--cambios` → `verificar.mjs` → `revisor`) es parte de lo que lee el panel. Si cambia alguno de esos nombres, opciones o textos, o ese orden, hay que actualizar `panel-uso/hooks/flujo.ts`.
+El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes (el planificador marca «Plan», paso 2, y el revisor-plan «Revisión del plan», paso 3), del header «Plan» de las preguntas de aprobación (si se omite el revisor-plan, la pregunta «Plan» lleva directo a Aprobación), de las opciones de `estado.mjs` y de la línea «CIERRE ·» del cierre. La revisión final cuenta siempre en «Verificación final». El `verificar.mjs` de cada subtarea y su revisor cuentan en «Ejecución»; el `verificar.mjs` que sigue a la última subtarea marca «Verificación final». El orden por subtarea (`--base` → `ejecutor` → `--cambios` → `verificar.mjs` → `revisor`) es parte de lo que lee el panel, pero el orquestador también fija el paso explícito con `--paso <n>` en cada `estado.mjs` y la heurística queda de respaldo. Si cambia alguno de esos nombres, opciones o textos, o ese orden, hay que actualizar `panel-uso/hooks/flujo.ts`.
 
 ## Instalación
 
@@ -45,6 +47,6 @@ node flujos/instalar.mjs --forzar     pisa la copia instalada aunque sea más nu
 
 - Si la copia instalada es más nueva que la del repo (alguien la editó en `~/.claude`), `instalar.mjs` la **frena** y termina con exit 1, para no perder ese cambio. Se resuelve con `--traer` o con `--forzar`.
 - No toca `~/.claude/flujos/registros/` (bitácoras locales de cada proyecto, no van al repo).
-- `/implementador` llama a sus herramientas y a `comun.md` y `pasos.md` por la ruta fija `~/.claude/flujos/…`. El flujo **corre desde la copia instalada**, no desde el repo: un cambio en `flujos/` no rige hasta instalarlo.
+- `/implementador` llama a sus herramientas y a `comun.md`, `plan.md` y `pasos.md` por la ruta fija `~/.claude/flujos/…`. El flujo **corre desde la copia instalada**, no desde el repo: un cambio en `flujos/` no rige hasta instalarlo.
 
-El detalle de cada paso y herramienta está en `flujos/herramientas/comun.md` y `pasos.md`; el de cada agente, en `flujos/agents/`; el formato de `.claude/implementador.json`, en `flujos/herramientas/config.ejemplo.md`.
+El detalle de cada paso y herramienta está en `flujos/herramientas/comun.md`, `plan.md` (clasificación y formato del plan) y `pasos.md`; el de cada agente, en `flujos/agents/`; el formato de `.claude/implementador.json`, en `flujos/herramientas/config.ejemplo.md`.

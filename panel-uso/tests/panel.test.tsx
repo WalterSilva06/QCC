@@ -1804,6 +1804,65 @@ describe('flujo (puro)', () => {
     expect(senalDeHerramienta('Bash', { command: 3 }, undefined)).toBeNull()
   })
 
+  test('senalDeHerramienta: estado.mjs con --paso trae el paso; sin él, con un valor roto o después de -- no', async () => {
+    expect(bash('node ~/.claude/flujos/estado.mjs --cambios abc123 --desde x --paso 6')).toEqual({ tipo: 'estado', modo: 'cambios', paso: 6 })
+    expect(bash('node ~/.claude/flujos/estado.mjs --base --paso 5')).toEqual({ tipo: 'estado', modo: 'base', paso: 5 })
+    expect(bash('node ~/.claude/flujos/estado.mjs --paso 0')).toEqual({ tipo: 'estado', modo: 'preflight', paso: 0 })
+
+    // Sin marca o con un valor que no es un entero: la misma señal de siempre, sin el campo.
+    expect(bash('node ~/.claude/flujos/estado.mjs --cambios')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/flujos/estado.mjs --cambios --paso x')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/flujos/estado.mjs --cambios --paso')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/flujos/estado.mjs --cambios --paso -1')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/flujos/estado.mjs --cambios --paso 6x')).toEqual(estado('cambios'))
+
+    // Después de `--` son rutas: no cuenta.
+    expect(bash('node ~/.claude/flujos/estado.mjs --diff abc123 -- --paso 6')).toEqual(estado('diff'))
+  })
+
+  test('estado con --paso: manda sobre la heurística; sin marca o fuera de rango, la heurística', async () => {
+    const marcado = (paso: number): Senal => ({ tipo: 'estado', modo: 'cambios', paso })
+    const f = (paso: number): Flujo => ({ nombre: 'implementador', paso, ejecuto: true, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null })
+
+    expect(avanzar(f(5), marcado(6))?.paso).toBe(6)
+    expect(avanzar(f(5), { tipo: 'estado', modo: 'base', paso: 5 })?.paso).toBe(5)
+
+    // `--paso 9` no existe: queda lo que daba la heurística (en 5, `--cambios` sigue en 5; en 6, pasa a 7).
+    expect(avanzar(f(5), marcado(9))?.paso).toBe(5)
+    expect(avanzar(f(6), marcado(9))?.paso).toBe(7)
+    expect(avanzar(f(5), estado('cambios'))?.paso).toBe(5)
+  })
+
+  test('una sola subtarea con marcas: la revisión final cuenta en Verificación final', async () => {
+    const senales = [
+      bash('node ~/.claude/flujos/estado.mjs --base --paso 5'),
+      agente('ejecutor'),
+      bash('node ~/.claude/flujos/estado.mjs --cambios abc --desde x --paso 6'),
+      bash('node ~/.claude/flujos/verificar.mjs'),
+      agente('revisor'),
+      bash('node ~/.claude/flujos/estado.mjs --cambios abc --desde x --paso 7'),
+    ]
+
+    let flujo = iniciarFlujo('implementador', '')
+    const vistos: number[] = []
+
+    for (const s of senales) {
+      expect(s).not.toBeNull()
+
+      flujo = s === null ? flujo : avanzar(flujo, s)
+      vistos.push(flujo?.paso ?? -1)
+    }
+
+    expect(vistos).toEqual([5, 5, 6, 6, 6, 7])
+    expect(flujo?.revisiones).toEqual({ 6: 1 })
+
+    const lista = flujo === null ? [] : nodos(flujo)
+
+    expect(lista[5]?.revisiones).toBeUndefined()
+    expect(lista[6]?.revisiones).toBe(1)
+    expect(lista[7]?.estado).toBe('actual')
+  })
+
   test('senalDeHerramienta: Agent, AskUserQuestion (header Plan), Edit/Write no mueven y nada de un subagente', async () => {
     expect(senalDeHerramienta('Agent', { subagent_type: 'explorador' }, undefined)).toEqual(agente('explorador'))
     expect(senalDeHerramienta('Agent', { subagent_type: '' }, undefined)).toBeNull()

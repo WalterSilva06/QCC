@@ -5,9 +5,12 @@ import { duracion, tokens, totalConSalida } from './formato'
 import { familia, idDeFila, nombreEsfuerzo } from './semana'
 import type { Uso } from './semana'
 
-/** Lo que una herramienta o un agente hace y que mueve el flujo de paso. */
+/**
+ * Lo que una herramienta o un agente hace y que mueve el flujo de paso.
+ * `paso` de la señal de estado es el `--paso <n>` de `estado.mjs`: el paso que el flujo dice que lleva. Falta si no vino o no es un entero.
+ */
 export type Senal =
-  | { tipo: 'estado'; modo: 'preflight' | 'base' | 'cambios' | 'diff' }
+  | { tipo: 'estado'; modo: 'preflight' | 'base' | 'cambios' | 'diff'; paso?: number }
   | { tipo: 'verificar' }
   | { tipo: 'pregunta'; plan: boolean }
   | { tipo: 'agente'; nombre: string }
@@ -109,15 +112,28 @@ function argumentosDeScript(comandos: string[][], nombre: string): string[] | nu
 
 const MODOS_ESTADO = { '--base': 'base', '--cambios': 'cambios', '--diff': 'diff' } as const
 
-/** Señal de un comando de Bash: `estado.mjs` (con su modo) o `verificar.mjs`; `null` si es otra cosa. */
+/**
+ * El `--paso <n>` de los argumentos de `estado.mjs`: el entero no negativo que sigue a la marca, mirando solo lo anterior a `--`
+ * (después van rutas). `undefined` si falta o el valor no es un entero. El rango lo valida quien lo usa.
+ */
+function pasoDeEstado(args: string[]): number | undefined {
+  const corte = args.indexOf('--')
+  const opciones = corte === -1 ? args : args.slice(0, corte)
+  const valor = opciones[opciones.indexOf('--paso') + 1]
+
+  return opciones.includes('--paso') && valor !== undefined && /^\d+$/.test(valor) ? Number(valor) : undefined
+}
+
+/** Señal de un comando de Bash: `estado.mjs` (con su modo y su `--paso`) o `verificar.mjs`; `null` si es otra cosa. */
 function senalDeComando(comando: string): Senal | null {
   const comandos = palabrasPorComando(comando)
   const estado = argumentosDeScript(comandos, 'estado')
 
   if (estado) {
     const flag = estado.find(p => p in MODOS_ESTADO) as keyof typeof MODOS_ESTADO | undefined
+    const paso = pasoDeEstado(estado)
 
-    return { tipo: 'estado', modo: flag ? MODOS_ESTADO[flag] : 'preflight' }
+    return { tipo: 'estado', modo: flag ? MODOS_ESTADO[flag] : 'preflight', ...(paso !== undefined ? { paso } : {}) }
   }
 
   return argumentosDeScript(comandos, 'verificar') ? { tipo: 'verificar' } : null
@@ -180,12 +196,19 @@ function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
   const p = f.paso
 
   switch (s.tipo) {
-    case 'estado':
-      if (s.modo === 'preflight') return { paso: 0 }
-      if (s.modo === 'base') return { paso: 5, ...(f.cierre === true ? { cierre: false } : {}) }
-      if (s.modo === 'cambios') return { paso: p >= 6 ? 7 : 5 }
+    case 'estado': {
+      const heuristica: Cambio =
+        s.modo === 'preflight'
+          ? { paso: 0 }
+          : s.modo === 'base'
+            ? { paso: 5, ...(f.cierre === true ? { cierre: false } : {}) }
+            : s.modo === 'cambios'
+              ? { paso: p >= 6 ? 7 : 5 }
+              : {}
 
-      return {}
+      // La marca `--paso` del flujo manda sobre la heurística; fuera de rango se ignora.
+      return s.paso !== undefined && s.paso < pasosDe(f).length ? { ...heuristica, paso: s.paso } : heuristica
+    }
     case 'verificar':
       if (!f.ejecuto) return { paso: 0 }
 

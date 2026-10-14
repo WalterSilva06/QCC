@@ -44,11 +44,11 @@ La guardia lo bloquea; si te bloquea, no lo rodees: anótalo en BLOQUEOS.
 - Nunca debilites, saltes (`.skip`, `.only`, `todo`, `xfail`…) ni borres un test para que pase. Si un test existente contradice la subtarea, `BLOQUEADO`.
 - Tests guardianes (los que vigilan reglas del repo): si fallan, arreglas el código, no el guardián, salvo que el plan lo diga.
 - Tipos: nunca silencies el sistema de tipos (`as any`, `@ts-ignore`, `# type: ignore`, `unsafe` sin necesidad). Si cambia el schema, actualizas los tipos a mano; regenerarlos contra un servicio queda para el usuario.
-- Mientras trabajas, corre solo el test puntual, sin watch, con la salida acotada a resumen y fallos por una tubería que oculte los tests que pasan (sin redirigirla a un archivo). Si el proyecto da un patrón, úsalo tal cual. Con la tubería el código de salida no es el de los tests: lee el resumen. Si un fallo no se entiende, repite solo ese test o archivo, nunca todo sin filtro.
+- Mientras trabajas, corre solo el test puntual, sin watch, con la salida acotada a resumen y fallos por una tubería que oculte los tests que pasan (sin redirigirla a un archivo). Si el proyecto da un patrón, úsalo tal cual. Si las reglas del proyecto indican que la suite no se puede filtrar, no la corras aparte antes de `verificar.mjs`: ve directo a `verificar.mjs`, que ya la incluye. Con la tubería el código de salida no es el de los tests: lee el resumen. Si un fallo no se entiende, repite solo ese test o archivo, nunca todo sin filtro.
 
 ## Verificación obligatoria
 
-- `node ~/.claude/flujos/verificar.mjs` tiene que terminar en `RESULTADO: VERDE`. Si sale ROJO, corriges y repites. Si no logras verde, `ESTADO: FALLA` con la salida. Córrelo sin tubería: su salida ya es corta y la línea `RESULTADO` no se puede perder.
+- `node ~/.claude/flujos/verificar.mjs` tiene que terminar en `RESULTADO: VERDE`. Si sale ROJO, corriges y repites. Si no logras verde, `ESTADO: FALLA` con la salida. Córrelo sin tubería: su salida ya es corta y la línea `RESULTADO` no se puede perder. Si la suite no se puede filtrar (reglas del proyecto), este es tu primer y único comando de pruebas: no corras la suite aparte antes.
 - Si dice `RESULTADO: SIN PASOS`, corre los tests que cubren tu cambio, acotados como en «Calidad», y dilo en VERIFICACIÓN.
 - Nunca afirmes algo que no ejecutaste.
 

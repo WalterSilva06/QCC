@@ -41,7 +41,7 @@ El archivo real es JSON sin comentarios.
 
 Reglas del proyecto en prosa. Las skills lo inyectan y los agentes lo leen. Secciones útiles:
 
-- **Clasificación:** rutas concretas para cada criterio CRÍTICO de `comun.md` §2.
+- **Clasificación:** rutas concretas para cada criterio CRÍTICO de `plan.md` §2.
 - **Cómo buscar:** carpetas que Grep no ve, dónde viven los tests, guardianes, archivos que no se leen o que solo se leen con Grep.
 - **Plan:** convención de migraciones, infraestructura de tests, riesgos típicos, qué queda para el usuario.
 - **Ejecutor:** reglas de tipos, test puntual, patrón para acotar la salida de los tests, particularidades de la verificación.

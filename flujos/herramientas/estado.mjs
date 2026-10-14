@@ -2,10 +2,13 @@
 // Estado git del flujo /implementador (nivel usuario: sirve para
 // cualquier proyecto con git). El proyecto es el repo que contiene el directorio actual.
 //
-//   node ~/.claude/flujos/estado.mjs                       preflight + foto global
-//   node ~/.claude/flujos/estado.mjs --base                foto nueva: BASE=<sha> DESDE=<iso>
-//   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>"
-//   node ~/.claude/flujos/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [-- <rutas>]
+//   node ~/.claude/flujos/estado.mjs [--paso <n>]          preflight + foto global
+//   node ~/.claude/flujos/estado.mjs --base [--paso <n>]   foto nueva: BASE=<sha> DESDE=<iso>
+//   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>]
+//   node ~/.claude/flujos/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
+//
+// `--paso <n>` (0 a 7) anota en qué paso del flujo se llama; la salida no cambia. Otro valor
+// se avisa con `AVISO:` y se ignora.
 //
 // Una "foto" es un commit suelto con todo el árbol (versionados + nuevos no ignorados),
 // armado con un índice temporal: no toca el índice ni los archivos del usuario y git lo
@@ -231,8 +234,12 @@ function diff(base, permitidos, rutas) {
   }
 }
 
-function main() {
-  const args = process.argv.slice(2)
+/**
+ * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso }`. Las opciones valen solo
+ * antes de `--`; lo de después son rutas. Precedencia: --base > --cambios > --diff > preflight.
+ * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía).
+ */
+export function opcionesDe(args) {
   const corte = args.indexOf('--')
   const opciones = corte >= 0 ? args.slice(0, corte) : args
   const rutas = corte >= 0 ? args.slice(corte + 1) : []
@@ -240,16 +247,37 @@ function main() {
     const k = opciones.indexOf(nombre)
     return k >= 0 ? opciones[k + 1] : undefined
   }
-  const permitidos = listaPermitidos(valor('--permitidos'))
+  let modo = 'preflight'
+  let base
+  if (opciones.includes('--base')) modo = 'base'
+  else if (opciones.includes('--cambios')) {
+    modo = 'cambios'
+    base = valor('--cambios')
+  } else if (opciones.includes('--diff')) {
+    modo = 'diff'
+    base = valor('--diff')
+  }
+  let paso = null
+  let aviso
+  if (opciones.includes('--paso')) {
+    const v = valor('--paso')
+    if (/^\d+$/.test(v ?? '') && Number(v) <= 7) paso = Number(v)
+    else aviso = `--paso ${v ?? ''} no es un paso (0–7); se ignora`
+  }
+  return { modo, base, desde: valor('--desde'), permitidos: listaPermitidos(valor('--permitidos')), rutas, paso, aviso }
+}
+
+function main() {
+  const { modo, base, desde, permitidos, rutas, aviso } = opcionesDe(process.argv.slice(2))
+  if (aviso) console.log(`AVISO: ${aviso}`)
   try {
     if (git(['rev-parse', '--is-inside-work-tree'], { opcional: true })?.trim() !== 'true') {
       throw new Error(`${RAIZ} no es un repositorio git: los flujos necesitan git (el usuario puede hacer git init)`)
     }
-    if (opciones.includes('--base')) {
-      const desde = new Date().toISOString()
-      console.log(`BASE=${foto()} DESDE=${desde}`)
-    } else if (opciones.includes('--cambios')) cambios(exigirBase(valor('--cambios')), valor('--desde'), permitidos)
-    else if (opciones.includes('--diff')) diff(exigirBase(valor('--diff')), permitidos, rutas)
+    if (modo === 'base') {
+      console.log(`BASE=${foto()} DESDE=${new Date().toISOString()}`)
+    } else if (modo === 'cambios') cambios(exigirBase(base), desde, permitidos)
+    else if (modo === 'diff') diff(exigirBase(base), permitidos, rutas)
     else preflight()
   } catch (e) {
     console.log(`ERROR: ${e.message}`)

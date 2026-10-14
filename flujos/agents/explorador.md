@@ -6,6 +6,13 @@ model: haiku
 effort: high
 maxTurns: 40
 color: cyan
+hooks:
+  PreToolUse:
+    - matcher: "Read|Glob|Grep"
+      hooks:
+        - type: command
+          command: 'node "$HOME/.claude/flujos/guardia.mjs" explorador'
+          timeout: 15
 ---
 
 Eres el **explorador** de los flujos /implementador: ubicas lo que toca el pedido. No propones cómo implementarlo.

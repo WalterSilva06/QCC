@@ -27,14 +27,14 @@ const TEST_POR_DEFECTO = /no test specified/i
 
 const cola = (texto, n) => texto.trimEnd().split('\n').slice(-n).join('\n')
 
-function detalleTipos(salida) {
+export function detalleTipos(salida) {
   const errores = salida.split('\n').filter((l) => /error TS\d+|error\[E\d+\]|^\S+:\d+:\d+: error/.test(l))
   if (!errores.length) return cola(salida, 30)
   const extra = errores.length > 40 ? `\n(+${errores.length - 40} errores más)` : ''
   return errores.slice(0, 40).join('\n') + extra
 }
 
-function resumenTest(salida) {
+export function resumenTest(salida) {
   const archivos = /^\s*Test Files\s+(.+)$/m.exec(salida)?.[1]?.trim()
   const tests = /^\s*Tests:?\s+(.+)$/m.exec(salida)?.[1]?.trim()
   const pytest = /^=+ (.*(passed|failed|error).*) =+$/m.exec(salida)?.[1]?.trim()
@@ -42,7 +42,7 @@ function resumenTest(salida) {
   return [archivos && `archivos: ${archivos}`, tests && `tests: ${tests}`, pytest, cargo].filter(Boolean).join(' · ')
 }
 
-function detalleTest(salida) {
+export function detalleTest(salida) {
   const lineas = salida.split('\n')
   let desde = lineas.findIndex((l) => /Failed Tests|Failed Suites|^=+ FAILURES =+|^failures:$/.test(l))
   if (desde < 0) desde = lineas.findIndex((l) => /\bFAIL\b/.test(l))
@@ -52,7 +52,7 @@ function detalleTest(salida) {
   return resumen ? `${tramo}\n…\n${resumen}` : tramo
 }
 
-function conDetalle(paso) {
+export function conDetalle(paso) {
   const n = `${paso.nombre} ${paso.cmd}`.toLowerCase()
   if (/test|spec|pytest/.test(n)) return { ...paso, detalle: detalleTest, resumen: resumenTest }
   if (/type|tsc|check|mypy|pyright/.test(n)) return { ...paso, detalle: detalleTipos }

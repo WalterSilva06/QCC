@@ -9,6 +9,8 @@
 // protegidos (en `.claude/`, solo settings y agentes); y al revisor, escribir— y deja cada llamada en el registro del proyecto
 // (`registros/<proyecto>-<hash>.jsonl`), que `estado.mjs --cambios` cruza con el árbol para el
 // chequeo de alcance (cubre rutas que git ignora).
+// `explorador`, `planificador` y `revisor-plan` (solo lectura) solo anotan sus Read, Glob y Grep
+// con decision `lectura`: nunca niegan ni imprimen nada.
 //
 // Lo propio de cada proyecto va en `<raíz>/.claude/implementador.json`, clave `guardia`
 // (ver `config.ejemplo.md`). Sin ese archivo rigen los valores por defecto.
@@ -847,6 +849,29 @@ export function evaluar(evento, rol, raiz = RAIZ) {
   return { motivo: null, objetivo: null }
 }
 
+/** Roles de solo lectura: la guardia solo anota lo que leen, nunca niega. */
+export const ROLES_LECTURA = ['explorador', 'planificador', 'revisor-plan']
+
+/** `{ objetivo }` de una lectura (Read, Glob, Grep) o null si la herramienta es otra o no trae objetivo. */
+export function lecturaDe(evento, raiz = RAIZ) {
+  const herramienta = evento?.tool_name ?? ''
+  const entrada = evento?.tool_input ?? {}
+  if (herramienta === 'Read') {
+    const ruta = String(entrada.file_path ?? '')
+    if (!ruta) return null
+    const cwd = typeof evento?.cwd === 'string' && evento.cwd ? path.resolve(rutaNativa(evento.cwd)) : raiz
+    const abs = path.resolve(cwd, rutaNativa(ruta))
+    return { objetivo: relativaAlRepo(abs, raiz) ?? abs }
+  }
+  if (herramienta === 'Glob' || herramienta === 'Grep') {
+    const patron = String(entrada.pattern ?? '')
+    if (!patron) return null
+    const donde = entrada.path ? ` en ${entrada.path}` : ''
+    return { objetivo: `${patron}${donde}`.replace(/\s*\r?\n\s*/g, ' ⏎ ').slice(0, 300) }
+  }
+  return null
+}
+
 function registrar(raiz, fila) {
   const registro = registroDe(raiz)
   try {
@@ -863,7 +888,9 @@ function registrar(raiz, fila) {
 }
 
 async function main() {
-  const rol = process.argv[2] === 'revisor' ? 'revisor' : 'ejecutor'
+  const argumento = process.argv[2]
+  const lectura = ROLES_LECTURA.includes(argumento)
+  const rol = lectura ? argumento : argumento === 'revisor' ? 'revisor' : 'ejecutor'
   let crudo = ''
   for await (const trozo of process.stdin) crudo += trozo
   let evento
@@ -873,6 +900,25 @@ async function main() {
     return
   }
   const raiz = raizDe(process.env.CLAUDE_PROJECT_DIR || evento?.cwd || process.cwd())
+  if (lectura) {
+    // Solo anota: nunca imprime ni niega, y se traga cualquier error.
+    try {
+      const l = lecturaDe(evento, raiz)
+      if (!l) return
+      registrar(raiz, {
+        t: new Date().toISOString(),
+        rol,
+        agente: evento.agent_id ?? null,
+        esfuerzo: evento.effort?.level ?? evento.effort ?? null,
+        herramienta: evento.tool_name,
+        objetivo: l.objetivo,
+        decision: 'lectura',
+      })
+    } catch {
+      // Una lectura nunca se frena.
+    }
+    return
+  }
   let resultado
   try {
     resultado = evaluar(evento, rol, raiz)

@@ -1,20 +1,20 @@
 # Reglas de /implementador para claude-config
 
-Valen para `/implementador` en este repo. Mandan sobre `~/.claude/flujos/comun.md`.
+Valen para `/implementador` en este repo. Mandan sobre `~/.claude/flujos/comun.md` y `plan.md`.
 
 ## Clasificación
 
-CRÍTICO, además de lo que diga `comun.md` §2: una subtarea que toca alguna de estas rutas es `Crítica: sí`, y el plan cita su criterio.
+CRÍTICO, además de lo que diga `plan.md` §2: una subtarea que toca alguna de estas rutas es `Crítica: sí`, y el plan cita su criterio.
 
 | Ruta | Criterio | Por qué |
 |---|---|---|
-| `flujos/**` (skills, agentes, `estado.mjs`, `verificar.mjs`, `guardia.mjs`, `guardia.test.mjs`, `instalar.mjs`, `comun.md`, `pasos.md`), salvo la excepción de abajo | #1 y #5 | `guardia.mjs` es la seguridad de los subagentes; lo demás lo usan todos los proyectos del usuario |
+| `flujos/**` (skills, agentes, `estado.mjs`, `verificar.mjs`, `guardia.mjs`, `guardia.test.mjs`, `instalar.mjs`, `comun.md`, `plan.md`, `pasos.md`), salvo la excepción de abajo | #1 y #5 | `guardia.mjs` es la seguridad de los subagentes; lo demás lo usan todos los proyectos del usuario |
 | `.claude/implementador.md`, `.claude/implementador.json` | #1 | reglas y config de este flujo (`guardia` en el JSON afloja o aprieta la guardia); solo si el pedido lo dice |
 | `panel-uso/hooks/flujo.ts` | #6 | máquina de estado del flujo, tiempos y esperas |
 | `panel-uso/hooks/register.tsx` | #7 | hooks que envuelven `next` (`tool.call`, `turn.step`, `turn.complete`, `skill.prompt`): un fallo frena una petición al modelo o una herramienta |
 
 - **#6 además:** cualquier cambio en la forma de un atom que sobrevive a `/reload-plugins` (`flujo`, `filasExploradores`, y los tipos de `panel-uso/types/index.d.ts`). Un flujo guardado con la forma anterior sigue vivo tras recargar.
-- **Excepción en `flujos/**`:** una subtarea cuyos archivos permitidos son solo `.md` de `flujos/agents/` o `flujos/herramientas/config.ejemplo.md` es `Crítica: no` si no cambia su frontmatter (herramientas, modelo); ante la duda, `sí`. Quedan siempre `Crítica: sí`: `comun.md`, `pasos.md`, `SKILL.md` (tabla de overrides y líneas `!`), cualquier `.mjs`, `.claude/implementador.md` y `.claude/implementador.json`. La Clasificación del plan sigue citando #1 y #5 (el revisor del plan corre y la revisión final Opus tiene 2 ciclos).
+- **Excepción en `flujos/**`:** una subtarea cuyos archivos permitidos son solo `.md` de `flujos/agents/` o `flujos/herramientas/config.ejemplo.md` es `Crítica: no` si no cambia su frontmatter (herramientas, modelo); ante la duda, `sí`. Quedan siempre `Crítica: sí`: `comun.md`, `plan.md`, `pasos.md`, `SKILL.md` (tabla de overrides y líneas `!`), cualquier `.mjs`, `.claude/implementador.md` y `.claude/implementador.json`. La Clasificación del plan sigue citando #1 y #5 (el revisor del plan corre y la revisión final Opus tiene 2 ciclos).
 
 Sin criterios: textos, colores y anchos del panel, funciones puras de `formato.ts` y `semana.ts` con tests, FLUJOS.md, MODS.md, README, AGENTS.md.
 
@@ -23,6 +23,10 @@ Sin criterios: textos, colores y anchos del panel, funciones puras de `formato.t
 - El mod entero son `panel-uso/hooks/*.ts(x)`, `panel-uso/types/index.d.ts` y un único `panel-uso/tests/panel.test.tsx` de más de 3000 líneas: léelo por tramos con Grep y `offset`, no entero.
 - Los tipos de `claude-code` no están en el repo (no hay `node_modules`): no los busques; lo que haga cada evento está en MODS.md.
 - Los flujos se editan en `flujos/` y se instalan en `~/.claude` con `node flujos/instalar.mjs`. No leas ni edites `~/.claude`: el repo es la fuente.
+- **Acoplamientos (no se salta el explorador):** si el pedido toca uno de estos archivos, no vale la exploración mínima de `comun.md` §5; va el explorador.
+  - `panel-uso/hooks/flujo.ts` ↔ `flujos/herramientas/pasos.md` y `comun.md` (orden de señales y marcas `--paso`).
+  - `panel-uso/types/index.d.ts` ↔ los atoms de `panel-uso/hooks/register.tsx`.
+  - `flujos/herramientas/estado.mjs` ↔ `guardia.mjs` y `verificar.mjs`.
 
 ## Plan
 
@@ -33,7 +37,7 @@ Sin criterios: textos, colores y anchos del panel, funciones puras de `formato.t
 
 ## Ejecutor
 
-- `claude plugin test panel-uso` corre todo en unos 10 s y solo acepta la carpeta (no filtra por nombre ni por archivo). Córrelo siempre con Bash (no PowerShell) y con este patrón exacto:
+- `claude plugin test panel-uso` corre todo en unos 10 s y solo acepta la carpeta (no filtra por nombre ni por archivo). NO lo corras antes de `verificar.mjs`: ve primero a `verificar.mjs` (sin tubería), que ya incluye validate, test y test flujos con salida resumida. Usa el patrón de abajo solo si el paso `test` de `verificar.mjs` sale ROJO y su detalle no alcanza para entender el fallo. Córrelo siempre con Bash (no PowerShell) y con este patrón exacto:
 
   ```
   claude plugin test panel-uso 2>&1 | grep -vE '^\(pass\)' | tail -n 150
