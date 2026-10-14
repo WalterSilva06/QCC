@@ -47,13 +47,9 @@ Los tres tienen que terminar sin errores antes de dar algo por hecho. Qué no pr
 ## Convenciones
 
 - Código, comentarios, nombres y textos de UI en **español** (`medida`, `releerSemana`, «sin respuestas anotadas todavía»). Los términos técnicos y los niveles de esfuerzo quedan en inglés.
-- Estilo: sin punto y coma, comillas simples y JSDoc breve en español. La línea en blanco antes de `return` solo la sigue el código de `panel-uso/`.
+- Estilo: sin punto y coma, comillas simples y JSDoc breve en español. La línea en blanco antes de `return` rige solo en `panel-uso/`; `flujos/` no la usa.
 - Las del panel (atoms, hotkeys, versión) están en [MODS.md](MODS.md#convenciones-del-panel).
 
 ## Flujo con /implementador
 
 `.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador.md` y mandan sobre las comunes. `/implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica), revisor por subtarea Sonnet y revisión final Opus high siempre. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
-
-## Pendiente de confirmar
-
-- ¿La línea en blanco antes de `return` debe regir también en `flujos/`? Hoy no se cumple en 64 sitios (`estado.mjs`, `verificar.mjs`, `guardia.mjs` y `guardia.test.mjs`). Si debe regir, hay que reformatear ese código; si no, la regla queda solo para `panel-uso/`, como está escrita ahora.

@@ -19,23 +19,20 @@ export type Senal =
  * `esperaUsuario` es el tiempo que el paso esperó una respuesta del usuario (`AskUserQuestion`); en «Terminado», el de todo el flujo.
  * Falta si es 0, si el nodo está pendiente o cuando no se pasó la hora `t`.
  * `exploradores` solo está en «Exploración»: es el total del flujo; falta si es 0 o si el nodo está pendiente.
- * `veces` son los lanzamientos del agente propio del paso: «Plan» y «Ejecución» en `/implementador`,
- * «Ejecución» y «Revisión» en un `/implementador-ligero` guardado de antes de los modos (legado). `revisiones` son los revisores lanzados con el flujo
- * en ese paso (solo `/implementador`). Los dos faltan si son menos de 1 o si el nodo está pendiente.
+ * `veces` son los lanzamientos del agente propio del paso: «Plan» y «Ejecución». `revisiones` son los revisores lanzados con el flujo
+ * en ese paso. Los dos faltan si son menos de 1 o si el nodo está pendiente.
  */
 export type Nodo = { etiqueta: string; estado: 'pasado' | 'actual' | 'pendiente'; ms?: number; exploradores?: number; veces?: number; revisiones?: number; esperaUsuario?: number }
 
 /** Los pasos de cada flujo, en orden. */
 export const PASOS: Record<Flujo['nombre'], readonly string[]> = {
   implementador: ['Preflight', 'Exploración', 'Plan', 'Revisión del plan', 'Aprobación', 'Ejecución', 'Verificación final', 'Cierre'],
-  'implementador-ligero': ['Preflight', 'Exploración', 'Escalado', 'Plan breve', 'Aprobación', 'Ejecución', 'Revisión', 'Cierre'],
 }
 
 const SKILLS: readonly string[] = Object.keys(PASOS)
 
 /**
- * Los pasos del flujo `f`, según su nombre. Un flujo guardado con un nombre que ya no existe
- * (`documentar`, hasta 0.12.0) no tiene pasos.
+ * Los pasos del flujo `f`, según su nombre. Un flujo guardado con un nombre que ya no existe no tiene pasos.
  */
 export function pasosDe(f: Flujo): readonly string[] {
   return PASOS[f.nombre] ?? []
@@ -47,9 +44,8 @@ function nombreDeSkill(skill: string): string {
 }
 
 /**
- * Flujo nuevo si `skill` es `implementador` o `implementador-ligero` (con o sin `/` y con o sin prefijo `plugin:`); `null` si no.
+ * Flujo nuevo si `skill` es `implementador` (con o sin `/` y con o sin prefijo `plugin:`); `null` si no.
  * `t` es la hora (ms) de inicio.
- * `implementador-ligero` abre el flujo viejo de ese nombre (legado de antes de los modos); nunca se escribe `modo`.
  * `base` es lo que la sesión ya llevaba gastado (ver `baseDeUso`); sin ella o vacía, el flujo no lleva `usoBase`.
  */
 export function iniciarFlujo(skill: string, texto: string, t = 0, base?: Flujo['usoBase']): Flujo | null {
@@ -142,7 +138,7 @@ export function senalAlTerminar(s: Senal, bien = true): Senal | null {
   return s.tipo === 'agente' && (s.nombre === 'explorador' || s.nombre === 'revisor') ? { tipo: 'agente-fin', nombre: s.nombre, bien } : null
 }
 
-type Cambio = Partial<Pick<Flujo, 'paso' | 'ejecuto' | 'exploradores' | 'totalExploradores' | 'exploro' | 'planes' | 'ejecuciones' | 'revisiones' | 'revisores'>>
+type Cambio = Partial<Pick<Flujo, 'paso' | 'ejecuto' | 'reviso' | 'cierre' | 'exploradores' | 'totalExploradores' | 'exploro' | 'planes' | 'ejecuciones' | 'revisiones' | 'revisores'>>
 
 /**
  * Ejecutores lanzados en todo el flujo, con las correcciones. En un atom 0.9.7 (sin `ejecuciones`)
@@ -160,22 +156,23 @@ export function exploradoresLanzados(f: Flujo): number {
   return Math.max(f.totalExploradores ?? 0, f.exploradores ?? 0)
 }
 
-/** Qué cambia en `/implementador` (y en un `/implementador-ligero` guardado de antes de los modos, que difiere en pocos puntos) con la señal `s`. */
+/** Qué cambia en `/implementador` con la señal `s`. */
 function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
   const p = f.paso
-  const ligero = f.nombre === 'implementador-ligero'
 
   switch (s.tipo) {
     case 'estado':
       if (s.modo === 'preflight') return { paso: 0 }
-      if (s.modo === 'base') return { paso: 5 }
+      if (s.modo === 'base') return { paso: 5, ...(f.cierre === true ? { cierre: false } : {}) }
       if (s.modo === 'cambios') return { paso: p >= 6 ? 7 : 5 }
 
       return {}
     case 'verificar':
       if (!f.ejecuto) return { paso: 0 }
 
-      return { paso: ligero || p === 7 ? 7 : 6 }
+      if (p >= 6) return { paso: p }
+
+      return f.reviso === true ? { paso: 6, cierre: true } : { paso: 5 }
     case 'pregunta':
       return s.plan ? { paso: 4 } : {}
     case 'agente-fin': {
@@ -197,18 +194,28 @@ function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
         return p !== 1 ? { paso: 1, exploradores: 1, totalExploradores, exploro: false } : { exploradores: (f.exploradores ?? 0) + 1, totalExploradores }
       }
 
-      if (s.nombre === 'planificador') return ligero ? {} : { paso: 2, planes: (f.planes ?? 0) + 1 }
-      if (s.nombre === 'revisor-plan') return ligero ? {} : { paso: 3 }
+      if (s.nombre === 'planificador') return { paso: 2, planes: (f.planes ?? 0) + 1 }
+      if (s.nombre === 'revisor-plan') return { paso: 3 }
       if (s.nombre === 'ejecutor') {
-        const lanzado = { paso: 5, ejecuto: true, ejecuciones: ejecucionesLanzadas(f) + 1 }
+        const lanzado = {
+          paso: 5,
+          ejecuto: true,
+          ejecuciones: ejecucionesLanzadas(f) + 1,
+          ...(f.reviso === true && f.cierre !== true ? { reviso: false } : {}),
+        }
 
         return (f.revisores ?? 0) > 0 ? { ...lanzado, revisores: 0 } : lanzado
       }
 
       if (s.nombre === 'revisor') {
-        const destino = ligero ? 6 : p >= 6 ? p : 5
+        const destino = p >= 6 ? p : 5
 
-        return { paso: destino, revisiones: { ...(f.revisiones ?? {}), [destino]: (f.revisiones?.[destino] ?? 0) + 1 }, revisores: (f.revisores ?? 0) + 1 }
+        return {
+          paso: destino,
+          revisiones: { ...(f.revisiones ?? {}), [destino]: (f.revisiones?.[destino] ?? 0) + 1 },
+          revisores: (f.revisores ?? 0) + 1,
+          ...(f.reviso === true ? {} : { reviso: true }),
+        }
       }
 
       return {}
@@ -423,17 +430,16 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
   const pasos = pasosDe(f)
   const enCurso = f.estado === 'en curso'
   const lanzados = exploradoresLanzados(f)
-  const ligero = f.nombre === 'implementador-ligero'
   const lista: Nodo[] = pasos.map((etiqueta, i) => {
     const estado = enCurso ? (i < f.paso ? 'pasado' : i === f.paso ? 'actual' : 'pendiente') : i <= f.paso ? 'pasado' : 'pendiente'
     const nodo: Nodo = etiqueta === 'Exploración' && estado !== 'pendiente' && lanzados >= 1 ? { etiqueta, estado, exploradores: lanzados } : { etiqueta, estado }
 
     if (estado !== 'pendiente') {
       const revisiones = f.revisiones?.[i] ?? 0
-      const veces = etiqueta === 'Plan' ? (f.planes ?? 0) : etiqueta === 'Ejecución' ? ejecucionesLanzadas(f) : ligero && etiqueta === 'Revisión' ? revisiones : 0
+      const veces = etiqueta === 'Plan' ? (f.planes ?? 0) : etiqueta === 'Ejecución' ? ejecucionesLanzadas(f) : 0
 
       if (veces >= 1) nodo.veces = veces
-      if (!ligero && revisiones >= 1) nodo.revisiones = revisiones
+      if (revisiones >= 1) nodo.revisiones = revisiones
     }
 
     if (t === undefined || estado === 'pendiente') return nodo
@@ -464,8 +470,62 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
 }
 
 /**
+ * Agente y configuración (modelo y esfuerzo) de cada línea de agente que dibuja el panel.
+ * Copia de la tabla «Agentes» de `flujos/skills/implementador/SKILL.md` y del frontmatter de `flujos/agents/*.md`: si cambian allí, cambian aquí.
+ */
+export const AGENTE_DE_PASO = {
+  explorador: { agente: 'explorador', config: 'Haiku high' },
+  planificador: { agente: 'planificador', config: 'Opus high' },
+  revisorPlan: { agente: 'revisor-plan', config: 'Sonnet medium' },
+  ejecutor: { agente: 'ejecutor', config: 'Sonnet high' },
+  revisorSubtarea: { agente: 'revisor', config: 'Sonnet high/medium' },
+  revisorFinal: { agente: 'revisor', config: 'Opus high' },
+} as const
+
+/** La línea `agente · modelo esfuerzo` de una entrada de `AGENTE_DE_PASO`. */
+function lineaDeAgente(a: (typeof AGENTE_DE_PASO)[keyof typeof AGENTE_DE_PASO]): string {
+  return `${a.agente} · ${a.config}`
+}
+
+/**
+ * Las líneas de agente de un nodo, sin sangría: quién trabaja en ese paso y con qué modelo.
+ * Vacío para un nodo pendiente, para «Aprobación» y «Terminado…», y cuando el paso no lanzó ese agente.
+ * `orquestador` es el nombre del modelo del hilo principal; sin él (o sin `ms`) no hay línea en «Preflight» y «Cierre».
+ */
+export function detallePaso(n: Nodo, orquestador?: string): string[] {
+  if (n.estado === 'pendiente') return []
+
+  const veces = n.veces ?? 0
+  const revisiones = n.revisiones ?? 0
+  const exploradores = n.exploradores ?? 0
+
+  switch (n.etiqueta) {
+    case 'Preflight':
+    case 'Cierre':
+      return n.ms !== undefined && orquestador !== undefined ? [`orquestador ${orquestador}`] : []
+    case 'Exploración':
+      return exploradores >= 1 ? [`${exploradores} ${exploradores === 1 ? AGENTE_DE_PASO.explorador.agente : `${AGENTE_DE_PASO.explorador.agente}es`} · ${AGENTE_DE_PASO.explorador.config}`] : []
+    case 'Plan':
+      return veces >= 1 ? [lineaDeAgente(AGENTE_DE_PASO.planificador)] : []
+    case 'Revisión del plan':
+      return n.ms !== undefined ? [lineaDeAgente(AGENTE_DE_PASO.revisorPlan)] : []
+    case 'Ejecución': {
+      const lineas: string[] = []
+
+      if (veces >= 1) lineas.push(lineaDeAgente(AGENTE_DE_PASO.ejecutor))
+      if (revisiones >= 1) lineas.push(lineaDeAgente(AGENTE_DE_PASO.revisorSubtarea))
+
+      return lineas
+    }
+    case 'Verificación final':
+      return revisiones >= 1 ? [lineaDeAgente(AGENTE_DE_PASO.revisorFinal)] : []
+    default:
+      return []
+  }
+}
+
+/**
  * Una línea con el flujo y dónde va: `/implementador · Ejecución`; `sin flujo en esta sesión` si no hay.
- * No muestra el `modo` de un flujo guardado de antes (0.10–0.11): se tolera y se ignora.
  * Con la hora `t` (ms) agrega el tiempo total de trabajo al final, sin la espera al usuario: `/implementador · Ejecución · 3 min 20 s`.
  */
 export function resumenFlujo(sinCompletar: Flujo | null, t?: number): string {

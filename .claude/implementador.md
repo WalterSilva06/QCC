@@ -14,7 +14,7 @@ CRÍTICO, además de lo que diga `comun.md` §2: una subtarea que toca alguna de
 
 No son rutas críticas (documentación): `FLUJOS.md`, `MODS.md` y `README.md`.
 
-- **#6 además:** cualquier cambio en la forma de un atom que sobrevive a `/reload-plugins` (`flujo`, `filasExploradores`, y los tipos de `panel-uso/types/index.d.ts`). Un flujo guardado con la forma anterior sigue vivo tras recargar. Motivo: una corrida de `/implementador-ligero` (antes de los modos) dejó el panel entero sin dibujo con un atom 0.9.3 y solo lo vio el revisor.
+- **#6 además:** cualquier cambio en la forma de un atom que sobrevive a `/reload-plugins` (`flujo`, `filasExploradores`, y los tipos de `panel-uso/types/index.d.ts`). Un flujo guardado con la forma anterior sigue vivo tras recargar. Motivo: una corrida dejó el panel entero sin dibujo con un atom de la forma 0.9.3 y solo lo vio el revisor.
 
 Sin criterios: textos, colores y anchos del panel, funciones puras de `formato.ts` y `semana.ts` con tests, FLUJOS.md, MODS.md, README, AGENTS.md.
 

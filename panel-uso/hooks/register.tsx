@@ -14,6 +14,7 @@ import {
   congelarConsumo,
   consumoDeFlujo,
   cuadradosDeFila,
+  detallePaso,
   iniciarFlujo,
   marcarOrquestador,
   nodos,
@@ -92,7 +93,7 @@ const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtl
 /** Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. */
 const PREF_SEMANA = 'prefs:semana'
 
-/** Igual que `PREF_SEMANA`: la sección «Flujo» desplegada o plegada. */
+/** Igual que `PREF_SEMANA`: la pestaña «Flujo» abierta o cerrada. */
 const PREF_FLUJO = 'prefs:flujo'
 
 /** Color del glifo de «Terminado» según cómo terminó el flujo. */
@@ -306,7 +307,7 @@ async function vaciarAlAbrirTanda($: EngineInterface, s: Senal) {
   }
 }
 
-/** Pliega o despliega «Flujo» y lo recuerda entre sesiones. */
+/** Abre o cierra la pestaña «Flujo» y lo recuerda entre sesiones. */
 async function alternarFlujo($: EngineInterface) {
   let abierta = false
   await update($, flujoAbierto, antes => {
@@ -470,7 +471,7 @@ export const register: Register = on => {
       const guardada = await $.store.get(PREF_FLUJO)
       await update($, flujoAbierto, () => guardada === true)
     } catch {
-      // Sin store arranca plegada.
+      // Sin store arranca con la pestaña cerrada.
     }
     await medirDesglose($, 'summary')
     try {
@@ -857,96 +858,110 @@ export const register: Register = on => {
       return <Text wrap="truncate-end">{partes.join(' · ')}</Text>
     }
 
+    /** El bloque «Flujo»: plegado, título y resumen; como pestaña abierta, además los nodos con su detalle y el consumo. */
+    const bloqueFlujo = (
+      <Box key="flujo" flexDirection="column" marginBottom={1}>
+        <Box>
+          <Box flexGrow={1}>
+            <Text bold>Flujo</Text>
+          </Box>
+          <Button key="flujo-plegar" hotkey="f" label={flAbierto ? 'Ocultar' : 'Ver'} onPress={() => alternarFlujo($)} />
+        </Box>
+        <Text dimColor wrap="truncate-end">
+          {resumenFlujo(fl, t)}
+        </Text>
+        {flAbierto && fl?.orquestador !== undefined && (
+          <Text dimColor wrap="truncate-end">
+            {`orquestador ${fl.orquestador}`}
+          </Text>
+        )}
+        {flAbierto &&
+          fl !== null &&
+          nodos(fl, t).flatMap((n, i, todos) => {
+            const glifo =
+              n.estado === 'pasado'
+                ? { texto: '✓ ', color: 'success' as const }
+                : n.estado === 'pendiente'
+                  ? { texto: '○ ', color: undefined }
+                  : i === todos.length - 1 && fl.estado !== 'en curso'
+                    ? { texto: '● ', color: COLOR_FIN[fl.estado] }
+                    : { texto: '▸ ', color: 'claude' as const }
+
+            return [
+              ...(i > 0 ? [<Text key={`flujo-sep-${i}`} dimColor>│</Text>] : []),
+              <Box key={`flujo-${i}`}>
+                <Box flexGrow={1}>
+                  <Text color={glifo.color} dimColor={n.estado === 'pendiente'}>
+                    {glifo.texto}
+                  </Text>
+                  <Text bold={n.estado === 'actual'} dimColor={n.estado === 'pendiente'} wrap="truncate-end">
+                    {n.etiqueta}
+                  </Text>
+                  {n.exploradores !== undefined && (
+                    <Text dimColor wrap="truncate-end">
+                      {` ×${n.exploradores}`}
+                    </Text>
+                  )}
+                  {n.veces !== undefined && (
+                    <Text dimColor wrap="truncate-end">
+                      {` ×${n.veces}`}
+                    </Text>
+                  )}
+                  {n.revisiones !== undefined && (
+                    <Text dimColor wrap="truncate-end">
+                      {` · rev ×${n.revisiones}`}
+                    </Text>
+                  )}
+                </Box>
+                {n.ms !== undefined && <Text dimColor>{` ${duracion(n.ms)}`}</Text>}
+                {n.esperaUsuario !== undefined && <Text dimColor>{` · espera ${duracion(n.esperaUsuario)}`}</Text>}
+              </Box>,
+              // La sangría de 2 va dentro del `Text`: a 32 columnas se trunca con el resto de la línea.
+              ...detallePaso(n, fl.orquestador).map((linea, j) => (
+                <Text key={`flujo-detalle-${i}-${j}`} dimColor wrap="truncate-end">
+                  {`  ${linea}`}
+                </Text>
+              )),
+            ]
+          })}
+        {flAbierto && filasConsumo.length > 0 && (
+          <Box flexDirection="column" marginTop={1}>
+            <Box>
+              <Box flexGrow={1}>
+                <Text dimColor>consumo</Text>
+              </Box>
+              <Text>
+                {totalConSalida(
+                  filasConsumo.reduce((suma, f) => suma + f.total, 0),
+                  filasConsumo.reduce((suma, f) => suma + f.salida, 0),
+                )}
+              </Text>
+            </Box>
+            {filasConsumo.map((f, i) => (
+              <Box key={`consumo-${idDeFila(f)}`}>
+                <Box flexGrow={1}>
+                  <Text color={f.origen === 'subagente' ? COLOR_SUB : undefined} wrap="truncate-end">
+                    {etiquetasConsumo[i] ?? ''}
+                  </Text>
+                </Box>
+                <Text>{tokens(f.total).padStart(7)}</Text>
+                <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Box>
+    )
+
+    // Con la pestaña «Flujo» abierta se dibuja solo ese bloque; `flujo-plegar` sigue en él para volver.
+    if (flAbierto) return <Box flexDirection="column">{bloqueFlujo}</Box>
+
     return (
       <Box flexDirection="column">
         <Box marginBottom={1}>
           <Button key="carpeta" hotkey="c" label="Abrir carpeta" onPress={() => abrirCarpeta($)} />
         </Box>
-        <Box key="flujo" flexDirection="column" marginBottom={1}>
-          <Box>
-            <Box flexGrow={1}>
-              <Text bold>Flujo</Text>
-            </Box>
-            <Button key="flujo-plegar" hotkey="f" label={flAbierto ? 'Ocultar' : 'Ver'} onPress={() => alternarFlujo($)} />
-          </Box>
-          <Text dimColor wrap="truncate-end">
-            {resumenFlujo(fl, t)}
-          </Text>
-          {flAbierto && fl?.orquestador !== undefined && (
-            <Text dimColor wrap="truncate-end">
-              {`orquestador ${fl.orquestador}`}
-            </Text>
-          )}
-          {flAbierto &&
-            fl !== null &&
-            nodos(fl, t).flatMap((n, i, todos) => {
-              const glifo =
-                n.estado === 'pasado'
-                  ? { texto: '✓ ', color: 'success' as const }
-                  : n.estado === 'pendiente'
-                    ? { texto: '○ ', color: undefined }
-                    : i === todos.length - 1 && fl.estado !== 'en curso'
-                      ? { texto: '● ', color: COLOR_FIN[fl.estado] }
-                      : { texto: '▸ ', color: 'claude' as const }
-
-              return [
-                ...(i > 0 ? [<Text key={`flujo-sep-${i}`} dimColor>│</Text>] : []),
-                <Box key={`flujo-${i}`}>
-                  <Box flexGrow={1}>
-                    <Text color={glifo.color} dimColor={n.estado === 'pendiente'}>
-                      {glifo.texto}
-                    </Text>
-                    <Text bold={n.estado === 'actual'} dimColor={n.estado === 'pendiente'} wrap="truncate-end">
-                      {n.etiqueta}
-                    </Text>
-                    {n.exploradores !== undefined && (
-                      <Text dimColor wrap="truncate-end">
-                        {` ×${n.exploradores}`}
-                      </Text>
-                    )}
-                    {n.veces !== undefined && (
-                      <Text dimColor wrap="truncate-end">
-                        {` ×${n.veces}`}
-                      </Text>
-                    )}
-                    {n.revisiones !== undefined && (
-                      <Text dimColor wrap="truncate-end">
-                        {` · rev ×${n.revisiones}`}
-                      </Text>
-                    )}
-                  </Box>
-                  {n.ms !== undefined && <Text dimColor>{` ${duracion(n.ms)}`}</Text>}
-                  {n.esperaUsuario !== undefined && <Text dimColor>{` · espera ${duracion(n.esperaUsuario)}`}</Text>}
-                </Box>,
-              ]
-            })}
-          {flAbierto && filasConsumo.length > 0 && (
-            <Box flexDirection="column" marginTop={1}>
-              <Box>
-                <Box flexGrow={1}>
-                  <Text dimColor>consumo</Text>
-                </Box>
-                <Text>
-                  {totalConSalida(
-                    filasConsumo.reduce((suma, f) => suma + f.total, 0),
-                    filasConsumo.reduce((suma, f) => suma + f.salida, 0),
-                  )}
-                </Text>
-              </Box>
-              {filasConsumo.map((f, i) => (
-                <Box key={`consumo-${idDeFila(f)}`}>
-                  <Box flexGrow={1}>
-                    <Text color={f.origen === 'subagente' ? COLOR_SUB : undefined} wrap="truncate-end">
-                      {etiquetasConsumo[i] ?? ''}
-                    </Text>
-                  </Box>
-                  <Text>{tokens(f.total).padStart(7)}</Text>
-                  <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
-                </Box>
-              ))}
-            </Box>
-          )}
-        </Box>
+        {bloqueFlujo}
         <Box>
           <Box flexGrow={1}>
             <Text bold>Contexto</Text>

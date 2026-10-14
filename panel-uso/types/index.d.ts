@@ -102,19 +102,16 @@ export type Actividad = Record<string, ActividadFila>
 
 /** El flujo `/implementador` de la sesión y dónde va. */
 export type Flujo = {
-  /**
-   * La skill que lo inició. `implementador-ligero` es legado: de flujos guardados de antes de los modos (0.9.x).
-   * Un flujo guardado hasta 0.12.0 puede traer `documentar`: ya no existe y no tiene pasos.
-   */
-  nombre: 'implementador' | 'implementador-ligero'
-  /** Legado de 0.10–0.11: ya no se escribe ni se lee; se tolera en flujos guardados y se ignora. */
-  modo?: 'normal' | 'ligero'
-  /** Legado hasta 0.12.0: ya no se escribe ni se lee; se tolera en flujos guardados y se ignora. */
-  variante?: 'auditar' | null
+  /** La skill que lo inició. */
+  nombre: 'implementador'
   /** Índice del paso actual dentro de los pasos de su flujo (0 es Preflight). */
   paso: number
   /** Ya salió algún agente `ejecutor`: distingue la verificación del Preflight de la final. */
   ejecuto: boolean
+  /** Salió un `revisor` desde el último `ejecutor` de Ejecución, así que el próximo `verificar.mjs` es el final (paso 6). Si falta, `false`. */
+  reviso?: boolean
+  /** Ya hubo la verificación final desde el último `estado.mjs --base`; los `ejecutor` siguientes son correcciones del cierre y conservan `reviso`. Si falta, `false`. */
+  cierre?: boolean
   /** Exploradores en vuelo (salieron y aún no vuelven); si falta, 0. */
   exploradores?: number
   /** Exploradores lanzados en todo el flujo, de todas las tandas; no baja al volver. Si falta, cuentan los que están en vuelo. */
@@ -166,9 +163,9 @@ declare module 'claude-code' {
       semanaAbierta: boolean
       /** Qué filas de «Esta sesión» tienen una petición en curso o esperan a otra; solo de esta terminal. */
       actividad: Actividad
-      /** El flujo `/implementador` o `/implementador-ligero` en curso o ya terminado; `null` si la sesión no inició ninguno. */
+      /** El flujo `/implementador` en curso o ya terminado; `null` si la sesión no inició ninguno. */
       flujo: Flujo | null
-      /** La sección «Flujo» desplegada; se recuerda en el store con la clave `prefs:flujo`. */
+      /** La pestaña «Flujo» abierta (el resto del panel se oculta); se recuerda en el store con la clave `prefs:flujo`. */
       flujoAbierto: boolean
       /** Ids de fila de subagente vistas mientras había exploradores o revisores en vuelo; solo de esta terminal; se vacía al iniciar un flujo, al abrir una tanda de exploradores o revisores y al cerrar la sesión. */
       filasExploradores: string[]

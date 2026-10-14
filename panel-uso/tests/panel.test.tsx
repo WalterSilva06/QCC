@@ -14,6 +14,7 @@ import {
   congelarConsumo,
   consumoDeFlujo,
   cuadradosDeFila,
+  detallePaso,
   iniciarFlujo,
   marcarOrquestador,
   nodos,
@@ -23,7 +24,7 @@ import {
   senalDeHerramienta,
   terminarFlujo,
 } from '../hooks/flujo'
-import type { Senal } from '../hooks/flujo'
+import type { Nodo, Senal } from '../hooks/flujo'
 import { aDesglose, barra, barraPartida, barraTramos, desgloseTramos, duracion, etiquetasAlineadas, falta, pct, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
   ESPERA_MAX_MS,
@@ -1735,16 +1736,12 @@ describe('flujo (puro)', () => {
   const bash = (command: string) => senalDeHerramienta('Bash', { command }, undefined)
   const doc = (f: Flujo | null) => (f ? `${f.estado}:${f.paso}` : 'null')
 
-  test('iniciarFlujo: solo implementador y el ligero (con o sin / y prefijo)', async () => {
+  test('iniciarFlujo: solo implementador (con o sin / y prefijo)', async () => {
     const base = { paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
 
     expect(iniciarFlujo('implementador', '')).toEqual({ ...base, nombre: 'implementador' })
-    expect(iniciarFlujo('/implementador-ligero', '')).toEqual({ ...base, nombre: 'implementador-ligero' })
+    expect(iniciarFlujo('/implementador-ligero', '')).toBeNull()
     expect(iniciarFlujo('claude-config:implementador', '')).toEqual({ ...base, nombre: 'implementador' })
-    // /documentar ya no existe: no abre flujo, ni con un pedido de auditar.
-    expect(iniciarFlujo('documentar', '')).toBeNull()
-    expect(iniciarFlujo('/mi-plugin:documentar', '**Pedido:** auditar')).toBeNull()
-    expect(iniciarFlujo('implementador', '**Pedido:** auditar') as Flujo).not.toHaveProperty('variante')
     expect(iniciarFlujo('simplify', '')).toBeNull()
     expect(iniciarFlujo('/implementador:otra', '')).toBeNull()
     expect(iniciarFlujo('', '')).toBeNull()
@@ -1761,23 +1758,18 @@ describe('flujo (puro)', () => {
     })
   })
 
-  test('iniciarFlujo con RELEVO no escribe modo', async () => {
+  test('iniciarFlujo: el texto del pedido no cambia el flujo', async () => {
     const base = { paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
     const relevo = '**Pedido:** RELEVO · inicio\nPEDIDO: arreglar el panel'
     const uso: Flujo['usoBase'] = { 'Opus 5.5|high|principal': [100, 10] }
 
-    // Con o sin la marca: implementador abre implementador y el ligero abre el flujo viejo (legado), nunca con modo.
+    // Con o sin la marca, implementador abre implementador.
     for (const texto of [relevo, '**Pedido:** arreglar el panel']) {
       expect(iniciarFlujo('implementador', texto)).toEqual({ ...base, nombre: 'implementador' })
       expect(iniciarFlujo('/claude-config:implementador', texto)).toEqual({ ...base, nombre: 'implementador' })
-      expect(iniciarFlujo('implementador-ligero', texto)).toEqual({ ...base, nombre: 'implementador-ligero' })
-      expect(iniciarFlujo('/claude-config:implementador-ligero', texto)).toEqual({ ...base, nombre: 'implementador-ligero' })
     }
 
     expect(iniciarFlujo('implementador', relevo, 5_000, uso)).toEqual({ ...base, nombre: 'implementador', inicio: 5_000, desde: 5_000, usoBase: uso })
-    expect(iniciarFlujo('implementador', relevo) as Flujo).not.toHaveProperty('modo')
-    // Con la marca, documentar sigue sin abrir flujo.
-    expect(iniciarFlujo('documentar', relevo)).toBeNull()
   })
 
   test('senalDeHerramienta: estado.mjs con sus opciones, verificar.mjs, ~ y $HOME, y no un cat', async () => {
@@ -1814,7 +1806,7 @@ describe('flujo (puro)', () => {
     expect(senalDeHerramienta('AskUserQuestion', { questions: [{ header: 'Planes' }] }, undefined)).toEqual(pregunta(false))
     expect(senalDeHerramienta('AskUserQuestion', {}, undefined)).toEqual(pregunta(false))
 
-    for (const file_path of ['/repo/MODS.md', 'D:\\repo\\.claude\\documentar\\cobertura.md', '/repo/.claude/documentar.md']) {
+    for (const file_path of ['/repo/MODS.md', '/repo/.claude/implementador.md', 'D:\\repo\\FLUJOS.md']) {
       expect(senalDeHerramienta('Edit', { file_path }, undefined)).toBeNull()
       expect(senalDeHerramienta('Write', { file_path }, undefined)).toBeNull()
     }
@@ -1871,8 +1863,6 @@ describe('flujo (puro)', () => {
     const revisado = avanzar(plan, agente('revisor-plan'), 2_000)
     expect(revisado?.paso).toBe(3)
     expect(avanzar(revisado, agente('planificador'), 3_000)).toMatchObject({ paso: 2, planes: 2 })
-    // En el flujo viejo `implementador-ligero` el planificador no mueve nada.
-    expect(pasos('implementador-ligero', [agente('planificador')])).toEqual([0])
   })
 
   test('revisor-plan lleva al paso 3', async () => {
@@ -1909,9 +1899,6 @@ describe('flujo (puro)', () => {
 
     // El `revisor` de verdad, desde la revisión del plan, pasa a Ejecución y se cuenta ahí.
     expect(avanzar(f, agente('revisor'), 1_000)).toMatchObject({ paso: 5, revisiones: { 5: 1 } })
-
-    // En el flujo viejo `implementador-ligero` no mueve nada.
-    expect(pasos('implementador-ligero', [agente('revisor-plan')])).toEqual([0])
   })
 
   test('implementador NORMAL: sin planificador salta de Plan a Aprobación', async () => {
@@ -1925,7 +1912,7 @@ describe('flujo (puro)', () => {
     expect(pasos('implementador', [estado('diff')])).toEqual([0])
   })
 
-  test('verificación final ROJA: la corrección vuelve a Ejecución y la nueva verificación a Verificación final', async () => {
+  test('un verificar sin revisor antes queda en Ejecución; tras el revisor marca Verificación final y Cierre', async () => {
     const secuencia = [
       estado('base'),
       agente('ejecutor'),
@@ -1939,25 +1926,149 @@ describe('flujo (puro)', () => {
       verificar,
     ]
 
-    expect(pasos('implementador', secuencia)).toEqual([5, 5, 5, 6, 5, 5, 5, 6, 7, 7])
+    // El índice 3 es el verificar de una subtarea (sin revisor antes): queda en Ejecución.
+    expect(pasos('implementador', secuencia)).toEqual([5, 5, 5, 5, 5, 5, 5, 6, 7, 7])
   })
 
-  test('implementador-ligero: sin explorador, rechazo y cierre', async () => {
+  test('el verificar y el revisor de cada subtarea quedan en Ejecución; solo el verificar tras el último revisor marca Verificación final', async () => {
+    const sub = [estado('base'), agente('ejecutor'), estado('cambios'), verificar, agente('revisor')]
+    const secuencia = [pregunta(true), ...sub, ...sub, verificar, agente('revisor'), estado('cambios'), verificar]
+
+    expect(pasos('implementador', secuencia)).toEqual([4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
+
+    let f = iniciarFlujo('implementador', '', 0)
+
+    for (const s of secuencia) f = avanzar(f, s, 1_000)
+
+    expect(f).toMatchObject({ ejecuciones: 2, revisiones: { 5: 2, 6: 1 } })
+    expect(nodos(f as Flujo)[5]?.revisiones).toBe(2)
+    expect(nodos(f as Flujo)[6]?.revisiones).toBe(1)
+  })
+
+  test('una corrección de la subtarea (RECHAZADO o verificar ROJO) sigue en Ejecución', async () => {
     const secuencia = [
-      pregunta(true),
+      estado('base'),
       agente('ejecutor'),
-      estado('cambios'),
-      agente('revisor'),
-      agente('ejecutor'),
-      agente('revisor'),
       estado('cambios'),
       verificar,
-      agente('planificador'),
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+      agente('revisor'),
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+      agente('revisor'),
     ]
 
-    expect(pasos('implementador-ligero', secuencia)).toEqual([4, 5, 5, 6, 5, 6, 7, 7, 7])
-    expect(pasos('implementador-ligero', [verificar, estado('preflight'), agente('explorador'), agenteFin('explorador')])).toEqual([0, 0, 1, 2])
-    expect(pasos('implementador-ligero', [agente('planificador'), pregunta(false)])).toEqual([0, 0])
+    expect(pasos('implementador', secuencia)).toEqual(Array(12).fill(5))
+
+    let f = iniciarFlujo('implementador', '', 0)
+
+    for (const s of secuencia) f = avanzar(f, s, 1_000)
+
+    expect(f).toMatchObject({ paso: 5, revisiones: { 5: 2 } })
+  })
+
+  test('verificación final ROJA y corrección de la revisión final vuelven a Verificación final', async () => {
+    const secuencia = [
+      estado('base'),
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+      agente('revisor'),
+      verificar,
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+      agente('revisor'),
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+      agente('revisor'),
+    ]
+
+    expect(pasos('implementador', secuencia)).toEqual([5, 5, 5, 5, 5, 6, 5, 5, 6, 6, 5, 5, 6, 6])
+
+    let f = iniciarFlujo('implementador', '', 0)
+
+    for (const s of secuencia) f = avanzar(f, s, 1_000)
+
+    expect(f).toMatchObject({ revisiones: { 5: 1, 6: 2 } })
+  })
+
+  test('estado --base tras un verificar en 6 abre otra subtarea en Ejecución', async () => {
+    const secuencia = [
+      estado('base'),
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+      agente('revisor'),
+      verificar,
+      estado('base'),
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+      agente('revisor'),
+    ]
+
+    expect(pasos('implementador', secuencia)).toEqual([5, 5, 5, 5, 5, 6, 5, 5, 5, 5, 5])
+  })
+
+  test('una corrección del cierre con dos ejecutores seguidos conserva la verificación final', async () => {
+    const secuencia = [
+      estado('base'),
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+      agente('revisor'),
+      verificar,
+      agente('ejecutor'),
+      agente('ejecutor'),
+      estado('cambios'),
+      verificar,
+    ]
+
+    expect(pasos('implementador', secuencia).at(-1)).toBe(6)
+  })
+
+  test('reviso y cierre: solo se escriben cuando hay algo que anotar y un flujo sin ellos se tolera', async () => {
+    const nuevo = iniciarFlujo('implementador', '') as Flujo
+
+    expect(nuevo).not.toHaveProperty('reviso')
+    expect(nuevo).not.toHaveProperty('cierre')
+
+    // Flujo en 5 con `ejecuto` y sin los campos (atom de 0.13.0).
+    const en5: Flujo = { ...nuevo, paso: 5, ejecuto: true }
+    const ejecutado = avanzar(en5, agente('ejecutor'), 0)
+
+    expect(ejecutado).toEqual({ ...en5, ejecuciones: 2 })
+    expect(avanzar(en5, verificar, 0)).toEqual(en5)
+
+    // Flujo en 6 sin los campos: el verificar se queda en 6.
+    const en6: Flujo = { ...en5, paso: 6 }
+
+    expect(avanzar(en6, verificar, 0)).toEqual(en6)
+
+    // Tras un revisor queda `reviso: true`.
+    const revisado = avanzar(en5, agente('revisor'), 0) as Flujo
+
+    expect(revisado.reviso).toBe(true)
+    expect(revisado).not.toHaveProperty('cierre')
+
+    // Un ejecutor en 5 sin `cierre` deja `reviso` en false.
+    expect(avanzar(revisado, agente('ejecutor'), 0)).toMatchObject({ paso: 5, reviso: false })
+
+    // Un verificar con `reviso: true` escribe `cierre: true`.
+    const cerrado = avanzar(revisado, verificar, 0) as Flujo
+
+    expect(cerrado).toMatchObject({ paso: 6, reviso: true, cierre: true })
+
+    // Un ejecutor con `cierre: true` conserva `reviso: true`.
+    expect(avanzar(cerrado, agente('ejecutor'), 0)).toMatchObject({ paso: 5, reviso: true, cierre: true })
+
+    // `--base` con `cierre: true` lo pone en false.
+    expect(avanzar(cerrado, estado('base'), 0)).toMatchObject({ paso: 5, cierre: false })
   })
 
   test('PASOS.implementador: Plan en el paso 2 y Revisión del plan en el 3', async () => {
@@ -1965,9 +2076,6 @@ describe('flujo (puro)', () => {
     expect(PASOS.implementador[2]).toBe('Plan')
     expect(PASOS.implementador[3]).toBe('Revisión del plan')
     expect(PASOS.implementador.slice(4)).toEqual(['Aprobación', 'Ejecución', 'Verificación final', 'Cierre'])
-    // El legado conserva su forma.
-    expect(PASOS['implementador-ligero']).toHaveLength(8)
-    expect(PASOS['implementador-ligero'][3]).toBe('Plan breve')
   })
 
   test('sin flujo o terminado: ninguna señal lo cambia ni lo revive', async () => {
@@ -2053,6 +2161,8 @@ describe('flujo (puro)', () => {
     expect(tramo(f)).toEqual({ paso: 5, desde: 12_000, tiempos: { 0: 3_000, 1: 6_000, 2: 2_000 } })
 
     // Verificación final y vuelta a Ejecución: volver a un paso ya visitado acumula.
+    // El revisor de la subtarea: el siguiente verificar es el final.
+    f = avanzar(f, agente('revisor'), 18_000)
     f = avanzar(f, verificar, 20_000)
     expect(tramo(f)).toEqual({ paso: 6, desde: 20_000, tiempos: { 0: 3_000, 1: 6_000, 2: 2_000, 5: 8_000 } })
     f = avanzar(f, estado('base'), 25_000)
@@ -2093,7 +2203,8 @@ describe('flujo (puro)', () => {
     expect(resumenFlujo(f, T)).toBe('/implementador · Ejecución · 3 min 20 s')
 
     // Volver a Ejecución después de la Verificación final: el actual suma lo de antes y lo de ahora.
-    let g = avanzar(f, verificar, 100_000)
+    let g = avanzar(f, agente('revisor'), 100_000)
+    g = avanzar(g, verificar, 100_000)
     g = avanzar(g, estado('base'), 110_000)
     // El paso 6 (ahora pendiente) no muestra tiempo aunque ya se visitó.
     expect(nodos(g as Flujo, 150_000).map(n => n.ms)).toEqual([5_000, 20_000, 5_000, undefined, undefined, 70_000 + 40_000, undefined, undefined, undefined])
@@ -2130,61 +2241,20 @@ describe('flujo (puro)', () => {
     expect(nodos(completo).at(-1)?.etiqueta).toBe('Terminado')
     expect(resumenFlujo(completo)).toBe('/implementador · Terminado')
 
-    const ligero = terminarFlujo({ ...f, nombre: 'implementador-ligero', paso: 7 }, 'answer', 'CIERRE · x — DETENIDO') as Flujo
-    expect(nodos(ligero).at(-1)).toEqual({ etiqueta: 'Terminado · detenido', estado: 'actual' })
-    expect(nodos(ligero).filter(n => n.estado === 'pasado')).toHaveLength(8)
-    expect(resumenFlujo(ligero)).toBe('/implementador-ligero · Terminado · detenido')
-
-    // Un flujo `documentar` guardado hasta 0.12.0 (con su variante) no lanza: no tiene pasos y se resume sin ellos.
-    const viejo = { ...f, nombre: 'documentar', variante: 'auditar', paso: 3 } as unknown as Flujo
+    // Un flujo guardado con un nombre que ya no existe no lanza: no tiene pasos y se resume sin ellos.
+    const viejo = { ...f, nombre: 'otro', paso: 3 } as unknown as Flujo
     expect(nodos(viejo, 1_000)).toEqual([{ etiqueta: 'Terminado', estado: 'pendiente' }])
-    expect(resumenFlujo(viejo)).toBe('/documentar')
-    expect(resumenFlujo(terminarFlujo(viejo, 'abort'))).toBe('/documentar · Terminado · interrumpido')
+    expect(resumenFlujo(viejo)).toBe('/otro')
+    expect(resumenFlujo(terminarFlujo(viejo, 'abort'))).toBe('/otro · Terminado · interrumpido')
     expect(() => avanzar(viejo, agente('explorador'), 1_000)).not.toThrow()
-    // La variante guardada se ignora: no aparece en el resumen.
-    expect(resumenFlujo({ ...f, variante: 'auditar' } as unknown as Flujo)).not.toContain('auditar')
     expect(resumenFlujo(null)).toBe('sin flujo en esta sesión')
   })
 
-  test('resumenFlujo no muestra el modo aunque el flujo guardado lo traiga', async () => {
+  test('resumenFlujo con y sin la hora', async () => {
     const f: Flujo = { nombre: 'implementador', paso: 2, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
 
-    expect(resumenFlujo({ ...f, modo: 'ligero' }, 4_000)).toBe('/implementador · Plan · 4 s')
-    expect(resumenFlujo({ ...f, modo: 'normal' }, 4_000)).toBe('/implementador · Plan · 4 s')
-    expect(resumenFlujo({ ...f, modo: 'ligero' })).toBe('/implementador · Plan')
     expect(resumenFlujo(f, 4_000)).toBe('/implementador · Plan · 4 s')
     expect(resumenFlujo(f)).toBe('/implementador · Plan')
-  })
-
-  test('flujo 0.11.x guardado con modo ligero y paso 3 sigue avanzando y se resume sin modo', async () => {
-    // Mismo largo e índices que antes: solo cambió la etiqueta del paso 3 (de Plan a Revisión del plan).
-    const guardado: Flujo = {
-      nombre: 'implementador',
-      modo: 'ligero',
-      paso: 3,
-      ejecuto: false,
-      planes: 1,
-      estado: 'en curso',
-      inicio: 0,
-      desde: 0,
-      tiempos: {},
-      fin: null,
-    }
-
-    expect(resumenFlujo(guardado, 4_000)).toBe('/implementador · Revisión del plan · 4 s')
-    expect(nodos(guardado, 4_000)).toHaveLength(9)
-    expect(nodos(guardado, 4_000).find(n => n.estado === 'actual')).toEqual({ etiqueta: 'Revisión del plan', estado: 'actual', ms: 4_000 })
-
-    // Avanza como un implementador normal: el modo guardado se ignora, no se borra ni se usa.
-    const aprobado = avanzar(guardado, pregunta(true), 5_000)
-    expect(aprobado).toMatchObject({ paso: 4, modo: 'ligero' })
-    const ejecutando = avanzar(aprobado, agente('ejecutor'), 6_000)
-    expect(ejecutando).toMatchObject({ paso: 5, ejecuto: true, ejecuciones: 1 })
-    // El revisor cuenta en Ejecución y la verificación pasa a Verificación final, como en el normal.
-    const revisado = avanzar(ejecutando, agente('revisor'), 7_000)
-    expect(revisado).toMatchObject({ paso: 5, revisiones: { 5: 1 } })
-    expect(avanzar(revisado, verificar, 8_000)?.paso).toBe(6)
-    expect(resumenFlujo(avanzar(revisado, verificar, 8_000), 9_000)).toBe('/implementador · Verificación final · 9 s')
   })
 
   test('las funciones no mutan el flujo que reciben', async () => {
@@ -2260,7 +2330,6 @@ describe('flujo (puro)', () => {
 
     expect(pasos('implementador', [estado('preflight'), A, A, A, F, F, F])).toEqual([0, 1, 1, 1, 1, 1, 2])
     expect(pasos('implementador', [A, A, F, A, F, F])).toEqual([1, 1, 1, 1, 1, 2])
-    expect(pasos('implementador-ligero', [A, A, F, F])).toEqual([1, 1, 1, 2])
   })
 
   test('varios exploradores: el tiempo de Exploración corre desde el primero hasta que vuelve el último, una sola vez', async () => {
@@ -2373,11 +2442,6 @@ describe('flujo (puro)', () => {
     expect(avanzar(cerrado, A, 4_000)).toBe(cerrado)
     expect(avanzar(cerrado, F, 4_000)).toBe(cerrado)
     expect(terminarFlujo(f, 'clear', undefined, 3_000)).toMatchObject({ totalExploradores: 4, estado: 'interrumpido' })
-
-    // El ligero cuenta igual y lo muestra el nodo de Exploración.
-    let ligero = iniciarFlujo('implementador-ligero', '', 0)
-    for (const s of [A, A, F, F]) ligero = avanzar(ligero, s, 1_000)
-    expect(nodos(ligero as Flujo)[1].exploradores).toBe(2)
   })
 
   test('nodos: Exploración lleva exploradores solo si hubo y no está pendiente', async () => {
@@ -2509,20 +2573,6 @@ describe('flujo (puro)', () => {
     expect(lista[5]).toEqual({ etiqueta: 'Ejecución', estado: 'pasado', veces: 1, revisiones: 1 })
     expect(lista[6]).toEqual({ etiqueta: 'Verificación final', estado: 'actual', revisiones: 1 })
     expect(lista.filter((_, i) => ![5, 6].includes(i)).some(n => n.veces !== undefined || n.revisiones !== undefined)).toBe(false)
-  })
-
-  test('contadores en /implementador-ligero (Ejecución y Revisión)', async () => {
-    const senales = [agente('planificador'), estado('base'), agente('ejecutor'), agente('ejecutor'), agente('revisor'), agente('revisor')]
-    let f = iniciarFlujo('implementador-ligero', '', 0)
-    for (const s of senales) f = avanzar(f, s, 1_000)
-
-    const lista = nodos(f as Flujo)
-
-    expect(lista[5]).toEqual({ etiqueta: 'Ejecución', estado: 'pasado', veces: 2 })
-    expect(lista[6]).toEqual({ etiqueta: 'Revisión', estado: 'actual', veces: 2 })
-    expect(lista.some(n => n.revisiones !== undefined)).toBe(false)
-    expect(lista[3]).toEqual({ etiqueta: 'Plan breve', estado: 'pasado' })
-    expect(f?.planes).toBeUndefined()
   })
 
   test('un flujo con la forma 0.9.7 (sin planes, ejecuciones ni revisiones) no lanza: Ejecución toma `ejecuto` como cota y cuenta desde ahí', async () => {
@@ -2907,6 +2957,77 @@ describe('flujo (puro)', () => {
     const fin = terminarFlujo(opus, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
     expect(marcarOrquestador(fin, 'Sonnet 5.5 high')).toBe(fin)
   })
+
+  test('detallePaso: las líneas de agente de cada nodo, sin sangría', async () => {
+    const pasado = (etiqueta: string, resto: Partial<Nodo> = {}): Nodo => ({ etiqueta, estado: 'pasado', ...resto })
+
+    // Pendiente, Aprobación y Terminado: siempre vacío.
+    expect(detallePaso({ etiqueta: 'Plan', estado: 'pendiente' }, 'Opus 5.5 high')).toEqual([])
+    expect(detallePaso({ etiqueta: 'Ejecución', estado: 'pendiente', veces: 2, revisiones: 1, ms: 5 }, 'Opus 5.5 high')).toEqual([])
+    expect(detallePaso(pasado('Aprobación', { ms: 1_000, veces: 1, revisiones: 1 }), 'Opus 5.5 high')).toEqual([])
+    expect(detallePaso({ etiqueta: 'Terminado', estado: 'actual', ms: 9_000 }, 'Opus 5.5 high')).toEqual([])
+    expect(detallePaso({ etiqueta: 'Terminado · detenido', estado: 'actual', ms: 9_000 }, 'Opus 5.5 high')).toEqual([])
+
+    // Preflight y Cierre: el orquestador, solo con tiempo y con nombre.
+    for (const etiqueta of ['Preflight', 'Cierre']) {
+      expect(detallePaso(pasado(etiqueta, { ms: 1_000 }), 'Opus 5.5 high')).toEqual(['orquestador Opus 5.5 high'])
+      expect(detallePaso({ etiqueta, estado: 'actual', ms: 0 }, 'Sonnet 5.5 high')).toEqual(['orquestador Sonnet 5.5 high'])
+      expect(detallePaso(pasado(etiqueta), 'Opus 5.5 high')).toEqual([])
+      expect(detallePaso(pasado(etiqueta, { ms: 1_000 }))).toEqual([])
+    }
+
+    // Exploración: singular y plural.
+    expect(detallePaso(pasado('Exploración', { exploradores: 1 }))).toEqual(['1 explorador · Haiku high'])
+    expect(detallePaso(pasado('Exploración', { exploradores: 3 }))).toEqual(['3 exploradores · Haiku high'])
+    expect(detallePaso(pasado('Exploración'))).toEqual([])
+    expect(detallePaso({ etiqueta: 'Exploración', estado: 'actual', exploradores: 2 })).toEqual(['2 exploradores · Haiku high'])
+
+    // Plan: el planificador si se lanzó.
+    expect(detallePaso(pasado('Plan', { veces: 1 }))).toEqual(['planificador · Opus high'])
+    expect(detallePaso(pasado('Plan', { veces: 2 }))).toEqual(['planificador · Opus high'])
+    expect(detallePaso(pasado('Plan'))).toEqual([])
+    expect(detallePaso(pasado('Plan', { revisiones: 1 }))).toEqual([])
+
+    // Revisión del plan: solo si tiene tiempo (un paso saltado no lo tiene).
+    expect(detallePaso(pasado('Revisión del plan', { ms: 2_000 }))).toEqual(['revisor-plan · Sonnet medium'])
+    expect(detallePaso({ etiqueta: 'Revisión del plan', estado: 'actual', ms: 0 })).toEqual(['revisor-plan · Sonnet medium'])
+    expect(detallePaso(pasado('Revisión del plan'))).toEqual([])
+
+    // Ejecución: ejecutor y después revisor.
+    expect(detallePaso(pasado('Ejecución', { veces: 2, revisiones: 2 }))).toEqual(['ejecutor · Sonnet high', 'revisor · Sonnet high/medium'])
+    expect(detallePaso(pasado('Ejecución', { veces: 1 }))).toEqual(['ejecutor · Sonnet high'])
+    expect(detallePaso(pasado('Ejecución', { revisiones: 1 }))).toEqual(['revisor · Sonnet high/medium'])
+    expect(detallePaso(pasado('Ejecución', { ms: 1_000 }))).toEqual([])
+
+    // Verificación final: el revisor de Opus si se lanzó.
+    expect(detallePaso(pasado('Verificación final', { revisiones: 1 }))).toEqual(['revisor · Opus high'])
+    expect(detallePaso(pasado('Verificación final', { veces: 1 }))).toEqual([])
+    expect(detallePaso(pasado('Verificación final'))).toEqual([])
+
+    // Una etiqueta desconocida no tiene líneas.
+    expect(detallePaso(pasado('Otro', { ms: 1, veces: 1, revisiones: 1, exploradores: 1 }), 'Opus 5.5 high')).toEqual([])
+  })
+
+  test('detallePaso: ninguna línea fija pasa de 30 caracteres', async () => {
+    const lleno = (etiqueta: string): Nodo => ({ etiqueta, estado: 'actual', ms: 1, veces: 9, revisiones: 9, exploradores: 99 })
+    const lineas = PASOS.implementador.flatMap(etiqueta => detallePaso(lleno(etiqueta)))
+
+    expect(lineas).toEqual([
+      '99 exploradores · Haiku high',
+      'planificador · Opus high',
+      'revisor-plan · Sonnet medium',
+      'ejecutor · Sonnet high',
+      'revisor · Sonnet high/medium',
+      'revisor · Opus high',
+    ])
+
+    for (const linea of lineas) expect(linea.length).toBeLessThanOrEqual(30)
+
+    // Las líneas de los nodos reales de un flujo también caben.
+    const f = iniciarFlujo('implementador', '', 0) as Flujo
+
+    for (const n of nodos(f, 1_000)) for (const linea of detallePaso(n)) expect(linea.length).toBeLessThanOrEqual(30)
+  })
 })
 
 type Ui = Awaited<ReturnType<Engine['ui']['mount']>>
@@ -3218,7 +3339,8 @@ function motorStore(on: On, inicial: Record<string, unknown> = {}) {
 /**
  * Lo que el panel dibuja de «Flujo» abierta en `/implementador · Ejecución`, texto por texto,
  * con los tiempos del recorrido del test (5 s, 20 s, 3 s, 1 min y 1 min 30 s en curso; `Revisión del plan` se saltó y no lleva tiempo)
- * y el conteo de exploradores lanzados (` ×1`) junto a `Exploración`, antes de su tiempo.
+ * y el conteo de exploradores lanzados (` ×1`) junto a `Exploración`, antes de su tiempo;
+ * bajo su tiempo, la línea de detalle del paso (sin orquestador: el recorrido no pasa por `turn.step`).
  */
 const FLUJO_EJECUCION = [
   'Flujo',
@@ -3231,6 +3353,7 @@ const FLUJO_EJECUCION = [
   'Exploración',
   ' ×1',
   ' 20 s',
+  '  1 explorador · Haiku high',
   '│',
   '✓ ',
   'Plan',
@@ -3350,13 +3473,12 @@ describe('flujo en el panel', () => {
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     await ui.press({ key: 'flujo-plegar' })
-    /** Lo que dibuja «Flujo»: del título al de «Contexto». */
+    /** Lo que dibuja «Flujo»: del título al final de la pestaña (abierta, el resto del panel no se dibuja). */
     const deFlujo = async () => {
       const arbol = await ui.findAll({})
       const i = arbol.findIndex(n => n.type === 'Text' && n.text === 'Flujo')
-      const j = arbol.findIndex(n => n.type === 'Text' && n.text === 'Contexto')
 
-      return arbol.slice(i, j).filter(n => n.type === 'Text')
+      return arbol.slice(i).filter(n => n.type === 'Text')
     }
     const textos = async () => (await deFlujo()).map(n => (n.text ?? '').trim())
 
@@ -3443,16 +3565,15 @@ describe('flujo en el panel', () => {
     return vistos
   }
 
-  test('turn.step no reescribe el modelo con un flujo guardado en modo ligero', async ($, on) => {
+  test('turn.step no reescribe el modelo del hilo principal con un flujo en curso', async ($, on) => {
     preparar(on)
     const vistos = motorVisto(on)
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     await ui.press({ key: 'flujo-plegar' })
 
-    // Un flujo `implementador-ligero` (legado de antes de los modos), como el que sigue vivo tras recargar.
-    await $.skill.prompt({ skill: 'implementador-ligero', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
-    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador-ligero · Preflight · 0 s')
+    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** x' })
+    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Preflight · 0 s')
 
     // El hilo principal llega a `next` con el modelo y el esfuerzo originales; los de un subagente, igual.
     await paso($, 'claude-opus-5-5', 'high')
@@ -3679,6 +3800,164 @@ describe('flujo en el panel', () => {
     expect(await textosDe(ui)).toContain('Preflight')
     await ui.unmount()
   })
+
+  test('la pestaña Flujo oculta el resto y lo restaura', async ($, on) => {
+    const { guardados } = preparar(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const visibles = async () => {
+      const textos = await textosDe(ui)
+
+      return [textos.includes('Contexto'), textos.includes('Esta sesión'), Boolean(await ui.find({ type: 'Button', key: 'carpeta' }))]
+    }
+    // Plegado, el panel entero.
+    expect(await visibles()).toEqual([true, true, true])
+
+    // Abierta la pestaña no queda ninguno de los tres, pero el botón para volver sí, con su tecla.
+    await ui.press({ key: 'flujo-plegar' })
+    expect(await visibles()).toEqual([false, false, false])
+    const boton = await ui.find({ type: 'Button', key: 'flujo-plegar' })
+    expect(boton?.props.hotkey).toBe('f')
+    expect(boton?.props.label).toBe('Ocultar')
+    expect(guardados.get('prefs:flujo')).toBe(true)
+
+    await ui.press({ key: 'flujo-plegar' })
+    expect(await visibles()).toEqual([true, true, true])
+    expect(guardados.get('prefs:flujo')).toBe(false)
+    await ui.unmount()
+  })
+
+  test('con prefs:flujo guardado en true, la pestaña abre sin «Contexto»', async ($, on) => {
+    preparar(on, [], { 'prefs:flujo': true })
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const textos = await textosDe(ui)
+    expect(textos).toContain('Flujo')
+    expect(textos).not.toContain('Contexto')
+    expect(textos).not.toContain('Esta sesión')
+    await ui.unmount()
+  })
+
+  /**
+   * Un flujo en Ejecución con 2 exploradores, planificador, revisor-plan, ejecutor y un revisor, con el orquestador en
+   * `Sonnet 5.5 medium` (de longitud conocida), y la pestaña «Flujo» abierta con el ancho dado.
+   */
+  async function enEjecucion($: Engine, on: On, pane: typeof PANE | typeof PANE_ANCHO) {
+    const { reloj } = preparar(on)
+    on('turn.step', async function* (_$, e) {
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: 'ok',
+        toolUses: [],
+        stopReason: 'end_turn' as const,
+        usage: { ...USO, model: e.model },
+      }
+    })
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await paso($, 'claude-sonnet-5-5', 'medium')
+    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    reloj.t += 5_000
+    await agente($, 'explorador', 'A')
+    await agente($, 'explorador', 'B')
+    reloj.t += 20_000
+    await agente($, 'planificador')
+    reloj.t += 3_000
+    await agente($, 'revisor-plan')
+    reloj.t += 2_000
+    await preguntarPlan($)
+    reloj.t += 1_000
+    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await agente($, 'ejecutor', 'E1')
+    await agente($, 'revisor', 'R0')
+    reloj.t += 60_000
+
+    const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
+    await ui.press({ key: 'flujo-plegar' })
+
+    return ui
+  }
+
+  test('bajo cada nodo van las líneas de detallePaso, con sangría de 2, tras su tiempo y antes del │', async ($, on) => {
+    const ui = await enEjecucion($, on, PANE_ANCHO)
+    const esperado = [
+      'Flujo',
+      '/implementador · Ejecución · 1 min 31 s',
+      'orquestador Sonnet 5.5 medium',
+      '✓ ',
+      'Preflight',
+      ' 5 s',
+      '  orquestador Sonnet 5.5 medium',
+      '│',
+      '✓ ',
+      'Exploración',
+      ' ×2',
+      ' 0 s',
+      '  2 exploradores · Haiku high',
+      '│',
+      '✓ ',
+      'Plan',
+      ' ×1',
+      ' 23 s',
+      '  planificador · Opus high',
+      '│',
+      '✓ ',
+      'Revisión del plan',
+      ' 2 s',
+      '  revisor-plan · Sonnet medium',
+      '│',
+      '✓ ',
+      'Aprobación',
+      ' 1 s',
+      '│',
+      '▸ ',
+      'Ejecución',
+      ' ×1',
+      ' · rev ×1',
+      ' 1 min',
+      '  ejecutor · Sonnet high',
+      '  revisor · Sonnet high/medium',
+      '│',
+      '○ ',
+      'Verificación final',
+      '│',
+      '○ ',
+      'Cierre',
+      '│',
+      '○ ',
+      'Terminado',
+    ]
+    expect(await desdeFlujo(ui, esperado.length)).toEqual(esperado)
+    await ui.unmount()
+  })
+
+  for (const [columnas, pane] of [
+    [32, PANE],
+    [49, PANE_ANCHO],
+  ] as const) {
+    test(`las líneas de detalle van atenuadas y se truncan a ${columnas} columnas`, async ($, on) => {
+      const ui = await enEjecucion($, on, pane)
+      // Sangría de exactamente 2: las cifras del consumo, alineadas a la derecha, llevan más espacios.
+      const detalles = (await ui.findAll({ type: 'Text' })).filter(n => /^ {2}\S/.test(n.text ?? ''))
+
+      // Preflight, Exploración, Plan, Revisión del plan y las dos de Ejecución.
+      expect(detalles).toHaveLength(6)
+      for (const d of detalles) {
+        expect(d.props.wrap).toBe('truncate-end')
+        expect(d.props.dimColor).toBe(true)
+        expect((d.text ?? '').length).toBeLessThanOrEqual(32)
+      }
+      await ui.unmount()
+    })
+  }
 
   test('/implementador de punta a punta: el diagrama marca cada paso con su tiempo y termina en Terminado', async ($, on) => {
     const pedidos: string[] = []
@@ -4084,28 +4363,6 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('con /implementador-ligero, dos exploradores en paralelo: Escalado cuando vuelve el segundo', async ($, on) => {
-    const motor = preparar(on)
-    await $.skill.prompt({ skill: 'implementador-ligero', text: '' })
-
-    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    const abrirA = motor.detener('A')
-    const abrirB = motor.detener('B')
-    const a = agente($, 'explorador', 'A')
-    const b = agente($, 'explorador', 'B')
-    await esperar()
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador-ligero · Exploración · 0 s'])
-
-    abrirA()
-    await a
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador-ligero · Exploración · 0 s'])
-
-    abrirB()
-    await b
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador-ligero · Escalado · 0 s'])
-    await ui.unmount()
-  })
-
   test('si uno de varios exploradores falla, su error llega intacto y al volver el último el paso pasa a Plan', async ($, on) => {
     const motor = preparar(on)
     await $.skill.prompt({ skill: 'implementador', text: '' })
@@ -4348,10 +4605,11 @@ describe('flujo en el panel', () => {
     return { motor, ui: await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' }) }
   }
 
-  /** Lleva el flujo a Verificación final (`estado --base` → ejecutor → `verificar`) y lanza tres revisores retenidos (R1, R2 y R3). */
+  /** Lleva el flujo a Verificación final (`estado --base` → ejecutor → revisor de la subtarea → `verificar`) y lanza tres revisores retenidos (R1, R2 y R3). */
   async function lanzandoRevisores($: Engine, motor: ReturnType<typeof preparar>) {
     await bash($, 'node ~/.claude/flujos/estado.mjs --base')
     await agente($, 'ejecutor', 'E1')
+    await agente($, 'revisor', 'R0')
     await bash($, 'node ~/.claude/flujos/verificar.mjs')
 
     const abrir = { R1: motor.detener('R1'), R2: motor.detener('R2'), R3: motor.detener('R3') }
