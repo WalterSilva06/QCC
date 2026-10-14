@@ -4,7 +4,7 @@
 //
 //   node ~/.claude/flujos/estado.mjs [--paso <n>]          preflight + foto global
 //   node ~/.claude/flujos/estado.mjs --base [--paso <n>]   foto nueva: BASE=<sha> DESDE=<iso>
-//   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>]
+//   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"]
 //   node ~/.claude/flujos/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
 //
 // `--paso <n>` (0 a 7) anota en qué paso del flujo se llama; la salida no cambia. Otro valor
@@ -161,7 +161,11 @@ function preflight() {
   const sucios = git(['status', '--porcelain=v1', '--untracked-files=all']).split('\n').filter(Boolean)
   const base = foto()
   const config = configDe(RAIZ)
-  const reglas = fs.existsSync(path.join(RAIZ, '.claude', 'implementador.md'))
+  const reglas = fs.existsSync(path.join(RAIZ, '.claude', 'implementador'))
+    ? '.claude/implementador/'
+    : fs.existsSync(path.join(RAIZ, '.claude', 'implementador.md'))
+      ? '.claude/implementador.md'
+      : null
   const { pasos, origen } = pasosDe(RAIZ)
   console.log(`PROYECTO: ${RAIZ}`)
   console.log(`RAMA: ${rama} · HEAD ${head}`)
@@ -172,7 +176,7 @@ function preflight() {
     if (sucios.length > TOPE_SUCIOS) console.log(`  … y ${sucios.length - TOPE_SUCIOS} más`)
   }
   console.log(`BASE_GLOBAL=${base} DESDE_GLOBAL=${desde}`)
-  console.log(`REGLAS DEL PROYECTO: ${reglas ? '.claude/implementador.md' : 'no hay (.claude/implementador.md); rigen CLAUDE.md y las reglas comunes'}`)
+  console.log(`REGLAS DEL PROYECTO: ${reglas ?? 'no hay (.claude/implementador/ ni .claude/implementador.md); rigen CLAUDE.md y las reglas comunes'}`)
   console.log(`CONFIG: ${config.archivo ? '.claude/implementador.json' : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
   console.log(`VERIFICACIÓN (${origen}): ${pasos.length ? pasos.map((p) => p.cmd).join(' → ') : 'SIN PASOS'}`)
   console.log(`GUARDIA: ${autoprueba()}`)
@@ -237,7 +241,7 @@ function diff(base, permitidos, rutas) {
 /**
  * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso }`. Las opciones valen solo
  * antes de `--`; lo de después son rutas. Precedencia: --base > --cambios > --diff > preflight.
- * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía).
+ * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`.
  */
 export function opcionesDe(args) {
   const corte = args.indexOf('--')
@@ -264,11 +268,54 @@ export function opcionesDe(args) {
     if (/^\d+$/.test(v ?? '') && Number(v) <= 7) paso = Number(v)
     else aviso = `--paso ${v ?? ''} no es un paso (0–7); se ignora`
   }
-  return { modo, base, desde: valor('--desde'), permitidos: listaPermitidos(valor('--permitidos')), rutas, paso, aviso }
+  return { modo, base, desde: valor('--desde'), permitidos: listaPermitidos(valor('--permitidos')), rutas, paso, aviso, tokens: valor('--tokens') }
+}
+
+const ROLES = ['explorador', 'planificador', 'revisor-plan', 'ejecutor', 'revisor', 'final']
+
+/**
+ * `"ejecutor=52000,ejecutor=48000,final=61000"` → `{ ejecutor: [52000, 48000], final: [61000] }`.
+ * Un rol puede repetirse (un valor por llamada, en orden). `null` si falta, está vacío o algún par es inválido.
+ */
+export function tokensDe(texto) {
+  if (typeof texto !== 'string' || !texto) return null
+  const porRol = {}
+  for (const par of texto.split(',')) {
+    const m = /^([a-z-]+)=(\d+)$/.exec(par)
+    if (!m || !ROLES.includes(m[1])) return null
+    porRol[m[1]] ??= []
+    porRol[m[1]].push(Number(m[2]))
+  }
+  return porRol
+}
+
+/** Agrega `fila` como una línea JSON a `archivo`, creando la carpeta si falta. */
+export function anotarFlujo(archivo, fila) {
+  fs.mkdirSync(path.dirname(archivo), { recursive: true })
+  fs.appendFileSync(archivo, JSON.stringify(fila) + '\n')
+}
+
+/** Anota en el cierre los tokens por rol del flujo; avisa y sigue si no se puede. */
+function anotarCierre(paso, tokens, base) {
+  if (tokens === undefined) return
+  if (paso !== 7) {
+    console.log('AVISO: --tokens solo vale en el cierre (--cambios … --paso 7); se ignora')
+    return
+  }
+  const porRol = tokensDe(tokens)
+  if (!porRol) {
+    console.log(`AVISO: --tokens ${tokens} no es rol=n,…; no se anota`)
+    return
+  }
+  try {
+    anotarFlujo(path.join(path.dirname(registroDe(RAIZ)), 'flujos.jsonl'), { t: new Date().toISOString(), raiz: RAIZ, base, tokens: porRol })
+  } catch (e) {
+    console.log(`AVISO: no se pudo anotar el flujo: ${e.message}`)
+  }
 }
 
 function main() {
-  const { modo, base, desde, permitidos, rutas, aviso } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   try {
     if (git(['rev-parse', '--is-inside-work-tree'], { opcional: true })?.trim() !== 'true') {
@@ -276,8 +323,11 @@ function main() {
     }
     if (modo === 'base') {
       console.log(`BASE=${foto()} DESDE=${new Date().toISOString()}`)
-    } else if (modo === 'cambios') cambios(exigirBase(base), desde, permitidos)
-    else if (modo === 'diff') diff(exigirBase(base), permitidos, rutas)
+    } else if (modo === 'cambios') {
+      exigirBase(base)
+      anotarCierre(paso, tokens, base)
+      cambios(base, desde, permitidos)
+    } else if (modo === 'diff') diff(exigirBase(base), permitidos, rutas)
     else preflight()
   } catch (e) {
     console.log(`ERROR: ${e.message}`)

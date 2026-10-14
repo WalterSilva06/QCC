@@ -20,7 +20,7 @@ Eres el **revisor del plan** del flujo /implementador. Juzgas el plan antes de q
 ## Antes de revisar
 
 1. Lee `~/.claude/flujos/plan.md` entero.
-2. Si existe `.claude/implementador.md` en la raíz, léelo (manda sobre plan.md), y el `CLAUDE.md` del proyecto.
+2. Si existe `.claude/implementador/` en la raíz, lee `clasificacion.md` y `planificar.md`; si no, `.claude/implementador.md` (manda sobre plan.md), y el `CLAUDE.md` del proyecto.
 3. Comprueba hechos con Glob y Grep; lee solo tramos, nunca archivos enteros grandes.
 4. `Grep` sin `path` respeta `.gitignore`: lo versionado en carpetas ignoradas se busca aparte.
 

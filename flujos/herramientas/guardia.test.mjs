@@ -13,7 +13,7 @@ import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, analizar, raizDe, registroDe, configDe, coincide } from './guardia.mjs'
-import { listaPermitidos, enAlcance, opcionesDe } from './estado.mjs'
+import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo } from './estado.mjs'
 import { pasosDe, detalleTipos, resumenTest, detalleTest, conDetalle } from './verificar.mjs'
 
 const WIN = process.platform === 'win32'
@@ -126,6 +126,7 @@ test('ejecutor: verificación, lectura y edición dentro del alcance pasan', () 
   deja(edita(R, 'supabase/migrations/20991231000001_prueba.sql', 'Write'))
   deja(edita(R, '.env.example'))
   deja(edita(R, '.claude/implementador.md'))
+  deja(edita(R, '.claude/implementador/planificar.md'))
   deja(edita(R, '.claude/implementador.json'))
   if (WIN) deja(edita(R, `/${R[0].toLowerCase()}${R.slice(2).replace(/\\/g, '/')}/src/x.ts`))
 })
@@ -312,11 +313,12 @@ const ESTADO = fileURLToPath(new URL('./estado.mjs', import.meta.url))
 const temporales = []
 
 /** Repo temporal con `src/a.ts` y `dist/x.js` versionados y luego modificados; corre estado.mjs con `args(sha)`. */
-function estadoCon(config, args) {
+function estadoCon(config, args, extra = {}) {
   const raiz = repo('estado', {
     '.claude/implementador.json': JSON.stringify(config),
     'src/a.ts': 'a\n',
     'dist/x.js': 'x\n',
+    ...extra,
   })
   temporales.push(raiz)
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
@@ -350,7 +352,7 @@ test('estado: --cambios y --diff', () => {
 test('estado: opciones y --paso', () => {
   const aviso = (v) => `--paso ${v} no es un paso (0–7); se ignora`
 
-  assert.deepEqual(opcionesDe([]), { modo: 'preflight', base: undefined, desde: undefined, permitidos: [], rutas: [], paso: null, aviso: undefined })
+  assert.deepEqual(opcionesDe([]), { modo: 'preflight', base: undefined, desde: undefined, permitidos: [], rutas: [], paso: null, aviso: undefined, tokens: undefined })
 
   const base = opcionesDe(['--base', '--paso', '5'])
   assert.equal(base.modo, 'base')
@@ -386,6 +388,32 @@ test('estado: opciones y --paso', () => {
   assert.equal(opcionesDe(['--diff', 'a', '--cambios', 'b']).modo, 'cambios')
 })
 
+test('estado: --tokens', () => {
+  assert.deepEqual(tokensDe('explorador=41000,ejecutor=52000,ejecutor=48000,final=61000'), {
+    explorador: [41000],
+    ejecutor: [52000, 48000],
+    final: [61000],
+  })
+  for (const v of ['x=1', 'ejecutor=', 'ejecutor=1.5', 'ejecutor', '', undefined, 'ejecutor=1,x=2', 'ejecutor=1,']) {
+    assert.equal(tokensDe(v), null, String(v))
+  }
+  assert.equal(opcionesDe(['--cambios', 'abc', '--tokens', 'ejecutor=1']).tokens, 'ejecutor=1')
+
+  const archivo = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'flujos-')), 'sub', 'flujos.jsonl')
+  temporales.push(path.dirname(path.dirname(archivo)))
+  anotarFlujo(archivo, { t: 'a', tokens: { ejecutor: [1] } })
+  anotarFlujo(archivo, { t: 'b', tokens: { final: [2] } })
+  const filas = fs.readFileSync(archivo, 'utf8').trimEnd().split('\n').map((l) => JSON.parse(l))
+  assert.deepEqual(filas.map((f) => f.t), ['a', 'b'])
+
+  const sinCierre = estadoCon({}, (sha) => ['--cambios', sha, '--tokens', 'ejecutor=1', '--paso', '6'])
+  assert.match(sinCierre.salida, /^AVISO: --tokens solo vale en el cierre \(--cambios … --paso 7\); se ignora$/m)
+  assert.match(sinCierre.salida, /ALCANCE: [^\n]*\s*$/)
+  const malo = estadoCon({}, (sha) => ['--cambios', sha, '--tokens', 'x=1', '--paso', '7'])
+  assert.match(malo.salida, /^AVISO: --tokens x=1 no es rol=n,…; no se anota$/m)
+  assert.match(malo.salida, /ALCANCE: [^\n]*\s*$/)
+})
+
 test('estado: preflight y --paso', () => {
   const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
   const preflight = (r) => {
@@ -412,6 +440,21 @@ test('estado: preflight y --paso', () => {
   const malo = estadoCon(config, () => ['--paso', 'x'])
   assert.match(malo.salida, /^AVISO: --paso x no es un paso \(0–7\); se ignora$/m)
   preflight(malo)
+})
+
+test('estado: preflight informa las reglas del proyecto', () => {
+  const reglas = (extra) => /^REGLAS DEL PROYECTO: (.*)$/m.exec(estadoCon({}, () => [], extra).salida)?.[1]
+
+  assert.equal(reglas({ '.claude/implementador/clasificacion.md': 'x\n' }), '.claude/implementador/')
+  assert.equal(reglas({ '.claude/implementador.md': 'x\n' }), '.claude/implementador.md')
+  assert.equal(
+    reglas({}),
+    'no hay (.claude/implementador/ ni .claude/implementador.md); rigen CLAUDE.md y las reglas comunes',
+  )
+  assert.equal(
+    reglas({ '.claude/implementador/clasificacion.md': 'x\n', '.claude/implementador.md': 'x\n' }),
+    '.claude/implementador/',
+  )
 })
 
 test('verificar: resúmenes y detalle', () => {

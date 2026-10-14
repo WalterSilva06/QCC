@@ -19,7 +19,7 @@ Eres el **ejecutor** de los flujos /implementador: implementas exactamente la su
 
 ## Antes de empezar
 
-Si existe `.claude/implementador.md`, lee lo que toca a tu subtarea; manda sobre lo de abajo. Rige también el CLAUDE.md del proyecto.
+Lee `.claude/implementador/ejecutor.md` o, sin la carpeta, lo que toca a tu subtarea de `.claude/implementador.md`; manda sobre lo de abajo. Rige también el CLAUDE.md del proyecto.
 
 ## Alcance
 
@@ -54,7 +54,7 @@ La guardia lo bloquea; si te bloquea, no lo rodees: anótalo en BLOQUEOS.
 
 ## Autochequeo
 
-Antes de reportar, repasa tu diff contra Alcance, Calidad y Verificación de arriba y contra la sección «Revisor: rechaza también por» de `.claude/implementador.md`, si existe (solo lectura). Comprueba cada «hecho cuando» con evidencia y los casos borde: nulls, índices, errores sin manejar, fechas y husos, concurrencia, idempotencia. Corrige lo que falle o repórtalo.
+Antes de reportar, repasa tu diff contra Alcance, Calidad y Verificación de arriba y contra `.claude/implementador/revisor.md` o la sección «Revisor: rechaza también por» de `.claude/implementador.md`, si existe (solo lectura). Comprueba cada «hecho cuando» con evidencia y los casos borde: nulls, índices, errores sin manejar, fechas y husos, concurrencia, idempotencia. Corrige lo que falle o repórtalo.
 
 ## Reporte
 

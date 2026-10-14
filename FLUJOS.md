@@ -46,7 +46,7 @@ node flujos/instalar.mjs --forzar     pisa la copia instalada aunque sea más nu
 ```
 
 - Si la copia instalada es más nueva que la del repo (alguien la editó en `~/.claude`), `instalar.mjs` la **frena** y termina con exit 1, para no perder ese cambio. Se resuelve con `--traer` o con `--forzar`.
-- No toca `~/.claude/flujos/registros/` (bitácoras locales de cada proyecto, no van al repo).
+- No toca `~/.claude/flujos/registros/` (bitácoras locales de cada proyecto, más `flujos.jsonl` con una línea por flujo y sus tokens por rol; no van al repo).
 - `/implementador` llama a sus herramientas y a `comun.md`, `plan.md` y `pasos.md` por la ruta fija `~/.claude/flujos/…`. El flujo **corre desde la copia instalada**, no desde el repo: un cambio en `flujos/` no rige hasta instalarlo.
 
 El detalle de cada paso y herramienta está en `flujos/herramientas/comun.md`, `plan.md` (clasificación y formato del plan) y `pasos.md`; el de cada agente, en `flujos/agents/`; el formato de `.claude/implementador.json`, en `flujos/herramientas/config.ejemplo.md`.

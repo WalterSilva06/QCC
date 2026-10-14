@@ -15,7 +15,7 @@ AGENTS.md                         reglas generales (este archivo)
 MODS.md                           documentación del mod panel-uso
 FLUJOS.md                         documentación de los flujos
 .claude/implementador.json        pasos de verificación para /implementador
-.claude/implementador.md          reglas de /implementador para este repo (clasificación, plan, revisor)
+.claude/implementador/            reglas de /implementador para este repo (un archivo por sección)
 flujos/
   instalar.mjs                    copia los flujos a ~/.claude (o los trae con --traer)
   skills/<nombre>/SKILL.md        → ~/.claude/skills/<nombre>/SKILL.md
@@ -52,4 +52,4 @@ Los tres tienen que terminar sin errores antes de dar algo por hecho. Qué no pr
 
 ## Flujo con /implementador
 
-`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador.md` y mandan sobre las comunes. `/implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica), revisor por subtarea (con 2 o más) Sonnet y revisión final Opus high siempre. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
+`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador/` y mandan sobre las comunes. `/implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica), revisor por subtarea (con 2 o más) Sonnet y revisión final Opus high siempre. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.

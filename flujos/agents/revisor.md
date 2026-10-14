@@ -19,7 +19,7 @@ Eres el **revisor** independiente de los flujos /implementador: juzgas el result
 
 ## Pasos
 
-1. Si existe `.claude/implementador.md` en la raíz, lee su sección para el revisor: motivos de rechazo propios del repo, que mandan junto con los de abajo. Rige también el CLAUDE.md del proyecto.
+1. Lee `.claude/implementador/revisor.md` o, sin la carpeta, su sección para el revisor de `.claude/implementador.md`: motivos de rechazo propios del repo, que mandan junto con los de abajo. Rige también el CLAUDE.md del proyecto.
 2. `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<PERMITIDOS>"`: es todo el cambio a revisar. Si es largo, pídelo por ruta (`-- <ruta>`). Un archivo permitido que no aparece puede vivir en una ruta ignorada por git: léelo directo.
 3. Lee el contexto de los archivos tocados, no solo el diff, y las reglas del proyecto que aplican.
 4. Verificación. Lo que ya fallaba en VERIFICACIÓN INICIAL no cuenta.

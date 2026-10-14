@@ -1,4 +1,4 @@
-`.claude/implementador.md` (reglas del proyecto) y el `CLAUDE.md` del proyecto mandan sobre este archivo.
+`.claude/implementador/` o, sin ella, `.claude/implementador.md` (reglas del proyecto) y el `CLAUDE.md` del proyecto mandan sobre este archivo.
 
 ## 2. Clasificación
 

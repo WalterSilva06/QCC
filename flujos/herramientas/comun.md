@@ -1,4 +1,4 @@
-`.claude/implementador.md` (reglas del proyecto) manda sobre este archivo y sobre `plan.md` (clasificación y formato del plan, lo leen planificador y revisor-plan), y el `CLAUDE.md` del proyecto rige para todos los agentes; sin ellos, estos valores y lo que se lea del repo. `.claude/implementador.json` (opcional): `verificar` y `guardia` (ejemplo en `~/.claude/flujos/config.ejemplo.md`).
+`.claude/implementador/` o, sin ella, `.claude/implementador.md` (reglas del proyecto) manda sobre este archivo y sobre `plan.md` (clasificación y formato del plan, lo leen planificador y revisor-plan), y el `CLAUDE.md` del proyecto rige para todos los agentes; sin ellos, estos valores y lo que se lea del repo. `.claude/implementador.json` (opcional): `verificar` y `guardia` (ejemplo en `~/.claude/flujos/config.ejemplo.md`).
 
 ## 1. Herramientas
 
@@ -8,7 +8,7 @@ Desde la raíz del repo, con Bash (`~` = carpeta del usuario):
 |---|---|
 | `node ~/.claude/flujos/estado.mjs [--paso <n>]` | Preflight: rama, sucios previos, `BASE_GLOBAL`, `DESDE_GLOBAL`, reglas y config, pasos de verificación, guardia |
 | `node ~/.claude/flujos/estado.mjs --base [--paso <n>]` | Foto nueva: `BASE=<sha> DESDE=<iso>` |
-| `node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <DESDE> --permitidos "<a,b>" [--paso <n>]` | Qué cambió desde la foto y qué cae fuera. Termina en `ALCANCE: OK` o `ALCANCE: FUERA (n)` |
+| `node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <DESDE> --permitidos "<a,b>" [--paso <n>] [--tokens …]` | Qué cambió desde la foto y qué cae fuera. Termina en `ALCANCE: OK` o `ALCANCE: FUERA (n)` |
 | `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<a,b>" [-- <rutas>]` | Diff desde la foto (solo el revisor) |
 | `node ~/.claude/flujos/verificar.mjs` | Pasos de verificación (config o detectados). Termina en `RESULTADO: VERDE`, `RESULTADO: ROJO (…)` o `RESULTADO: SIN PASOS` |
 
@@ -56,7 +56,7 @@ PISTAS: <archivos o símbolos ya conocidos | ninguna>
 Un solo explorador por defecto (`ÁREA: todo el pedido`). Varios, hasta 5 y uno por área sin solapar, solo si el pedido abarca áreas independientes y grandes (p. ej. más de ~15 archivos o capas distintas: datos · servidor · UI), nunca para repartir preguntas de una misma área. Con varios, todos en el **mismo mensaje**, cada uno con su ÁREA y BUSCA propias.
 
 **Exploración mínima** — la hace el orquestador y se salta el explorador.
-- Condición: el pedido nombra ≤ 2 archivos concretos que existen, y ni `.claude/implementador.md` ni el CLAUDE.md los marcan como acoplados ni son una ruta crítica de las reglas del proyecto. Ante la duda, explorador.
+- Condición: el pedido nombra ≤ 2 archivos concretos que existen, y ni las reglas del proyecto ni el CLAUDE.md los marcan como acoplados ni son una ruta crítica de las reglas del proyecto. Ante la duda, explorador.
 - Qué haces: por cada archivo, Grep de quién lo importa o lo cita (su nombre sin extensión), de sus tests y de su ruta en las reglas del proyecto y en el CLAUDE.md, sin leer enteros los archivos grandes (Grep o tramos).
 - Formato: el mismo del explorador (ARCHIVOS / TESTS / ACOPLAMIENTOS / DATOS / DUDAS, con `ruta:línea`, ≤ 25 líneas), con una primera línea `(exploración mínima del orquestador: <archivos>)`.
 - Si aparecen más de ~5 archivos acoplados o hay DUDAS, lanzas el explorador.
@@ -151,7 +151,7 @@ Qué mira cada aspecto: agente `revisor`. «Solo texto»: todos los archivos per
 
 ## 7. Cierre
 
-Corre `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<unión>" --paso 7` y tu `verificar.mjs` final. Luego, breve:
+Corre `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<unión>" --paso 7 --tokens "<rol>=<n>,…"` y tu `verificar.mjs` final. En `--tokens` va un par por cada agente despachado, con su `subagent_tokens` y el rol `explorador`, `planificador`, `revisor-plan`, `ejecutor`, `revisor` o `final` (revisión final); `estado.mjs` lo anota en `registros/flujos.jsonl`. Luego, breve:
 
 ```
 CIERRE · <título> — COMPLETO | DETENIDO en <paso>

@@ -16,7 +16,7 @@ allowed-tools:
   - Bash(git log*)
   - Bash(cat *comun.md*)
   - Bash(cat *pasos.md*)
-  - Bash(cat *implementador.md*)
+  - Bash(cat *implementador*)
   - Bash(echo *)
 ---
 
@@ -46,7 +46,7 @@ Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases n
 
 ## Reglas del proyecto
 
-!`cat "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo .)}/.claude/implementador.md" 2>/dev/null || echo "(Este proyecto no tiene .claude/implementador.md: rigen las reglas comunes, el CLAUDE.md del proyecto y lo que leas del repo.)"`
+!`cat "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo .)}/.claude/implementador/clasificacion.md" "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo .)}/.claude/implementador/buscar.md" "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo .)}/.claude/implementador/planificar.md" 2>/dev/null || cat "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || echo .)}/.claude/implementador.md" 2>/dev/null || echo "(Este proyecto no tiene .claude/implementador/ ni .claude/implementador.md: rigen las reglas comunes, el CLAUDE.md del proyecto y lo que leas del repo.)"`
 
 ## Pasos
 
