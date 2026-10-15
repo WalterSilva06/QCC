@@ -4100,13 +4100,12 @@ function motorStore(on: On, inicial: Record<string, unknown> = {}) {
 }
 
 /**
- * Lo que el panel dibuja de «Flujo» abierta en `/implementador · Ejecución`, texto por texto,
+ * Lo que el panel dibuja desde el resumen con la pestaña «Flujo» abierta en `/implementador · Ejecución`, texto por texto,
  * con los tiempos del recorrido del test (5 s, 20 s, 3 s, 1 min y 1 min 30 s en curso; `Revisión del plan` se saltó y no lleva tiempo)
  * y el conteo de exploradores lanzados (` ×1`) junto a `Exploración`, antes de su tiempo;
  * bajo su tiempo, la línea de detalle del paso (sin orquestador: el recorrido no pasa por `turn.step`).
  */
 const FLUJO_EJECUCION = [
-  'Flujo',
   '/implementador · Ejecución · 2 min 58 s',
   '✓ ',
   'Preflight',
@@ -4222,12 +4221,21 @@ describe('flujo en el panel', () => {
 
   const textosDe = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
-  /** Los `n` textos que empiezan en el título «Flujo». */
-  const desdeFlujo = async (ui: Ui, n: number) => {
-    const textos = await textosDe(ui)
-    const i = textos.indexOf('Flujo')
+  /**
+   * Los `n` textos que empiezan en el resumen del flujo. `findAll` no expone `key` en los `Text`, así que el resumen se
+   * localiza por el `Box` con key `flujo-resumen` que lo envuelve.
+   */
+  const desdeResumen = async (ui: Ui, n: number) => {
+    const arbol = await ui.findAll({})
+    const i = arbol.findIndex(nodo => nodo.type === 'Box' && nodo.key === 'flujo-resumen')
 
-    return textos.slice(i, i + n)
+    expect(i).toBeGreaterThan(-1)
+
+    return arbol
+      .slice(i)
+      .filter(nodo => nodo.type === 'Text')
+      .slice(0, n)
+      .map(nodo => nodo.text ?? '')
   }
 
   const bash = ($: Engine, command: string) => $.tool.call({ tool: 'Bash', command })
@@ -4256,11 +4264,11 @@ describe('flujo en el panel', () => {
     })
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
-    /** Lo que dibuja «Flujo»: del título al final de la pestaña (abierta, el resto del panel no se dibuja). */
+    await ui.press({ key: 'pestana-flujo' })
+    /** Lo que dibuja la pestaña «Flujo»: del resumen al final (abierta, el resto del panel no se dibuja). */
     const deFlujo = async () => {
       const arbol = await ui.findAll({})
-      const i = arbol.findIndex(n => n.type === 'Text' && n.text === 'Flujo')
+      const i = arbol.findIndex(n => n.type === 'Box' && n.key === 'flujo-resumen')
 
       return arbol.slice(i).filter(n => n.type === 'Text')
     }
@@ -4354,10 +4362,10 @@ describe('flujo en el panel', () => {
     const vistos = motorVisto(on)
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
 
     await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** x' })
-    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Preflight · 0 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 0 s')
 
     // El hilo principal llega a `next` con el modelo y el esfuerzo originales; los de un subagente, igual.
     await paso($, 'claude-opus-5-5', 'high')
@@ -4547,22 +4555,117 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('«Flujo» arranca plegada y sin flujo: tecla f, Ver/Ocultar y prefs:flujo', async ($, on) => {
+  test('pestañas Inicio/Flujo/Carpeta: teclas i/f/c y prefs:flujo', async ($, on) => {
     const { guardados } = preparar(on)
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    const boton = await ui.find({ type: 'Button', key: 'flujo-plegar' })
-    expect(boton?.props.hotkey).toBe('f')
-    expect(boton?.props.label).toBe('Ver')
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])
+    for (const [key, hotkey, label] of [
+      ['pestana-inicio', 'i', 'Inicio'],
+      ['pestana-flujo', 'f', 'Flujo'],
+      ['carpeta', 'c', 'Carpeta'],
+    ] as const) {
+      const boton = await ui.find({ type: 'Button', key })
+      expect(boton?.props.hotkey).toBe(hotkey)
+      expect(boton?.props.label).toBe(label)
+    }
+    // Ya no hay título «Flujo» ni el botón Ver/Ocultar: solo el resumen, bajo Esfuerzo.
+    expect(await textosDe(ui)).not.toContain('Flujo')
+    expect(await ui.find({ type: 'Button', key: 'flujo-plegar' })).toBeUndefined()
+    expect(await desdeResumen(ui, 1)).toEqual(['sin flujo en esta sesión'])
 
-    await ui.press({ key: 'flujo-plegar' })
-    expect((await ui.find({ type: 'Button', key: 'flujo-plegar' }))?.props.label).toBe('Ocultar')
+    await ui.press({ key: 'pestana-flujo' })
+    expect(guardados.get('prefs:flujo')).toBe(true)
+    expect(await textosDe(ui)).not.toContain('Contexto')
+
+    // Pulsada otra vez, la pestaña sigue abierta.
+    await ui.press({ key: 'pestana-flujo' })
+    expect(guardados.get('prefs:flujo')).toBe(true)
+    expect(await textosDe(ui)).not.toContain('Contexto')
+    expect(await textosDe(ui)).not.toContain('Flujo')
+    expect(await ui.find({ type: 'Button', key: 'flujo-plegar' })).toBeUndefined()
+
+    await ui.press({ key: 'pestana-inicio' })
+    expect(guardados.get('prefs:flujo')).toBe(false)
+    expect(await textosDe(ui)).toContain('Contexto')
+
+    await ui.press({ key: 'pestana-inicio' })
+    expect(guardados.get('prefs:flujo')).toBe(false)
+    await ui.unmount()
+  })
+
+  test('la fila de pestañas va antes de «Contexto» en Inicio y antes del resumen en Flujo', async ($, on) => {
+    preparar(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const posiciones = async (despues: (n: { type: string; key?: string; text?: string }) => boolean) => {
+      const arbol = await ui.findAll({})
+      const pestanas = arbol.findIndex(n => n.type === 'Button' && n.key === 'pestana-inicio')
+      const otro = arbol.findIndex(despues)
+
+      return [pestanas, otro]
+    }
+
+    const [inicioPestanas, contexto] = await posiciones(n => n.type === 'Text' && n.text === 'Contexto')
+    expect(inicioPestanas).toBeGreaterThan(-1)
+    expect(contexto).toBeGreaterThan(inicioPestanas)
+
+    await ui.press({ key: 'pestana-flujo' })
+    const [flujoPestanas, resumen] = await posiciones(n => n.type === 'Box' && n.key === 'flujo-resumen')
+    expect(flujoPestanas).toBeGreaterThan(-1)
+    expect(resumen).toBeGreaterThan(flujoPestanas)
+    await ui.unmount()
+  })
+
+  test('el resumen del flujo va bajo Esfuerzo en Inicio', async ($, on) => {
+    preparar(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const resumen = async () => {
+      const arbol = await ui.findAll({})
+      const i = arbol.findIndex(n => n.type === 'Box' && n.key === 'flujo-resumen')
+      const esfuerzo = arbol.findIndex(n => n.type === 'Text' && n.text === 'Esfuerzo')
+      const leyenda = arbol.findIndex(n => n.type === 'Text' && n.text === '■')
+      const sesion = arbol.findIndex(n => n.type === 'Text' && n.text === 'Esta sesión')
+
+      return { i, esfuerzo, leyenda, sesion, texto: arbol.slice(i).find(n => n.type === 'Text')?.text }
+    }
+
+    const sin = await resumen()
+    expect(sin.texto).toBe('sin flujo en esta sesión')
+    expect(sin.esfuerzo).toBeGreaterThan(-1)
+    expect(sin.i).toBeGreaterThan(sin.esfuerzo)
+    expect(sin.leyenda).toBeGreaterThan(sin.i)
+    expect(sin.sesion).toBeGreaterThan(sin.i)
+
+    // Los textos de la fila Esfuerzo caen entre el rótulo y el resumen, sin nada más en medio.
+    const arbol = await ui.findAll({})
+    const entre = arbol.slice(sin.esfuerzo + 1, sin.i).filter(n => n.type === 'Text')
+    expect(entre.length).toBeGreaterThan(0)
+    expect(entre.map(n => n.text).join('')).toMatch(/^ \S+( · .*)?$/)
+
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    expect((await resumen()).texto).toBe('/implementador · Preflight · 0 s')
+    await ui.unmount()
+  })
+
+  test('Carpeta abre la carpeta desde la pestaña Flujo sin cambiar de pestaña', async ($, on) => {
+    const { guardados } = preparar(on)
+    const root = 'D:\\GitHub-Personal\\mods-claude'
+    const { corridas, avisos } = motorCarpeta(on, root, {})
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'pestana-flujo' })
     expect(guardados.get('prefs:flujo')).toBe(true)
 
-    await ui.press({ key: 'flujo-plegar' })
-    expect((await ui.find({ type: 'Button', key: 'flujo-plegar' }))?.props.label).toBe('Ver')
-    expect(guardados.get('prefs:flujo')).toBe(false)
+    await ui.press({ key: 'carpeta' })
+    expect(corridas).toEqual([{ argv: WINDOWS, cwd: root }])
+    expect(avisos).toEqual([])
+    expect(guardados.get('prefs:flujo')).toBe(true)
+    expect(await textosDe(ui)).not.toContain('Contexto')
+    expect(await ui.find({ type: 'Button', key: 'pestana-inicio' })).toBeDefined()
     await ui.unmount()
   })
 
@@ -4579,8 +4682,9 @@ describe('flujo en el panel', () => {
     await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect((await ui.find({ type: 'Button', key: 'flujo-plegar' }))?.props.label).toBe('Ocultar')
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Preflight · 0 s'])
+    expect(await ui.find({ type: 'Button', key: 'pestana-inicio' })).toBeDefined()
+    expect(await textosDe(ui)).not.toContain('Contexto')
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Preflight · 0 s'])
     expect(await textosDe(ui)).toContain('Preflight')
     await ui.unmount()
   })
@@ -4595,18 +4699,18 @@ describe('flujo en el panel', () => {
 
       return [textos.includes('Contexto'), textos.includes('Esta sesión'), Boolean(await ui.find({ type: 'Button', key: 'carpeta' }))]
     }
-    // Plegado, el panel entero.
+    // Inicio, el panel entero.
     expect(await visibles()).toEqual([true, true, true])
 
-    // Abierta la pestaña no queda ninguno de los tres, pero el botón para volver sí, con su tecla.
-    await ui.press({ key: 'flujo-plegar' })
-    expect(await visibles()).toEqual([false, false, false])
-    const boton = await ui.find({ type: 'Button', key: 'flujo-plegar' })
-    expect(boton?.props.hotkey).toBe('f')
-    expect(boton?.props.label).toBe('Ocultar')
+    // Abierta la pestaña no queda Contexto ni Esta sesión; Carpeta sigue, y el botón para volver, con su tecla.
+    await ui.press({ key: 'pestana-flujo' })
+    expect(await visibles()).toEqual([false, false, true])
+    const boton = await ui.find({ type: 'Button', key: 'pestana-inicio' })
+    expect(boton?.props.hotkey).toBe('i')
+    expect(boton?.props.label).toBe('Inicio')
     expect(guardados.get('prefs:flujo')).toBe(true)
 
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-inicio' })
     expect(await visibles()).toEqual([true, true, true])
     expect(guardados.get('prefs:flujo')).toBe(false)
     await ui.unmount()
@@ -4623,7 +4727,7 @@ describe('flujo en el panel', () => {
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const textos = await textosDe(ui)
-    expect(textos).toContain('Flujo')
+    expect(await desdeResumen(ui, 1)).toEqual(['sin flujo en esta sesión'])
     expect(textos).not.toContain('Contexto')
     expect(textos).not.toContain('Esta sesión')
     await ui.unmount()
@@ -4665,7 +4769,7 @@ describe('flujo en el panel', () => {
     reloj.t += 60_000
 
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
 
     return ui
   }
@@ -4673,7 +4777,6 @@ describe('flujo en el panel', () => {
   test('bajo cada nodo van las líneas de detallePaso, con sangría de 2, tras su tiempo y antes del │', async ($, on) => {
     const ui = await enEjecucion($, on, PANE_ANCHO)
     const esperado = [
-      'Flujo',
       '/implementador · Ejecución · 1 min 31 s',
       'orquestador Sonnet 5.5 medium',
       '✓ ',
@@ -4720,7 +4823,7 @@ describe('flujo en el panel', () => {
       '○ ',
       'Terminado',
     ]
-    expect(await desdeFlujo(ui, esperado.length)).toEqual(esperado)
+    expect(await desdeResumen(ui, esperado.length)).toEqual(esperado)
     await ui.unmount()
   })
 
@@ -4784,7 +4887,7 @@ describe('flujo en el panel', () => {
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
 
     return { motor, ui }
   }
@@ -4938,7 +5041,7 @@ describe('flujo en el panel', () => {
     // El hilo principal responde antes (sin agentId) para que la fila de Esta sesión exista.
     await paso($, 'claude-sonnet-5-5', 'high')
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
     await hastaEjecucion($)
 
     const abrir = motor.detener('R1')
@@ -4957,7 +5060,7 @@ describe('flujo en el panel', () => {
     expect(await textosDe(ui)).toContain('  revisor · Sonnet high/medium')
 
     // La actividad bajó: ningún ■ de la fila queda en curso.
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-inicio' })
     const colores = await coloresDe(ui, 'Sonnet 5.5 high')
     expect(colores.length).toBeGreaterThan(0)
     expect(colores).not.toContain('success')
@@ -4974,7 +5077,7 @@ describe('flujo en el panel', () => {
     motorResponde(on, 'claude-opus-5-5')
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
 
     await $.skill.prompt({ skill: 'implementador', text: '' })
     await paso($, 'claude-opus-5-5', 'high')
@@ -4996,13 +5099,13 @@ describe('flujo en el panel', () => {
     })
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
 
     await $.skill.prompt({ skill: 'implementador', text: '' })
     await paso($, 'claude-opus-5-5', 'high')
     await paso($, 'claude-haiku-5-5', 'high', 'sub-1')
     expect(await lineasGasto(ui)).toEqual([])
-    expect(await textosDe(ui)).toContain('Flujo')
+    expect((await desdeResumen(ui, 1))[0]).toContain('/implementador')
     await ui.unmount()
   })
 
@@ -5014,7 +5117,7 @@ describe('flujo en el panel', () => {
     })
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
 
     await $.skill.prompt({ skill: 'implementador', text: '' })
     const visto = await paso($, 'claude-opus-5-5', 'high').then(
@@ -5027,7 +5130,7 @@ describe('flujo en el panel', () => {
     expect((visto as Error).message).toMatch(/turn\.step/)
     expect((visto as Error).message).not.toMatch(/panel/i)
     expect(await lineasGasto(ui)).toEqual([])
-    expect(await textosDe(ui)).toContain('Flujo')
+    expect((await desdeResumen(ui, 1))[0]).toContain('/implementador')
     await ui.unmount()
   })
 
@@ -5036,7 +5139,7 @@ describe('flujo en el panel', () => {
     const { detener, reloj } = preparar(on, pedidos)
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
     const antes = pedidos.length
 
     await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** algo' })
@@ -5069,13 +5172,13 @@ describe('flujo en el panel', () => {
     // El paso en curso se refresca con el próximo evento (otro `--base` en Ejecución no cambia el paso).
     await bash($, 'node ~/.claude/flujos/estado.mjs --base')
 
-    expect(await desdeFlujo(ui, FLUJO_EJECUCION.length)).toEqual(FLUJO_EJECUCION)
+    expect(await desdeResumen(ui, FLUJO_EJECUCION.length)).toEqual(FLUJO_EJECUCION)
 
     reloj.t += 30_000
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
-    const tramo = await desdeFlujo(ui, FLUJO_EJECUCION.length + 1)
-    expect(tramo.slice(0, 2)).toEqual(['Flujo', '/implementador · Terminado · 3 min 28 s'])
-    expect(tramo.slice(2, 5)).toEqual(['✓ ', 'Preflight', ' 5 s'])
+    const tramo = await desdeResumen(ui, FLUJO_EJECUCION.length + 1)
+    expect(tramo.slice(0, 1)).toEqual(['/implementador · Terminado · 3 min 28 s'])
+    expect(tramo.slice(1, 4)).toEqual(['✓ ', 'Preflight', ' 5 s'])
     // Ejecución cerró con 90 s + 30 s; «Terminado» lleva el total de principio a fin.
     expect(tramo.slice(tramo.indexOf('Ejecución') - 1, tramo.indexOf('Ejecución') + 2)).toEqual(['✓ ', 'Ejecución', ' 2 min'])
     expect(tramo.slice(-3)).toEqual(['● ', 'Terminado', ' 3 min 28 s'])
@@ -5089,20 +5192,20 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Preflight · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Preflight · 0 s'])
 
     // Sin eventos el dibujo no cambia (hasta el tick de 30 s); con uno, se pone al día.
     reloj.t += 45_000
-    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Preflight · 0 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 0 s')
     await bash($, 'node ~/.claude/flujos/estado.mjs')
-    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Preflight · 45 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 45 s')
 
-    // Plegada no hay nodos: ningún tiempo suelto fuera de la línea resumen.
+    // En Inicio no hay nodos: ningún tiempo suelto fuera de la línea resumen.
     expect(await textosDe(ui)).not.toContain(' 45 s')
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
     reloj.t += 15_000
     await bash($, 'node ~/.claude/flujos/estado.mjs')
-    expect(await desdeFlujo(ui, 5)).toEqual(['Flujo', '/implementador · Preflight · 1 min', '▸ ', 'Preflight', ' 1 min'])
+    expect(await desdeResumen(ui, 4)).toEqual(['/implementador · Preflight · 1 min', '▸ ', 'Preflight', ' 1 min'])
     await ui.unmount()
   })
 
@@ -5113,7 +5216,7 @@ describe('flujo en el panel', () => {
     await agente($, 'planificador')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
     const arbol = await ui.findAll({})
     const iEtiqueta = arbol.findIndex(n => n.type === 'Text' && n.text === 'Preflight')
     const etiqueta = arbol[iEtiqueta]
@@ -5137,16 +5240,16 @@ describe('flujo en el panel', () => {
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Preflight · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Preflight · 0 s'])
 
     const abrir = motor.detener('explorador')
     const corriendo = agente($, 'explorador')
     await esperar()
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
 
     abrir()
     await corriendo
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Plan · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Plan · 0 s'])
     await ui.unmount()
   })
 
@@ -5181,7 +5284,7 @@ describe('flujo en el panel', () => {
     // El kit convierte el fallo del motor de abajo en su propio error: el hook del panel no lo envuelve ni lo traga.
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).not.toMatch(/panel/i)
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
     await ui.unmount()
   })
 
@@ -5203,7 +5306,7 @@ describe('flujo en el panel', () => {
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
 
     return { motor, ui }
   }
@@ -5449,7 +5552,7 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
 
     reloj.t += 5_000
     const responder = detener('AskUserQuestion')
@@ -5469,11 +5572,11 @@ describe('flujo en el panel', () => {
     expect(despues('Aprobación', 3)).toEqual([' 10 s', ' · espera 2 min', '│'])
     expect(despues('Ejecución', 2)).toEqual([' 30 s', '│'])
     expect(deTerminado(textos, 4)).toEqual(['● ', 'Terminado', ' 45 s', ' · espera 2 min'])
-    expect(textos[textos.indexOf('Flujo') + 1]).toBe('/implementador · Terminado · 45 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Terminado · 45 s')
 
-    // Plegada, solo queda la línea con el trabajo.
-    await ui.press({ key: 'flujo-plegar' })
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Terminado · 45 s'])
+    // En Inicio, solo queda la línea con el trabajo.
+    await ui.press({ key: 'pestana-inicio' })
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Terminado · 45 s'])
     expect((await textosDe(ui)).some(t => t.includes('espera'))).toBe(false)
     await ui.unmount()
   })
@@ -5483,14 +5586,14 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
     reloj.t += 5_000
     await preguntarPlan($)
     reloj.t += 10_000
     await bash($, 'node ~/.claude/flujos/estado.mjs --base')
 
     expect((await textosDe(ui)).some(t => t.includes('espera'))).toBe(false)
-    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Ejecución · 15 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Ejecución · 15 s')
     await ui.unmount()
   })
 
@@ -5499,7 +5602,7 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
 
     reloj.t += 5_000
     const responder = detener('AskUserQuestion')
@@ -5514,7 +5617,7 @@ describe('flujo en el panel', () => {
 
     const final = ['● ', 'Terminado · interrumpido', ' 5 s', ' · espera 1 min']
     const linea = '/implementador · Terminado · interrumpido · 5 s'
-    expect((await desdeFlujo(ui, 2))[1]).toBe(linea)
+    expect((await desdeResumen(ui, 1))[0]).toBe(linea)
     expect(deTerminado(await textosDe(ui), 4)).toEqual(final)
 
     // La pregunta vuelve tarde, con error: el error llega intacto y el flujo no cambia.
@@ -5523,7 +5626,7 @@ describe('flujo en el panel', () => {
     const error = await pregunta
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).not.toMatch(/panel/i)
-    expect((await desdeFlujo(ui, 2))[1]).toBe(linea)
+    expect((await desdeResumen(ui, 1))[0]).toBe(linea)
     expect(deTerminado(await textosDe(ui), 4)).toEqual(final)
     await ui.unmount()
   })
@@ -5541,19 +5644,19 @@ describe('flujo en el panel', () => {
     const b = agente($, 'explorador', 'B')
     const c = agente($, 'explorador', 'C')
     await esperar()
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
 
     abrirB()
     await b
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
 
     abrirA()
     await a
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
 
     abrirC()
     await c
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Plan · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Plan · 0 s'])
     await ui.unmount()
   })
 
@@ -5564,7 +5667,7 @@ describe('flujo en el panel', () => {
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
     const tras = async (etiqueta: string, n: number) => {
       const textos = await textosDe(ui)
       const i = textos.indexOf(etiqueta)
@@ -5602,7 +5705,7 @@ describe('flujo en el panel', () => {
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
     const tras = async (etiqueta: string, n: number) => {
       const textos = await textosDe(ui)
       const i = textos.indexOf(etiqueta)
@@ -5659,14 +5762,14 @@ describe('flujo en el panel', () => {
 
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
     await comprobar()
-    expect((await desdeFlujo(ui, 2))[1]).not.toContain('×')
+    expect((await desdeResumen(ui, 1))[0]).not.toContain('×')
 
-    // Plegada, ni la línea resumen ni nada más lleva los contadores.
-    await ui.press({ key: 'flujo-plegar' })
+    // En Inicio, ni la línea resumen ni nada más lleva los contadores.
+    await ui.press({ key: 'pestana-inicio' })
     const plegada = await textosDe(ui)
     expect(plegada).not.toContain(' ×2')
     expect(plegada).not.toContain(' · rev ×1')
-    expect((await desdeFlujo(ui, 2))[1]).not.toContain('×')
+    expect((await desdeResumen(ui, 1))[0]).not.toContain('×')
     await ui.unmount()
   })
 
@@ -5687,14 +5790,14 @@ describe('flujo en el panel', () => {
 
     abrirA()
     await a
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
 
     // B es el último en volver y vuelve con error: cuenta como vuelto y el paso avanza.
     abrirB()
     const error = await b
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).not.toMatch(/panel/i)
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Plan · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Plan · 0 s'])
     await ui.unmount()
   })
 
@@ -5720,7 +5823,7 @@ describe('flujo en el panel', () => {
     abrirB()
     expect(await a).toBeInstanceOf(Error)
     expect(await b).toBeInstanceOf(Error)
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
     await ui.unmount()
   })
 
@@ -5729,12 +5832,12 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    await ui.press({ key: 'flujo-plegar' })
+    await ui.press({ key: 'pestana-flujo' })
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO', { agentId: 'agente-1' }))
-    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Preflight · 0 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 0 s')
 
     await $.turn.complete(respuesta('', { reason: 'aborted' }))
-    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Terminado · interrumpido · 0 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Terminado · interrumpido · 0 s')
     const arbol = await ui.findAll({})
     const i = arbol.findIndex(n => n.type === 'Text' && n.text === 'Terminado · interrumpido')
     expect(arbol.slice(0, i).reverse().find(n => n.type === 'Text' && n.text === '● ')?.props.color).toBe('error')
@@ -5750,7 +5853,7 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'simplify', text: '' })
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
 
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])
+    expect(await desdeResumen(ui, 1)).toEqual(['sin flujo en esta sesión'])
     await ui.unmount()
   })
 
@@ -5760,10 +5863,10 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect((await desdeFlujo(ui, 2))[1]).toBe('/implementador · Preflight · 0 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 0 s')
 
     await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', 'sin flujo en esta sesión'])
+    expect(await desdeResumen(ui, 1)).toEqual(['sin flujo en esta sesión'])
     await ui.unmount()
   })
 
@@ -6069,14 +6172,13 @@ describe('flujo en el panel', () => {
 
   test('skill.prompt de /implementador con RELEVO abre flujo nuevo y vacía las filas', async ($, on) => {
     const { ui, abrir, vuelos } = await explorando($, on)
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
     expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
 
     // Ya no hay relevo: una marca RELEVO es un pedido más, el flujo empieza de nuevo y las filas se vacían.
     await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
 
-    const [titulo, resumen] = await desdeFlujo(ui, 2)
-    expect(titulo).toBe('Flujo')
+    const [resumen] = await desdeResumen(ui, 1)
     expect(resumen).toBe('/implementador · Preflight · 0 s')
     expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(1)
 
@@ -6095,7 +6197,7 @@ describe('flujo en el panel', () => {
     await bash($, 'node ~/.claude/flujos/estado.mjs')
     reloj.t += 5_000
     await agente($, 'planificador')
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Plan · 5 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Plan · 5 s'])
 
     reloj.t += 10_000
     await $.skill.prompt({
@@ -6103,7 +6205,7 @@ describe('flujo en el panel', () => {
       text: '**Pedido:** arreglar el panel\n\n- Si el pedido empieza con `RELEVO · vuelta`, sigue en el paso 3',
     })
 
-    expect(await desdeFlujo(ui, 2)).toEqual(['Flujo', '/implementador · Preflight · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Preflight · 0 s'])
     await ui.unmount()
   })
 

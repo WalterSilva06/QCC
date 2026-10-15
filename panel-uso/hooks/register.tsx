@@ -315,16 +315,11 @@ async function vaciarAlAbrirTanda($: EngineInterface, s: Senal) {
   }
 }
 
-/** Abre o cierra la pestaña «Flujo» y lo recuerda entre sesiones. */
-async function alternarFlujo($: EngineInterface) {
-  let abierta = false
-  await update($, flujoAbierto, antes => {
-    abierta = !antes
-
-    return abierta
-  })
+/** Elige la pestaña «Flujo» (`true`) o «Inicio» (`false`) y lo recuerda entre sesiones. Pulsarla de nuevo no cambia nada. */
+async function elegirPestana($: EngineInterface, flujo: boolean) {
+  await update($, flujoAbierto, () => flujo)
   try {
-    await $.store.set(PREF_FLUJO, abierta)
+    await $.store.set(PREF_FLUJO, flujo)
   } catch {
     // Sin store vale solo para esta sesión.
   }
@@ -916,25 +911,29 @@ export const register: Register = on => {
       return <Text wrap="truncate-end">{partes.join(' · ')}</Text>
     }
 
-    /** El bloque «Flujo»: plegado, título y resumen; como pestaña abierta, además los nodos con su detalle y el consumo. */
+    /** La fila de pestañas, arriba en las dos vistas; «Carpeta» abre la carpeta sin cambiar de pestaña. */
+    const filaPestanas = (
+      <Box key="pestanas" marginBottom={1}>
+        <Button key="pestana-inicio" hotkey="i" label="Inicio" onPress={() => elegirPestana($, false)} />
+        <Button key="pestana-flujo" hotkey="f" label="Flujo" onPress={() => elegirPestana($, true)} />
+        <Button key="carpeta" hotkey="c" label="Carpeta" onPress={() => abrirCarpeta($)} />
+      </Box>
+    )
+
+    /** El bloque de la pestaña «Flujo»: el resumen, los nodos con su detalle y el consumo. */
     const bloqueFlujo = (
       <Box key="flujo" flexDirection="column" marginBottom={1}>
-        <Box>
-          <Box flexGrow={1}>
-            <Text bold>Flujo</Text>
-          </Box>
-          <Button key="flujo-plegar" hotkey="f" label={flAbierto ? 'Ocultar' : 'Ver'} onPress={() => alternarFlujo($)} />
+        <Box key="flujo-resumen">
+          <Text dimColor wrap="truncate-end">
+            {resumenFlujo(fl, t)}
+          </Text>
         </Box>
-        <Text dimColor wrap="truncate-end">
-          {resumenFlujo(fl, t)}
-        </Text>
-        {flAbierto && fl?.orquestador !== undefined && (
+        {fl?.orquestador !== undefined && (
           <Text dimColor wrap="truncate-end">
             {`orquestador ${fl.orquestador}`}
           </Text>
         )}
-        {flAbierto &&
-          fl !== null &&
+        {fl !== null &&
           nodos(fl, t).flatMap((n, i, todos) => {
             const glifo =
               n.estado === 'pasado'
@@ -982,7 +981,7 @@ export const register: Register = on => {
               )),
             ]
           })}
-        {flAbierto && filasConsumo.length > 0 && (
+        {filasConsumo.length > 0 && (
           <Box flexDirection="column" marginTop={1}>
             <Box>
               <Box flexGrow={1}>
@@ -1011,15 +1010,19 @@ export const register: Register = on => {
       </Box>
     )
 
-    // Con la pestaña «Flujo» abierta se dibuja solo ese bloque; `flujo-plegar` sigue en él para volver.
-    if (flAbierto) return <Box flexDirection="column">{bloqueFlujo}</Box>
+    // Con la pestaña «Flujo» abierta se dibuja solo la fila de pestañas y ese bloque; `pestana-inicio` vuelve.
+    if (flAbierto) {
+      return (
+        <Box flexDirection="column">
+          {filaPestanas}
+          {bloqueFlujo}
+        </Box>
+      )
+    }
 
     return (
       <Box flexDirection="column">
-        <Box marginBottom={1}>
-          <Button key="carpeta" hotkey="c" label="Abrir carpeta" onPress={() => abrirCarpeta($)} />
-        </Box>
-        {bloqueFlujo}
+        {filaPestanas}
         <Box>
           <Box flexGrow={1}>
             <Text bold>Contexto</Text>
@@ -1130,6 +1133,11 @@ export const register: Register = on => {
               {` · ${esf.modelo}${esf.origen === 'ajustes' ? ' · según ajustes' : ''}`}
             </Text>
           )}
+        </Box>
+        <Box key="flujo-resumen">
+          <Text dimColor wrap="truncate-end">
+            {resumenFlujo(fl, t)}
+          </Text>
         </Box>
 
         {/* Leyenda de los tramos de las barras de las dos tablas. */}
