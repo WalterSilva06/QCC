@@ -99,9 +99,11 @@ function veredictoDe(filas, rol) {
 
 /**
  * El transcript de la sesión del flujo de `raiz` que empezó cerca de `desde` (DESDE_GLOBAL), con la hora de su
- * `/implementador`. Sin esa fila (la skill se llamó de otro modo), la sesión más reciente desde `desde`. null si no hay.
+ * `/implementador`. Con `base` (su BASE_GLOBAL), la sesión es la que la recibió de su preflight: así no se confunde
+ * con otro flujo del mismo repo que empezó a la vez. Si no, la del `/implementador` más cercano; sin esa fila (la skill
+ * se llamó de otro modo), la sesión más reciente desde `desde`. null si no hay.
  */
-export function sesionDelFlujo(raiz, desde, proyectos = proyectosDe()) {
+export function sesionDelFlujo(raiz, desde, proyectos = proyectosDe(), base = null) {
   const carpeta = path.join(proyectos, path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
   const limite = Date.parse(desde)
   let archivos = []
@@ -114,10 +116,27 @@ export function sesionDelFlujo(raiz, desde, proyectos = proyectosDe()) {
     .map((archivo) => ({ archivo, mtime: fs.statSync(archivo).mtimeMs }))
     .filter((a) => a.mtime >= limite - 60_000)
     .sort((a, b) => b.mtime - a.mtime)
+  const esComando = (f) => f?.type === 'user' && !f.isSidechain && f.timestamp && textoDe(f.message?.content).includes('<command-name>/implementador')
+  if (base) {
+    const marca = `BASE_GLOBAL=${base}`
+    for (const { archivo } of recientes) {
+      let texto = ''
+      try {
+        texto = fs.readFileSync(archivo, 'utf8')
+      } catch {
+        continue
+      }
+      if (!texto.includes(marca)) continue
+      const filas = filasDe(archivo)
+      const k = filas.findIndex((f) => JSON.stringify(f?.message?.content ?? '').includes(marca))
+      const comando = filas.slice(0, Math.max(k, 0)).reverse().find(esComando)
+      return { archivo, inicio: comando?.timestamp ?? filas[k]?.timestamp ?? new Date(limite).toISOString() }
+    }
+  }
   let mejor = null
   for (const { archivo } of recientes) {
     for (const f of filasDe(archivo)) {
-      if (f?.type !== 'user' || f.isSidechain || !f.timestamp || !textoDe(f.message?.content).includes('<command-name>/implementador')) continue
+      if (!esComando(f)) continue
       const t = Date.parse(f.timestamp)
       if (t <= limite + 60_000 && t >= limite - 30 * 60_000 && (!mejor || t > Date.parse(mejor.inicio))) mejor = { archivo, inicio: f.timestamp }
     }
@@ -126,11 +145,12 @@ export function sesionDelFlujo(raiz, desde, proyectos = proyectosDe()) {
 }
 
 /**
- * Costo real del flujo de `raiz` que empezó en `desde`, hasta `hasta`: el hilo principal (orquestador) y cada subagente
- * lanzado en ese tramo, por rol (`final` es la revisión final), con sus veredictos. null si no se encuentra la sesión.
+ * Costo real del flujo de `raiz` que empezó en `desde` (con `base`, su BASE_GLOBAL), hasta `hasta`: el hilo principal
+ * (orquestador) y cada subagente lanzado en ese tramo, por rol (`final` es la revisión final), con sus veredictos.
+ * null si no se encuentra la sesión.
  */
-export function costoDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = new Date().toISOString() } = {}) {
-  const sesion = sesionDelFlujo(raiz, desde, proyectos)
+export function costoDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = new Date().toISOString(), base = null } = {}) {
+  const sesion = sesionDelFlujo(raiz, desde, proyectos, base)
   if (!sesion) return null
   const enTramo = (t) => t && t >= sesion.inicio && t <= hasta
   const principal = filasDe(sesion.archivo).filter((f) => !f.isSidechain && enTramo(f.timestamp))

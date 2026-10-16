@@ -660,7 +660,7 @@ function cerrarFlujo(base, desde, tokens) {
   const e = leerEstado()
   let costo = null
   try {
-    costo = costoDelFlujo(RAIZ, e.inicio ?? desde ?? new Date().toISOString())
+    costo = costoDelFlujo(RAIZ, e.inicio ?? desde ?? new Date().toISOString(), { base: e.base_global ?? null })
   } catch {
     // Sin costo, el cierre sigue.
   }

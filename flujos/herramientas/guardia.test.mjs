@@ -793,7 +793,7 @@ test('costos: precio por pedido, y el cierre anota costo y veredictos del flujo'
 
   const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
   const { raiz } = estadoCon(config, () => ['--paso', '0'])
-  const inicio = JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8')).inicio
+  const { inicio, base_global: global } = JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8'))
   // Las horas del transcript caen entre el preflight y ahora (el cierre llega después): `en(f)` es esa fracción del tramo.
   const tramo = Math.max(Date.now() - Date.parse(inicio), 10)
   const en = (f) => new Date(Date.parse(inicio) + Math.floor(tramo * f)).toISOString()
@@ -804,8 +804,14 @@ test('costos: precio por pedido, y el cierre anota costo y veredictos del flujo'
   fs.mkdirSync(subagentes, { recursive: true })
   const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
   const pedido = (id, t, model, usage, texto) => ({ type: 'assistant', timestamp: t, message: { id, model, usage, content: [{ type: 'text', text: texto ?? '' }] } })
+  // Señuelo: otra sesión del mismo repo cuyo /implementador quedó más cerca del preflight, pero no recibió su BASE_GLOBAL.
+  fs.writeFileSync(path.join(sesion, 's0.jsonl'), jsonl([
+    { type: 'user', timestamp: en(-0.5), message: { role: 'user', content: '<command-name>/implementador</command-name>' } },
+    pedido('x1', en(0.2), 'claude-opus-5-5', { cache_creation_input_tokens: 1_000_000, cache_creation: { ephemeral_1h_input_tokens: 1_000_000 } }),
+  ]))
   fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
     { type: 'user', timestamp: en(-1), message: { role: 'user', content: '<command-name>/implementador</command-name>' } },
+    { type: 'user', timestamp: en(0.05), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't0', content: `BASE_GLOBAL=${global} DESDE_GLOBAL=${inicio}` }] } },
     pedido('o1', en(0.1), 'claude-sonnet-5-5', { cache_creation_input_tokens: 100_000, cache_creation: { ephemeral_1h_input_tokens: 100_000 }, output_tokens: 1000 }),
     pedido('o2', en(0.4), 'claude-sonnet-5-5', { cache_read_input_tokens: 100_000, output_tokens: 1000 }),
   ]))
