@@ -8,9 +8,10 @@ Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `pa
 {
   // Pasos de verificación, en orden. Corren con CI=1 desde la raíz del repo.
   // Sin esta clave se detectan; con [] el proyecto queda «SIN PASOS».
+  // timeoutSeg (opcional): tope en segundos del paso, 600 por defecto; al vencer se corta y sale ROJO.
   "verificar": [
     { "nombre": "typecheck", "cmd": "pnpm run typecheck" },
-    { "nombre": "build", "cmd": "pnpm run build" },
+    { "nombre": "build", "cmd": "pnpm run build", "timeoutSeg": 300 },
     { "nombre": "test", "cmd": "pnpm run test" }
   ],
   "guardia": {
@@ -31,17 +32,26 @@ Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `pa
     "scriptsPermitidos": ["typecheck", "build", "test"],
     // Carpetas de scripts que pegan a servicios vivos: `node|tsx|python <ahí>` se niega.
     "nodeNegado": ["scripts/"]
-  }
+  },
+  // Rutas críticas, con los criterios de plan.md §2 que piden. Al guardar el plan, estado.mjs avisa si
+  // una subtarea que toca una de estas rutas no es `Crítica: sí` o si la Clasificación no cita el criterio.
+  // `excepto`: rutas que la regla no cubre. `si`: la regla vale solo con esa condición (se avisa para revisarla).
+  "criticos": [
+    { "rutas": ["supabase/migrations/", "src/db/schema.ts"], "criterios": [4], "motivo": "esquema de la base" },
+    { "rutas": ["src/server/"], "excepto": ["src/server/textos.ts"], "criterios": [1], "motivo": "autorización del servidor" },
+    { "rutas": ["src/pagos/**"], "criterios": [3], "motivo": "cobros" },
+    { "rutas": [".claude/agents/*.md"], "criterios": [1], "si": "cambia su frontmatter", "motivo": "agentes del proyecto" }
+  ]
 }
 ```
 
-El archivo real es JSON sin comentarios.
+El archivo real es JSON sin comentarios. `verificar.mjs` repite desde una caché el VERDE de los últimos 30 min si el árbol y los pasos no cambiaron (`--sin-cache` lo corre igual).
 
 ## `.claude/implementador/`
 
 Reglas del proyecto en prosa. Las skills lo inyectan y los agentes lo leen. Un archivo por sección: cada agente lee solo los suyos. Sin la carpeta rige `.claude/implementador.md` con las mismas secciones. Secciones útiles:
 
-- **`clasificacion.md`** (orquestador, planificador, revisor-plan): rutas concretas para cada criterio CRÍTICO de `plan.md` §2.
+- **`clasificacion.md`** (orquestador, planificador, revisor-plan): lo que no es una ruta de cada criterio CRÍTICO de `plan.md` §2. Las rutas van en `criticos` de `.claude/implementador.json`, donde `estado.mjs` las aplica.
 - **`buscar.md`** (orquestador, explorador, planificador): carpetas que Grep no ve, dónde viven los tests, guardianes, archivos que no se leen o que solo se leen con Grep.
 - **`planificar.md`** (planificador, revisor-plan): convención de migraciones, infraestructura de tests, riesgos típicos, qué queda para el usuario.
 - **`ejecutor.md`** (ejecutor): reglas de tipos, test puntual, patrón para acotar la salida de los tests, particularidades de la verificación.

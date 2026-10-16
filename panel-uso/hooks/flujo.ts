@@ -8,9 +8,10 @@ import type { Uso } from './semana'
 /**
  * Lo que una herramienta o un agente hace y que mueve el flujo de paso.
  * `paso` de la señal de estado es el `--paso <n>` de `estado.mjs`: el paso que el flujo dice que lleva. Falta si no vino o no es un entero.
+ * `modo` `otro` son `--guardar`, `--estado` y `--reglas`: por sí solos no mueven el flujo; con `--paso`, fijan ese paso.
  */
 export type Senal =
-  | { tipo: 'estado'; modo: 'preflight' | 'base' | 'cambios' | 'diff'; paso?: number }
+  | { tipo: 'estado'; modo: 'preflight' | 'base' | 'cambios' | 'diff' | 'otro'; paso?: number }
   | { tipo: 'verificar' }
   | { tipo: 'pregunta'; plan: boolean }
   | { tipo: 'agente'; nombre: string }
@@ -110,7 +111,7 @@ function argumentosDeScript(comandos: string[][], nombre: string): string[] | nu
   return null
 }
 
-const MODOS_ESTADO = { '--base': 'base', '--cambios': 'cambios', '--diff': 'diff' } as const
+const MODOS_ESTADO = { '--base': 'base', '--cambios': 'cambios', '--diff': 'diff', '--guardar': 'otro', '--estado': 'otro', '--reglas': 'otro' } as const
 
 /**
  * El `--paso <n>` de los argumentos de `estado.mjs`: el entero no negativo que sigue a la marca, mirando solo lo anterior a `--`
@@ -764,6 +765,7 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
 /**
  * Agente y configuración (modelo y esfuerzo) de cada línea de agente que dibuja el panel.
  * Copia de la tabla «Agentes» de `flujos/skills/implementador/SKILL.md` y del frontmatter de `flujos/agents/*.md`: si cambian allí, cambian aquí.
+ * `revisorSubtarea` queda para flujos de versiones anteriores, que lanzaban un revisor por subtarea.
  */
 export const AGENTE_DE_PASO = {
   explorador: { agente: 'explorador', config: 'Haiku high' },

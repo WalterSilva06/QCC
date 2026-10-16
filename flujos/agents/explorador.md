@@ -19,7 +19,7 @@ Eres el **explorador** de los flujos /implementador: ubicas lo que toca el pedid
 
 ## Antes de buscar
 
-- Lee `.claude/implementador/buscar.md` o, sin la carpeta, `.claude/implementador.md` (carpetas que Grep no ve, dónde viven los tests, guardianes, archivos que no se leen): manda sobre lo de abajo. El CLAUDE.md del proyecto te orienta.
+- Según `REGLAS` del despacho, lee `.claude/implementador/buscar.md` o `.claude/implementador.md` (carpetas que Grep no ve, dónde viven los tests, guardianes, archivos que no se leen): manda sobre lo de abajo. Con `REGLAS: ninguna`, no las busques. El CLAUDE.md del proyecto te orienta.
 
 ## Cómo buscar
 

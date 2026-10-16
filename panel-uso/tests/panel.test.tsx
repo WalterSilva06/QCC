@@ -1722,7 +1722,7 @@ describe('actividad (puro)', () => {
 })
 
 describe('flujo (puro)', () => {
-  const estado = (modo: 'preflight' | 'base' | 'cambios' | 'diff'): Senal => ({ tipo: 'estado', modo })
+  const estado = (modo: 'preflight' | 'base' | 'cambios' | 'diff' | 'otro'): Senal => ({ tipo: 'estado', modo })
   const verificar: Senal = { tipo: 'verificar' }
   const agente = (nombre: string): Senal => ({ tipo: 'agente', nombre })
   const agenteFin = (nombre: string, bien = true): Senal => ({ tipo: 'agente-fin', nombre, bien })
@@ -1818,6 +1818,11 @@ describe('flujo (puro)', () => {
 
     // Después de `--` son rutas: no cuenta.
     expect(bash('node ~/.claude/flujos/estado.mjs --diff abc123 -- --paso 6')).toEqual(estado('diff'))
+
+    // --guardar, --estado y --reglas son «otro»: no son el preflight, con o sin --paso.
+    expect(bash('node ~/.claude/flujos/estado.mjs --guardar a86c3e plan --paso 2')).toEqual({ tipo: 'estado', modo: 'otro', paso: 2 })
+    expect(bash('node ~/.claude/flujos/estado.mjs --estado')).toEqual(estado('otro'))
+    expect(bash('node "$HOME/.claude/flujos/estado.mjs" --reglas')).toEqual(estado('otro'))
   })
 
   test('estado con --paso: manda sobre la heurística; sin marca o fuera de rango, la heurística', async () => {
@@ -1826,6 +1831,9 @@ describe('flujo (puro)', () => {
 
     expect(avanzar(f(5), marcado(6))?.paso).toBe(6)
     expect(avanzar(f(5), { tipo: 'estado', modo: 'base', paso: 5 })?.paso).toBe(5)
+    // «otro» sin marca deja el paso; con marca, la marca manda.
+    expect(avanzar(f(5), { tipo: 'estado', modo: 'otro' })?.paso).toBe(5)
+    expect(avanzar(f(1), { tipo: 'estado', modo: 'otro', paso: 2 })?.paso).toBe(2)
 
     // `--paso 9` no existe: queda lo que daba la heurística (en 5, `--cambios` sigue en 5; en 6, pasa a 7).
     expect(avanzar(f(5), marcado(9))?.paso).toBe(5)

@@ -6,7 +6,7 @@
 // `revisor` (argumento `revisor`): Claude Code lo corre solo mientras ese agente trabaja.
 // Niega lo que un subagente no hace nunca —git que modifica, servicios externos y despliegues,
 // dependencias, secretos, borrados recursivos, servidores que no terminan, archivos
-// protegidos (en `.claude/`, solo settings y agentes); y al revisor, escribir— y deja cada llamada en el registro del proyecto
+// protegidos (en `.claude/`, solo settings y agentes); y al revisor, escribir fuera de los temporales— y deja cada llamada en el registro del proyecto
 // (`registros/<proyecto>-<hash>.jsonl`), que `estado.mjs --cambios` cruza con el árbol para el
 // chequeo de alcance (cubre rutas que git ignora).
 // `explorador`, `planificador` y `revisor-plan` (solo lectura) solo anotan sus Read, Glob y Grep
@@ -55,6 +55,41 @@ export function registroDe(raiz) {
   const hash = crypto.createHash('sha1').update(clave).digest('hex').slice(0, 10)
   const nombre = (path.basename(norma) || 'raiz').replace(/[^\w.-]+/g, '_')
   return path.join(DIR, 'registros', `${nombre}-${hash}.jsonl`)
+}
+
+/** Carpeta del flujo en curso del proyecto (estado, plan y subtareas), junto a su registro. */
+export function flujoDe(raiz) {
+  return registroDe(raiz).replace(/\.jsonl$/, '-flujo')
+}
+
+/**
+ * Hash del árbol de trabajo: versionados más nuevos no ignorados (y `forzar`, rutas permitidas que git
+ * ignora), armado con un índice temporal, así que no toca el índice ni los archivos del usuario.
+ */
+export function arbolDe(raiz, forzar = []) {
+  const git = (args, env = process.env) => {
+    try {
+      return execFileSync('git', args, { cwd: raiz, encoding: 'utf8', env, maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+    } catch (e) {
+      throw new Error(`git ${args.join(' ')}: ${String(e.stderr || e.message).trim()}`)
+    }
+  }
+  const indiceReal = path.resolve(raiz, git(['rev-parse', '--git-path', 'index']).trim())
+  const tmp = path.join(os.tmpdir(), `implementador-indice-${process.pid}-${Date.now()}`)
+  try {
+    fs.copyFileSync(indiceReal, tmp)
+  } catch {
+    // Repo sin índice todavía: el árbol parte vacío.
+  }
+  const env = { ...process.env, GIT_INDEX_FILE: tmp }
+  try {
+    git(['add', '-A', '--', '.'], env)
+    const extra = forzar.filter((p) => !/[*?]/.test(p) && fs.existsSync(path.join(raiz, p)))
+    if (extra.length) git(['add', '-f', '--', ...extra], env)
+    return git(['write-tree'], env).trim()
+  } finally {
+    fs.rmSync(tmp, { force: true })
+  }
 }
 
 // ── Globs ───────────────────────────────────────────────────────────────────
@@ -167,6 +202,7 @@ export function configDe(raiz) {
     scriptsNegados: [...SCRIPTS_NEGADOS_BASE, ...(g.scriptsNegados ?? [])],
     scriptsPermitidos: Array.isArray(g.scriptsPermitidos) ? g.scriptsPermitidos.map(String) : null,
     nodeNegado: (g.nodeNegado ?? []).map(String),
+    criticos: Array.isArray(crudo?.criticos) ? crudo.criticos.filter((r) => r && typeof r === 'object') : [],
     pm: gestorDe(raiz, pkg),
     scripts: pkg?.scripts && typeof pkg.scripts === 'object' ? pkg.scripts : {},
   }
@@ -176,9 +212,12 @@ export function configDe(raiz) {
 
 // ── Rutas ───────────────────────────────────────────────────────────────────
 
-/** `~` y `$HOME` → carpeta del usuario; `/d/x` de Git Bash → `d:/x` en Windows; lo demás, igual. */
+/** `~` y `$HOME` → carpeta del usuario; `$TEMP` y similares → temporal; `/d/x` de Git Bash → `d:/x` en Windows; lo demás, igual. */
 export function rutaNativa(p) {
-  const s = String(p).replace(/^(~|\$HOME|\$\{HOME\}|\$env:USERPROFILE|%USERPROFILE%)(?=$|[\\/])/i, () => os.homedir())
+  const s = String(p)
+    .replace(/^(~|\$HOME|\$\{HOME\}|\$env:USERPROFILE|%USERPROFILE%)(?=$|[\\/])/i, () => os.homedir())
+    .replace(/^\$\{?(TMPDIR|TEMP|TMP)\}?(?=$|[\\/])/, () => os.tmpdir())
+    .replace(/^(\$env:(TEMP|TMP)|%(TEMP|TMP)%)(?=$|[\\/])/i, () => os.tmpdir())
   if (WIN) {
     const m = /^\/([a-zA-Z])(\/.*)?$/.exec(s)
     if (m) return `${m[1]}:${m[2] ?? '/'}`
@@ -200,6 +239,12 @@ function esTemporal(cruda, abs) {
   const a = WIN ? abs.toLowerCase() : abs
   const t = WIN ? tmp.toLowerCase() : tmp
   return a === t || a.startsWith(t + path.sep)
+}
+
+/** ¿`cruda` (destino de un comando, relativo a `ctx.cwd`) cae en un temporal fuera del repo? (Un repo puede vivir dentro del temporal.) */
+function temporal(cruda, ctx) {
+  const abs = path.resolve(ctx.cwd, rutaNativa(cruda))
+  return relativaAlRepo(abs, ctx.raiz) === null && esTemporal(String(cruda), abs)
 }
 
 const versionados = new Map()
@@ -522,7 +567,11 @@ function evaluarGit(args, ctx) {
   const resto = args.slice(k + 1)
   if (!sub) return null
   if (GIT_LECTURA.has(sub)) {
-    if (ctx.rol === 'revisor' && resto.some((a) => a.startsWith('--output'))) return 'el revisor no escribe archivos (git --output)'
+    const k = resto.findIndex((a) => a.startsWith('--output'))
+    if (ctx.rol === 'revisor' && k >= 0) {
+      const destino = resto[k].includes('=') ? resto[k].slice(resto[k].indexOf('=') + 1) : resto[k + 1]
+      if (!destino || !temporal(destino, ctx)) return 'el revisor solo escribe en temporales (git --output)'
+    }
     return null
   }
   if (sub === 'branch') {
@@ -729,6 +778,14 @@ const CON_DESTINO = new Set([
   'mv', 'cp', 'rm', 'touch', 'mkdir', 'ln', 'truncate', 'tee', 'install', 'set-content', 'add-content',
   'out-file', 'new-item', 'copy-item', 'move-item', 'rename-item', 'remove-item', 'del', 'erase',
 ])
+const COPIAN = new Set(['cp', 'copy', 'copy-item', 'cpi', 'install'])
+
+/** ¿Todo lo que `prog` escribe cae en temporales? En una copia solo cuenta el destino (el último argumento). */
+function soloTemporales(prog, args, ctx) {
+  const rutas = args.filter((a) => !a.startsWith('-'))
+  const destinos = COPIAN.has(prog) ? rutas.slice(-1) : rutas
+  return destinos.length > 0 && destinos.every((a) => temporal(a, ctx))
+}
 
 function evaluarSimple({ palabras, redirs }, ctx) {
   const config = configDe(ctx.raiz)
@@ -739,7 +796,10 @@ function evaluarSimple({ palabras, redirs }, ctx) {
       continue
     }
     if (/^(\/dev\/(null|stdout|stderr)|nul|\$null)$/i.test(r.objetivo)) continue
-    if (ctx.rol === 'revisor') return `el revisor no escribe archivos (redirección a ${r.objetivo})`
+    if (ctx.rol === 'revisor') {
+      if (temporal(r.objetivo, ctx)) continue
+      return `el revisor solo escribe en temporales (redirección a ${r.objetivo})`
+    }
     const m = motivoRuta(r.objetivo, { raiz: ctx.raiz, base: ctx.cwd, permitirTemporal: true })
     if (m) return m
   }
@@ -802,7 +862,7 @@ function evaluarSimple({ palabras, redirs }, ctx) {
   }
 
   if (ctx.rol === 'revisor') {
-    if (ESCRIBEN.has(prog)) return `el revisor no modifica archivos (${prog})`
+    if (ESCRIBEN.has(prog) && !soloTemporales(prog, args, ctx)) return `el revisor solo escribe en temporales (${prog})`
     if ((prog === 'sed' || prog === 'perl') && args.some(EDITA_EN_SITIO)) return 'el revisor no modifica archivos (edición en sitio)'
     if ((prog === 'awk' || prog === 'gawk') && args.some((a, j) => a === '-i' && /inplace/.test(args[j + 1] ?? ''))) {
       return 'el revisor no modifica archivos (awk inplace)'

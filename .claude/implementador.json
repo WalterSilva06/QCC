@@ -3,5 +3,34 @@
     { "nombre": "validate", "cmd": "claude plugin validate panel-uso" },
     { "nombre": "test", "cmd": "claude plugin test panel-uso" },
     { "nombre": "test flujos", "cmd": "node --test flujos/herramientas/guardia.test.mjs" }
+  ],
+  "criticos": [
+    {
+      "rutas": ["flujos/"],
+      "excepto": ["flujos/agents/*.md", "flujos/herramientas/config.ejemplo.md"],
+      "criterios": [1, 5],
+      "motivo": "guardia.mjs es la seguridad de los subagentes; lo demás lo usan todos los proyectos del usuario"
+    },
+    {
+      "rutas": ["flujos/agents/*.md"],
+      "criterios": [1, 5],
+      "si": "cambia su frontmatter (herramientas, modelo)",
+      "motivo": "definición de los agentes del flujo"
+    },
+    {
+      "rutas": [".claude/implementador/", ".claude/implementador.json"],
+      "criterios": [1],
+      "motivo": "reglas y config de este flujo: «guardia» afloja o aprieta la guardia"
+    },
+    {
+      "rutas": ["panel-uso/hooks/flujo.ts", "panel-uso/types/index.d.ts"],
+      "criterios": [6],
+      "motivo": "máquina de estado del flujo y forma de los atoms que sobreviven a /reload-plugins"
+    },
+    {
+      "rutas": ["panel-uso/hooks/register.tsx"],
+      "criterios": [7],
+      "motivo": "hooks que envuelven next: un fallo frena una petición al modelo o una herramienta"
+    }
   ]
 }

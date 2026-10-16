@@ -6,7 +6,7 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 
 | Comando | Uso | Para qué |
 |---|---|---|
-| `/implementador` | `<qué cambiar>` | Cambios en cualquier proyecto con git: explora, clasifica, planifica, revisa el plan, pide aprobación, ejecuta por subtareas con revisión independiente y cierra con verificación real. |
+| `/implementador` | `<qué cambiar>` | Cambios en cualquier proyecto con git: explora, clasifica, planifica, revisa el plan, pide aprobación, ejecuta por subtareas y cierra con una revisión final independiente y verificación real. |
 
 ## Roles y modelos
 
@@ -19,20 +19,24 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 | Planificador | Opus high; clasifica y planifica |
 | Revisor del plan | Sonnet medium; se omite con «sin criterios», ninguna subtarea crítica y 1–2 subtareas (lo suple el orquestador) |
 | Ejecutor | Sonnet high |
-| Revisor por subtarea | Solo con 2 o más subtareas: Sonnet high si `Crítica: sí`; Sonnet medium si `Crítica: no` |
-| Revisión final | Opus high, siempre; con una sola subtarea va sola (0 revisores por subtarea) |
+| Revisión final | Opus high, siempre: revisa el cambio completo, cada «hecho cuando» y las uniones entre subtareas |
 
-- **Criticidad:** el plan marca `Crítica: sí | no` por subtarea (ante la duda, sí; sin el campo, sí) y eso decide el esfuerzo del revisor de esa subtarea. Las reglas del proyecto pueden listar rutas críticas que obligan a `Crítica: sí`.
-- **Verificación:** el orquestador corre `verificar.mjs` tras cada ejecutor y se lo pasa al revisor en `VERIFICACIÓN DEL ORQUESTADOR`, así que el revisor no lo repite. La revisión final tampoco lo repite: recibe `VERIFICACIÓN FINAL` con la línea del orquestador. Con una sola subtarea va solo la revisión final.
+- **Sin revisor por subtarea:** en 74 revisiones por subtarea (del 13 al 15 oct de 2026) no hubo ningún RECHAZADO; los defectos reales los encontró la revisión final, porque estaban entre archivos. Ahora solo corre la revisión final, que recibe el digest `EJECUTORES` (una línea por subtarea con lo que reportó su ejecutor) y no los reportes completos.
+- **Criticidad:** el plan marca `Crítica: sí | no` por subtarea (ante la duda, sí; sin el campo, sí). Decide si corre el revisor del plan y qué mira primero la revisión final. Las rutas críticas del proyecto van en `criticos` de `.claude/implementador.json`; al guardar el plan, `estado.mjs` avisa si una subtarea las toca sin `Crítica: sí` o si la Clasificación no cita su criterio.
+- **Verificación:** el orquestador corre `verificar.mjs` tras cada ejecutor. La última corrida (tras el último ejecutor o corrección) ya es la verificación final: ni el paso 6 ni el cierre la repiten, y la revisión final la recibe en `VERIFICACIÓN FINAL`. Cada paso tiene un tope de `timeoutSeg` (600 s por defecto) y `verificar.mjs` se llama con `timeout: 600000` en Bash. Si el árbol y los pasos son los de un VERDE de los últimos 30 min (por ejemplo, el del ejecutor), lo repite desde la caché.
+- **Llamadas juntas:** lo que no depende de una salida previa va en un mismo mensaje, cada comando en su propia llamada: preflight, verificación inicial y explorador; guardar la exploración y planificar; foto y ejecutor; alcance y verificación; alcance global y revisión final. Cada llamada que se ahorra es un pedido menos con todo el contexto del orquestador.
+- **Carpeta del flujo:** el preflight abre `~/.claude/flujos/registros/<proyecto>-<hash>-flujo/`. `estado.mjs --guardar <agentId>` deja ahí la exploración y el plan, tomados del transcript del agente, y un `S<n>.md` por subtarea. Los despachos pasan rutas en vez de copiar el plan, y `estado.mjs --estado` resume el flujo si el orquestador pierde el hilo.
 - **Ejecutor y suite sin filtro:** si las reglas del proyecto dicen que la suite de tests no se puede filtrar, el ejecutor no la corre aparte antes de `verificar.mjs`: va directo a este, que ya la incluye. El patrón filtrado queda para diagnosticar un `test` en ROJO.
-- **Exploración mínima:** con un pedido que nombra 2 archivos o menos, sin acoplamientos ni rutas críticas en las reglas del proyecto, el orquestador mismo hace una exploración corta (quién importa o cita el archivo, sus tests) y se salta el explorador. Ante la duda, explorador.
+- **Exploración:** siempre la hace el explorador (Haiku), que cuesta centavos; lo que leyera el orquestador se pagaría de nuevo en cada uno de sus pedidos.
+- **Reglas del proyecto:** cada despacho lleva `REGLAS` con lo que dijo el preflight, para que cada agente lea las suyas sin buscarlas. La skill inyecta las del orquestador con `estado.mjs --reglas`.
+- **Supuestos:** lo que el plan no pudo confirmar va en Riesgos con «comprobar primero», y el ejecutor lo prueba antes de editar el resto. Las observaciones del revisor del plan sobre una subtarea pasan a sus Riesgos.
+- **Guardia:** si la autoprueba del preflight falla (por ejemplo, el proyecto redefine `ejecutor` o `revisor` sin la guardia), el flujo avisa y termina. El revisor no escribe en el repo, pero sí en temporales (para comparar con la base o simular).
 - **Fork mode:** los subagentes heredarían el modelo de la sesión y el planificador y la revisión final perderían Opus. Si está activo, el flujo avisa y termina.
-- **Topes de reporte:** explorador ≤ 25 líneas, ejecutor ≤ 10, revisor ≤ 12 y revisión final ≤ 15.
-- **Digest `YA REVISADO`:** una línea por subtarea ya revisada. La revisión final recibe ese digest y no recibe los reportes de los ejecutores ni de los revisores.
-- **Contexto del revisor:** además del digest `YA REVISADO`, `REVISIÓN ANTERIOR` lleva solo los PROBLEMAS y CRITERIOS del propio revisor de la vuelta previa (también en los ciclos de la revisión final), nunca el reporte del ejecutor.
+- **Topes de reporte:** explorador ≤ 25 líneas, ejecutor ≤ 10 y revisión final ≤ 20.
+- **Contexto de la revisión final:** en sus ciclos, `REVISIÓN ANTERIOR` lleva solo sus PROBLEMAS y CRITERIOS de la vuelta previa, nunca el reporte del ejecutor.
 - **Autochequeo del ejecutor:** antes de reportar repasa una lista corta propia más la sección «Revisor: rechaza también por» de las reglas del proyecto.
 
-El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes (el planificador marca «Plan», paso 2, y el revisor-plan «Revisión del plan», paso 3), del header «Plan» de las preguntas de aprobación (si se omite el revisor-plan, la pregunta «Plan» lleva directo a Aprobación), de las opciones de `estado.mjs` y de la línea «CIERRE ·» del cierre. La revisión final cuenta siempre en «Verificación final». El `verificar.mjs` de cada subtarea y su revisor cuentan en «Ejecución»; el `verificar.mjs` que sigue a la última subtarea marca «Verificación final». El orden por subtarea (`--base` → `ejecutor` → `--cambios` → `verificar.mjs` → `revisor`) es parte de lo que lee el panel, pero el orquestador también fija el paso explícito con `--paso <n>` en cada `estado.mjs` y la heurística queda de respaldo. Si cambia alguno de esos nombres, opciones o textos, o ese orden, hay que actualizar `panel-uso/hooks/flujo.ts`.
+El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes (el planificador marca «Plan», paso 2, y el revisor-plan «Revisión del plan», paso 3), del header «Plan» de las preguntas de aprobación (si se omite el revisor-plan, la pregunta «Plan» lleva directo a Aprobación), de las opciones de `estado.mjs` y de la línea «CIERRE ·» del cierre. La revisión final cuenta siempre en «Verificación final». El `verificar.mjs` de cada subtarea cuenta en «Ejecución»; el `estado.mjs --cambios … --paso 6` previo a la revisión final marca «Verificación final». `--guardar`, `--estado` y `--reglas` no mueven el panel por sí solos. El orden por subtarea (`--base` → `ejecutor` → `--cambios` → `verificar.mjs`) es parte de lo que lee el panel, pero el orquestador también fija el paso explícito con `--paso <n>` en cada `estado.mjs` y la heurística queda de respaldo. Las llamadas juntas siguen siendo una señal cada una. Si cambia alguno de esos nombres, opciones o textos, o ese orden, hay que actualizar `panel-uso/hooks/flujo.ts`.
 
 ## Instalación
 
@@ -42,11 +46,13 @@ El repo es la fuente de verdad: los flujos se editan en `flujos/` y después se 
 node flujos/instalar.mjs              copia a ~/.claude lo que cambió
 node flujos/instalar.mjs --revisar    muestra qué cambiaría, sin copiar
 node flujos/instalar.mjs --traer      trae al repo lo que se editó directo en ~/.claude
-node flujos/instalar.mjs --forzar     pisa la copia instalada aunque sea más nueva
+node flujos/instalar.mjs --forzar     pisa la copia instalada aunque se haya editado ahí
+node flujos/instalar.mjs --limpiar    borra lo instalado que ya no está en el repo, si nadie lo editó
 ```
 
-- Si la copia instalada es más nueva que la del repo (alguien la editó en `~/.claude`), `instalar.mjs` la **frena** y termina con exit 1, para no perder ese cambio. Se resuelve con `--traer` o con `--forzar`.
-- No toca `~/.claude/flujos/registros/` (bitácoras locales de cada proyecto, más `flujos.jsonl` con una línea por flujo y sus tokens por rol; no van al repo).
+- Cada copia anota su hash en `~/.claude/flujos/.instalado.json`. Si la copia instalada ya no coincide con lo que se instaló (alguien la editó en `~/.claude`), `instalar.mjs` la **frena** y termina con exit 1, aunque su fecha sea más vieja, para no perder ese cambio. Se resuelve con `--traer` o con `--forzar`. Lo instalado antes del manifiesto se compara por fecha hasta la primera instalación.
+- Lo instalado que ya no está en el repo sale como «huérfano»; `--limpiar` lo borra si nadie lo editó.
+- No copia ni toca `registros/` (bitácoras locales de cada proyecto, la carpeta de cada flujo, la caché de `verificar.mjs` y `flujos.jsonl` con una línea por flujo y sus tokens por rol; no van al repo).
 - `/implementador` llama a sus herramientas y a `comun.md`, `plan.md` y `pasos.md` por la ruta fija `~/.claude/flujos/…`. El flujo **corre desde la copia instalada**, no desde el repo: un cambio en `flujos/` no rige hasta instalarlo.
 
 El detalle de cada paso y herramienta está en `flujos/herramientas/comun.md`, `plan.md` (clasificación y formato del plan) y `pasos.md`; el de cada agente, en `flujos/agents/`; el formato de `.claude/implementador.json`, en `flujos/herramientas/config.ejemplo.md`.

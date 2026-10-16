@@ -7,13 +7,14 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { evaluar, analizar, raizDe, registroDe, configDe, coincide } from './guardia.mjs'
-import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo } from './estado.mjs'
+import { evaluar, analizar, raizDe, registroDe, flujoDe, configDe, coincide } from './guardia.mjs'
+import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan } from './estado.mjs'
 import { pasosDe, detalleTipos, resumenTest, detalleTest, conDetalle } from './verificar.mjs'
 
 const WIN = process.platform === 'win32'
@@ -118,6 +119,7 @@ test('ejecutor: verificación, lectura y edición dentro del alcance pasan', () 
     'cat src/lib/slug.ts | head -n 20',
     'mkdir -p src/server/nuevo && cp src/lib/slug.ts src/server/nuevo/slug.ts',
     "cat <<'EOF' > /tmp/nota.txt\ngit push origin main\nEOF",
+    'node ~/.claude/flujos/verificar.mjs > $TEMP/v.txt 2>&1',
     '# comentario sobre .env y git push\npnpm test',
     'for f in src/lib/*.ts; do wc -l "$f"; done',
   ]) deja(bash(R, c))
@@ -249,8 +251,9 @@ test('valores por defecto en un proyecto npm sin config', () => {
   niega(edita(R, 'dist/app.js', 'Write'))
 })
 
-test('revisor: lee y verifica, nunca escribe', () => {
+test('revisor: lee y verifica, y solo escribe en temporales', () => {
   const R = ESTRICTO
+  const tmp = os.tmpdir().replace(/\\/g, '/')
   for (const c of [
     'pnpm test',
     'node ~/.claude/flujos/verificar.mjs',
@@ -260,16 +263,30 @@ test('revisor: lee y verifica, nunca escribe', () => {
     'pnpm build 2>&1 | tail -5',
     "grep -rn \"select('*')\" src/server > /dev/null; echo hecho",
     "sed -n '1,40p' src/server/citas.ts",
+    // En temporales sí: comparar con la base o simular sin tocar el repo.
+    'echo x > /tmp/salida.txt',
+    'git show abc:src/x.ts > "$TEMP/viejo.ts"',
+    `git diff abc -- src > "${tmp}/claude/d.diff"`,
+    'mkdir -p /tmp/rev/m1 && cp -r src /tmp/rev/m1/',
+    'cp src/x.ts /tmp/x.ts',
+    'git diff abc | tee /tmp/t.txt',
+    'git diff --output=/tmp/x.patch abc',
+    'rm /tmp/x.ts',
   ]) deja(bash(R, c), 'revisor')
   niega(edita(R, 'src/x.ts'), 'revisor')
   niega(edita(R, 'src/x.ts', 'Write'), 'revisor')
   for (const c of [
     "sed -i 's/a/b/' src/x.ts",
     'echo x > src/x.ts',
-    'echo x > /tmp/salida.txt',
+    'echo x > "$S/x.txt"',
+    'echo x > $temp/x.txt',
     'rm src/x.ts',
+    'rm -rf /tmp/rev',
     'mv a b',
+    'mv /tmp/a src/b',
     'cp a b',
+    'cp /tmp/a src/b',
+    'mkdir src/nuevo',
     'tee salida.txt',
     'git checkout x',
     "perl -pi -e 's/a/b/' x",
@@ -312,8 +329,15 @@ test('alcance: globs y lista de permitidos', () => {
 const ESTADO = fileURLToPath(new URL('./estado.mjs', import.meta.url))
 const temporales = []
 
+/** Corre estado.mjs en `raiz` con esos argumentos (y variables de entorno extra). */
+function estadoEn(raiz, args, entorno = {}) {
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: raiz, ...entorno }
+  const r = spawnSync(process.execPath, [ESTADO, ...args], { cwd: raiz, encoding: 'utf8', env })
+  return { salida: r.stdout ?? '', codigo: r.status }
+}
+
 /** Repo temporal con `src/a.ts` y `dist/x.js` versionados y luego modificados; corre estado.mjs con `args(sha)`. */
-function estadoCon(config, args, extra = {}) {
+function estadoCon(config, args, extra = {}, entorno = {}) {
   const raiz = repo('estado', {
     '.claude/implementador.json': JSON.stringify(config),
     'src/a.ts': 'a\n',
@@ -324,9 +348,7 @@ function estadoCon(config, args, extra = {}) {
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
   fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
   fs.writeFileSync(path.join(raiz, 'dist/x.js'), 'x2\n')
-  const env = { ...process.env, CLAUDE_PROJECT_DIR: raiz }
-  const r = spawnSync(process.execPath, [ESTADO, ...args(sha)], { cwd: raiz, encoding: 'utf8', env })
-  return { salida: r.stdout ?? '', codigo: r.status }
+  return { ...estadoEn(raiz, args(sha), entorno), raiz }
 }
 
 test('estado: --cambios y --diff', () => {
@@ -352,7 +374,13 @@ test('estado: --cambios y --diff', () => {
 test('estado: opciones y --paso', () => {
   const aviso = (v) => `--paso ${v} no es un paso (0–7); se ignora`
 
-  assert.deepEqual(opcionesDe([]), { modo: 'preflight', base: undefined, desde: undefined, permitidos: [], rutas: [], paso: null, aviso: undefined, tokens: undefined })
+  assert.deepEqual(opcionesDe([]), {
+    modo: 'preflight', base: undefined, desde: undefined, permitidos: [], rutas: [], paso: null, aviso: undefined, tokens: undefined,
+    agente: undefined, tipo: undefined, ajuste: false,
+  })
+  const g = opcionesDe(['--guardar', 'a86c3e', 'plan', '--ajuste', '--paso', '2'])
+  assert.deepEqual([g.modo, g.agente, g.tipo, g.ajuste, g.paso], ['guardar', 'a86c3e', 'plan', true, 2])
+  assert.equal(opcionesDe(['--estado', '--paso', '5']).modo, 'estado')
 
   const base = opcionesDe(['--base', '--paso', '5'])
   assert.equal(base.modo, 'base')
@@ -449,7 +477,7 @@ test('estado: preflight informa las reglas del proyecto', () => {
   assert.equal(reglas({ '.claude/implementador.md': 'x\n' }), '.claude/implementador.md')
   assert.equal(
     reglas({}),
-    'no hay (.claude/implementador/ ni .claude/implementador.md); rigen CLAUDE.md y las reglas comunes',
+    'ninguna (no hay .claude/implementador/ ni .claude/implementador.md; rigen CLAUDE.md y las reglas comunes)',
   )
   assert.equal(
     reglas({ '.claude/implementador/clasificacion.md': 'x\n', '.claude/implementador.md': 'x\n' }),
@@ -508,6 +536,242 @@ test('verificar: resúmenes y detalle', () => {
     const n50 = lineas(50, (i) => `l${i}`).join('\n')
     assert.equal(p.detalle(n50).split('\n').length, 40)
   }
+})
+
+const VERIFICAR = fileURLToPath(new URL('./verificar.mjs', import.meta.url))
+
+/** Corre verificar.mjs en un repo temporal con estos pasos. */
+function verificarCon(pasos) {
+  const raiz = repo('verificar', { '.claude/implementador.json': { verificar: pasos } })
+  temporales.push(raiz)
+  const env = { ...process.env, CLAUDE_PROJECT_DIR: raiz }
+  const r = spawnSync(process.execPath, [VERIFICAR], { cwd: raiz, encoding: 'utf8', env })
+  return { salida: r.stdout ?? '', codigo: r.status, lineas: (r.stdout ?? '').trimEnd().split('\n') }
+}
+
+test('verificar: con ROJO repite RESULTADO al final y corta el paso que pasa su tope', () => {
+  const t0 = Date.now()
+  const rojo = verificarCon([
+    { nombre: 'bien', cmd: 'node -e "console.log(1)"' },
+    { nombre: 'mal', cmd: 'node -e "process.exit(3)"' },
+    { nombre: 'colgado', cmd: 'node -e "setTimeout(() => {}, 60000)"', timeoutSeg: 1 },
+  ])
+  assert.ok(Date.now() - t0 < 30000, 'el tope de 1 s no cortó el paso colgado')
+  assert.equal(rojo.codigo, 1)
+  assert.equal(rojo.lineas.at(-1), 'RESULTADO: ROJO (mal, colgado)')
+  assert.equal(rojo.lineas.filter((l) => l.startsWith('RESULTADO:')).length, 2)
+  assert.match(rojo.salida, /^bien {7}OK/m)
+  assert.match(rojo.salida, /^── mal: falló \(exit 3\) ──$/m)
+  assert.match(rojo.salida, /^── colgado: superó 1 s \(timeoutSeg\) y se cortó ──$/m)
+
+  const verde = verificarCon([{ nombre: 'bien', cmd: 'node -e "console.log(1)"' }])
+  assert.equal(verde.codigo, 0)
+  assert.equal(verde.lineas.at(-1), 'RESULTADO: VERDE')
+  assert.equal(verde.lineas.filter((l) => l.startsWith('RESULTADO:')).length, 1)
+})
+
+test('estado: --reglas da las reglas del orquestador, sin avisos falsos', () => {
+  const reglas = (extra) => estadoCon({}, () => ['--reglas'], extra).salida.trimEnd()
+  const carpeta = (archivos) => Object.fromEntries(Object.entries(archivos).map(([a, t]) => [`.claude/implementador/${a}`, t]))
+
+  const carpetaUno = 'REGLAS DEL PROYECTO: .claude/implementador/\n\n'
+  assert.equal(reglas(carpeta({ 'clasificacion.md': 'C\n', 'buscar.md': 'B\n', 'planificar.md': 'P\n', 'ejecutor.md': 'E\n' })), `${carpetaUno}C\n\nB\n\nP`)
+  // Con la carpeta y un archivo faltante va lo que hay, sin decir que el proyecto no tiene reglas.
+  assert.equal(reglas(carpeta({ 'clasificacion.md': 'C\n', 'planificar.md': 'P\n' })), `${carpetaUno}C\n\nP`)
+  assert.match(reglas(carpeta({ 'ejecutor.md': 'E\n' })), /^REGLAS DEL PROYECTO: \.claude\/implementador\/\n\n\(no tiene clasificacion\.md, buscar\.md ni planificar\.md/)
+  assert.equal(reglas({ '.claude/implementador.md': 'U\n' }), 'REGLAS DEL PROYECTO: .claude/implementador.md\n\nU')
+  assert.match(reglas({}), /^REGLAS DEL PROYECTO: ninguna\n\n\(Este proyecto no tiene \.claude\/implementador\/ ni \.claude\/implementador\.md/)
+})
+
+test('estado: la autoprueba falla si el proyecto redefine ejecutor o revisor sin la guardia', (t) => {
+  const instalados = ['ejecutor', 'revisor'].every((a) => fs.existsSync(path.join(os.homedir(), '.claude', 'agents', `${a}.md`)))
+  if (!instalados) {
+    t.skip('sin los agentes instalados en ~/.claude/agents la autoprueba falla antes')
+    return
+  }
+  const guardia = (extra) => /^GUARDIA: (.*)$/m.exec(estadoCon({}, () => [], extra).salida)?.[1] ?? ''
+
+  assert.match(guardia({ '.claude/agents/ejecutor.md': '---\nname: ejecutor\n---\nsin hook\n' }), /^FALLA \(el proyecto redefine ejecutor en \.claude\/agents\/ejecutor\.md sin la guardia\)$/)
+  assert.match(guardia({ '.claude/agents/revisor.md': 'command: node "$HOME/.claude/flujos/guardia.mjs" revisor\n' }), /^OK con avisos: el proyecto redefine revisor /)
+  assert.match(guardia({ '.claude/agents/revisor-plan.md': 'x\n' }), /^OK con avisos: el proyecto redefine revisor-plan /)
+})
+
+const PLAN = `PREGUNTAS: ¿algo?
+PLAN · Prueba
+Clasificación: sin criterios — solo un ajuste
+Objetivo: algo verificable
+Fuera de alcance: nada
+
+S1 · Cambiar la guardia
+- Crítica: no — solo un ajuste
+- Archivos permitidos: \`flujos/herramientas/guardia.mjs\`, README.md (índice)
+- Hecho cuando: node --test → verde
+- Tests: guardia.test.mjs
+- Riesgos: ninguno → n/a
+- Reversión: restaurar desde la base
+
+**S2 · Documentar**
+- **Crítica:** no
+- **Archivos permitidos:** flujos/agents/ejecutor.md
+- **Hecho cuando:** grep x → ≥ 1
+
+Verificación final: verificar.mjs + revisión final (siempre)
+Queda para ti: nada
+Costo: 2 ejecutor(es) · revisión final`
+
+const CRITICOS = [
+  { rutas: ['flujos/'], excepto: ['flujos/agents/*.md'], criterios: [1, 5], motivo: 'm' },
+  { rutas: ['flujos/agents/*.md'], criterios: [1, 5], si: 'cambia su frontmatter' },
+]
+
+/** `CLAUDE_CONFIG_DIR` falso con un transcript por agente: `{ id: texto final }`. */
+function transcripts(agentes) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
+  temporales.push(dir)
+  for (const [id, texto] of Object.entries(agentes)) {
+    const sub = path.join(dir, 'projects', 'otro-proyecto', 'sesion-1', 'subagents')
+    fs.mkdirSync(sub, { recursive: true })
+    const filas = [
+      { type: 'user', message: { role: 'user', content: 'PEDIDO: x' } },
+      { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'leyendo' }, { type: 'tool_use', id: 't1', name: 'Read', input: {} }] } },
+      { type: 'assistant', message: { id: 'm2', content: [{ type: 'thinking', thinking: '' }] } },
+      { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: texto }] } },
+    ]
+    fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), filas.map((f) => JSON.stringify(f)).join('\n') + '\n')
+  }
+  return dir
+}
+
+test('estado: permitidos, rutas críticas y fusión de un re-plan (puras)', () => {
+  assert.deepEqual(permitidosDe('`flujos/herramientas/estado.mjs` (modo nuevo), README.md — índice, ninguno'), ['flujos/herramientas/estado.mjs', 'README.md'])
+  assert.deepEqual(criticosDe('flujos/herramientas/guardia.mjs', CRITICOS), { fijos: [1, 5], condicionales: [] })
+  assert.deepEqual(criticosDe('flujos/agents/ejecutor.md', CRITICOS), { fijos: [], condicionales: [{ ns: [1, 5], si: 'cambia su frontmatter' }] })
+  assert.deepEqual(criticosDe('README.md', CRITICOS), { fijos: [], condicionales: [] })
+
+  const p = partesDelPlan(PLAN)
+  assert.deepEqual(p.subtareas.map((s) => [s.n, s.objetivo]), [[1, 'Cambiar la guardia'], [2, 'Documentar']])
+  assert.equal(p.pie.length, 3)
+
+  const fusion = fusionarPlanes(PLAN, 'S2 · Documentar mejor\n- Crítica: sí (#1, #5)\nSin cambios: S1')
+  assert.match(fusion, /^S1 · Cambiar la guardia$/m)
+  assert.match(fusion, /^S2 · Documentar mejor\n- Crítica: sí \(#1, #5\)\n\nVerificación final:/m)
+  assert.doesNotMatch(fusion, /Sin cambios|\*\*S2 · Documentar\*\*/)
+  assert.match(fusion, /^Clasificación: sin criterios/m)
+})
+
+test('estado: --guardar arma el plan, un S<n>.md por subtarea y avisa las rutas críticas', () => {
+  const claude = transcripts({ planuno: PLAN, explora: 'ARCHIVOS\n- a.ts:1 — x', ajuste: 'S1 · Cambiar la guardia\n- Crítica: sí (#1, #5)\n- Archivos permitidos: flujos/herramientas/guardia.mjs\n- Hecho cuando: verde\n- Tests: t\n- Riesgos: r\n- Reversión: v\nSin cambios: S2' })
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+  const { raiz, salida } = estadoCon({ criticos: CRITICOS }, () => ['--guardar', 'planuno', 'plan', '--paso', '2'], {}, entorno)
+  const carpeta = flujoDe(raiz)
+
+  assert.match(salida, /^PLAN: 2 subtarea\(s\) · Clasificación: sin criterios — solo un ajuste$/m)
+  assert.match(salida, /^S1 · Cambiar la guardia · Crítica: no — solo un ajuste · permitidos: flujos\/herramientas\/guardia\.mjs, README\.md → .*S1\.md$/m)
+  assert.match(salida, /^RUTAS CRÍTICAS: #1 \(flujos\/herramientas\/guardia\.mjs\), #5 \(flujos\/herramientas\/guardia\.mjs\)$/m)
+  assert.match(salida, /^ {2}- S1 · Crítica: no, pero sus rutas críticas piden #1, #5: debe ser sí$/m)
+  assert.match(salida, /^ {2}- S2 · flujos\/agents\/ejecutor\.md: crítica \(#1, #5\) si cambia su frontmatter$/m)
+  assert.match(salida, /^ {2}- S2 · falta «Tests»$/m)
+  assert.match(salida, /^ {2}- Clasificación: dice «sin criterios», pero las rutas críticas piden #1, #5$/m)
+  const s1 = fs.readFileSync(path.join(carpeta, 'S1.md'), 'utf8')
+  assert.match(s1, /^PLAN · Prueba$/m)
+  assert.match(s1, /^Objetivo: algo verificable$/m)
+  assert.match(s1, /^- Hecho cuando: node --test → verde$/m)
+  assert.doesNotMatch(s1, /Documentar|PREGUNTAS/)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(carpeta, 'estado.json'), 'utf8')).subtareas.length, 2)
+
+  // Un re-plan con --ajuste reemplaza solo S1; la Clasificación sigue siendo la del plan.
+  const ajuste = estadoEn(raiz, ['--guardar', 'ajuste', 'plan', '--ajuste', '--paso', '4'], entorno).salida
+  assert.match(ajuste, /^S1 · Cambiar la guardia · Crítica: sí \(#1, #5\) · permitidos: flujos\/herramientas\/guardia\.mjs → /m)
+  assert.match(ajuste, /^S2 · Documentar · Crítica: no/m)
+  assert.doesNotMatch(ajuste, /S1 · Crítica: no, pero/)
+  assert.match(ajuste, /Clasificación: dice «sin criterios»/)
+
+  // La exploración se guarda tal cual; un agente desconocido o un tipo inválido solo avisan.
+  assert.match(estadoEn(raiz, ['--guardar', 'explora', 'exploracion', '--paso', '2'], entorno).salida, /^GUARDADO: exploración → .*exploracion\.md$/m)
+  assert.equal(fs.readFileSync(path.join(carpeta, 'exploracion.md'), 'utf8'), 'ARCHIVOS\n- a.ts:1 — x\n')
+  const nadie = estadoEn(raiz, ['--guardar', 'nadie', 'plan'], entorno)
+  assert.match(nadie.salida, /^AVISO: no encontré el informe del agente nadie: despacha copiando su texto, como antes$/m)
+  assert.equal(nadie.codigo, 0)
+  assert.match(estadoEn(raiz, ['--guardar', 'planuno', 'otro'], entorno).salida, /^AVISO: --guardar <agentId> plan\|exploracion: tipo desconocido «otro»/m)
+})
+
+test('estado: el preflight abre la carpeta del flujo y --estado la resume', () => {
+  const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
+  const { raiz, salida } = estadoCon(config, () => ['--paso', '0'])
+  const carpeta = flujoDe(raiz)
+  assert.equal(/^FLUJO: (.*)$/m.exec(salida)?.[1], carpeta)
+  const global = /^BASE_GLOBAL=(\w+) DESDE_GLOBAL=(\S+)$/m.exec(salida)
+
+  const base = /^BASE=(\w+) DESDE=(\S+)$/m.exec(estadoEn(raiz, ['--base', '--paso', '5']).salida)
+  const resumen = estadoEn(raiz, ['--estado']).salida
+  assert.match(resumen, new RegExp(`^BASE_GLOBAL=${global[1]} DESDE_GLOBAL=${global[2]} · rama `, 'm'))
+  assert.match(resumen, new RegExp(`^FOTO 1 \\(--base\\): BASE=${base[1]} DESDE=${base[2]}$`, 'm'))
+
+  // Un preflight nuevo vacía la carpeta: no quedan fotos ni plan del flujo anterior.
+  fs.writeFileSync(path.join(carpeta, 'S9.md'), 'viejo\n')
+  estadoEn(raiz, ['--paso', '0'])
+  assert.ok(!fs.existsSync(path.join(carpeta, 'S9.md')))
+  assert.doesNotMatch(estadoEn(raiz, ['--estado']).salida, /^FOTO/m)
+})
+
+test('verificar: repite un VERDE desde la caché mientras el árbol no cambie', () => {
+  const raiz = repo('cache', { '.claude/implementador.json': { verificar: [{ nombre: 'bien', cmd: 'node -e "console.log(1)"' }] }, 'src/a.ts': 'a\n' })
+  temporales.push(raiz)
+  const correr = (...args) => spawnSync(process.execPath, [VERIFICAR, ...args], { cwd: raiz, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: raiz } }).stdout
+
+  assert.doesNotMatch(correr(), /caché/)
+  const repetida = correr()
+  assert.match(repetida, /^\(caché: el árbol \w{9} ya salió VERDE con estos pasos a las .*\)$/m)
+  assert.match(repetida, /^bien {7}OK/m)
+  assert.equal(repetida.trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
+  assert.doesNotMatch(correr('--sin-cache'), /caché/)
+  // Un archivo nuevo (no ignorado) cambia el árbol.
+  fs.writeFileSync(path.join(raiz, 'src/b.ts'), 'b\n')
+  assert.doesNotMatch(correr(), /caché/)
+})
+
+const INSTALAR = fileURLToPath(new URL('../instalar.mjs', import.meta.url))
+
+test('instalar: anota hashes, frena lo editado en el destino aunque sea más viejo y lista huérfanos', (t) => {
+  if (!fs.existsSync(INSTALAR)) {
+    t.skip('instalar.mjs solo está en el repo, no en la copia instalada')
+    return
+  }
+  const destino = fs.mkdtempSync(path.join(os.tmpdir(), 'instalar-'))
+  temporales.push(destino)
+  const instalar = (...args) => {
+    const r = spawnSync(process.execPath, [INSTALAR, ...args], { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: destino } })
+    return { salida: r.stdout ?? '', codigo: r.status }
+  }
+  const manifiesto = path.join(destino, 'flujos', '.instalado.json')
+  const pasos = path.join(destino, 'flujos', 'pasos.md')
+
+  const primera = instalar()
+  assert.equal(primera.codigo, 0)
+  assert.match(primera.salida, /^ {2}nuevo {4}herramientas\/pasos\.md → /m)
+  assert.ok(fs.existsSync(pasos))
+  assert.ok(!fs.existsSync(path.join(destino, 'flujos', 'registros')), 'no copia las bitácoras del repo')
+  assert.match(JSON.parse(fs.readFileSync(manifiesto, 'utf8'))['flujos/pasos.md'], /^[0-9a-f]{40}$/)
+  assert.match(instalar().salida, /^RESULTADO: 0 copiado\(s\)$/m)
+
+  // Editado en el destino y con fecha vieja: la fecha diría «pisar», el hash lo frena.
+  fs.appendFileSync(pasos, '\nedición a mano\n')
+  fs.utimesSync(pasos, new Date(2000, 0, 1), new Date(2000, 0, 1))
+  const frenada = instalar()
+  assert.equal(frenada.codigo, 1)
+  assert.match(frenada.salida, /FRENADO .*pasos\.md se editó ahí/)
+  assert.equal(instalar('--forzar').codigo, 0)
+  assert.doesNotMatch(fs.readFileSync(pasos, 'utf8'), /edición a mano/)
+
+  // Un archivo anotado que ya no está en el repo es huérfano; --limpiar lo borra si nadie lo editó.
+  const viejo = path.join(destino, 'agents', 'viejo.md')
+  fs.writeFileSync(viejo, 'x\n')
+  const m = JSON.parse(fs.readFileSync(manifiesto, 'utf8'))
+  m['agents/viejo.md'] = crypto.createHash('sha1').update('x\n').digest('hex')
+  fs.writeFileSync(manifiesto, JSON.stringify(m))
+  assert.match(instalar('--revisar').salida, /huérfano .*agents\/viejo\.md: ya no está en el repo \(--limpiar lo borra\)/)
+  instalar('--limpiar')
+  assert.ok(!fs.existsSync(viejo))
 })
 
 const GUARDIA = fileURLToPath(new URL('./guardia.mjs', import.meta.url))
@@ -602,5 +866,10 @@ test('estado: --cambios ignora las lecturas', () => {
 })
 
 test.after(() => {
-  for (const r of [ESTRICTO, GENERICO, ...temporales]) fs.rmSync(r, { recursive: true, force: true })
+  for (const r of [ESTRICTO, GENERICO, ...temporales]) {
+    fs.rmSync(r, { recursive: true, force: true })
+    // Lo que las herramientas dejaron junto al registro de cada repo temporal: carpeta del flujo y caché.
+    fs.rmSync(flujoDe(r), { recursive: true, force: true })
+    fs.rmSync(registroDe(r).replace(/\.jsonl$/, '-verificar.json'), { force: true })
+  }
 })
