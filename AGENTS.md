@@ -20,7 +20,7 @@ flujos/
   instalar.mjs                    copia los flujos a ~/.claude (o los trae con --traer)
   skills/<nombre>/SKILL.md        → ~/.claude/skills/<nombre>/SKILL.md
   agents/<nombre>.md              → ~/.claude/agents/<nombre>.md
-  herramientas/                   → ~/.claude/flujos/ (estado, verificar, guardia, guardia.test, comun.md, plan.md, pasos.md, config.ejemplo.md)
+  herramientas/                   → ~/.claude/flujos/ (estado, verificar, guardia, costos, guardia.test, comun.md, plan.md, pasos.md, config.ejemplo.md)
 panel-uso/
   .claude-plugin/plugin.json      manifiesto (nombre, versión, types)
   .claude-plugin/marketplace.json marketplace «mods-locales»
@@ -52,4 +52,4 @@ Los tres tienen que terminar sin errores antes de dar algo por hecho. Qué no pr
 
 ## Flujo con /implementador
 
-`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador/` y mandan sobre las comunes. `/implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica), revisor del plan Sonnet medium y revisión final Opus high siempre, sin revisor por subtarea. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
+`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador/` y mandan sobre las comunes. `/implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica; medium si la exploración no toca rutas críticas), revisor del plan Sonnet medium, ejecutor Sonnet (medium en subtareas `Crítica: no`) y revisión final siempre, Opus high (Sonnet high con «sin criterios»), sin revisor por subtarea. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.

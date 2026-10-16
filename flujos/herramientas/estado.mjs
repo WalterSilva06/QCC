@@ -2,7 +2,7 @@
 // Estado git del flujo /implementador (nivel usuario: sirve para
 // cualquier proyecto con git). El proyecto es el repo que contiene el directorio actual.
 //
-//   node ~/.claude/flujos/estado.mjs [--paso <n>]          preflight + foto global; abre la carpeta del flujo
+//   node ~/.claude/flujos/estado.mjs [--paso <n>] [--forzar]  preflight + foto global; abre la carpeta del flujo
 //   node ~/.claude/flujos/estado.mjs --base [--paso <n>]   foto nueva: BASE=<sha> DESDE=<iso>
 //   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"]
 //   node ~/.claude/flujos/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
@@ -20,7 +20,9 @@
 // el ejecutor escribió en otras rutas ignoradas aparece por el registro de la guardia.
 //
 // La carpeta del flujo (`registros/<proyecto>-<hash>-flujo/`) guarda `estado.json` (fotos, plan,
-// cierre), el informe del explorador, el plan y un `S<n>.md` por subtarea; el preflight la vacía.
+// cierre), el informe del explorador, el plan y un `S<n>.md` por subtarea; el preflight la vacía, salvo
+// que otro flujo del repo siga abierto (sin cierre y con actividad reciente): entonces avisa y pide `--forzar`.
+// El cierre (`--cambios … --paso 7`) anota en `registros/flujos.jsonl` el costo real y los veredictos (costos.mjs).
 // `--guardar` toma el informe de un agente de su transcript, en `projects/*/*/subagents/agent-<id>.jsonl`
 // dentro de `CLAUDE_CONFIG_DIR` (o `~/.claude`).
 
@@ -31,12 +33,17 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, registroDe, flujoDe, arbolDe, configDe, coincide, relativaAlRepo, rutaNativa, RAIZ } from './guardia.mjs'
 import { pasosDe, ultimaVerde } from './verificar.mjs'
+import { costoDelFlujo, resumenDeCosto, resumenDeVeredictos } from './costos.mjs'
 
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const AGENTES = path.join(CLAUDE, 'agents')
 const WIN = process.platform === 'win32'
 const TOPE_DIFF = 1000
 const TOPE_SUCIOS = 30
+const TOPE_CAMBIOS = 20
+const TOPE_GRUPOS = 15
+const TOPE_REVERSION = 10
+const ABIERTO_MIN = 20
 const EDICIONES = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
 
 // ── Permitidos ──────────────────────────────────────────────────────────────
@@ -154,6 +161,27 @@ function anotarEstado(cambio) {
   } catch {
     // Sin estado el flujo sigue igual.
   }
+}
+
+/** Hora (ms) de la última actividad de un flujo en este repo: su estado o el registro de la guardia; 0 si no hay. */
+function ultimaActividad() {
+  let t = 0
+  for (const archivo of [ESTADO, registroDe(RAIZ)]) {
+    try {
+      t = Math.max(t, fs.statSync(archivo).mtimeMs)
+    } catch {
+      // No existe todavía.
+    }
+  }
+  return t
+}
+
+/** El flujo anterior del repo si sigue abierto: sin cierre y con actividad en los últimos `ABIERTO_MIN` minutos; null si no. */
+function flujoAbierto() {
+  const previo = leerEstado()
+  if (!previo.base_global || previo.cierre) return null
+  const minutos = (Date.now() - ultimaActividad()) / 60_000
+  return minutos < ABIERTO_MIN ? { ...previo, minutos } : null
 }
 
 /** Vacía la carpeta del flujo y la abre con `estado`: la llama el preflight. */
@@ -339,7 +367,35 @@ function resumirPlan(texto, destino) {
   }
   if (!subtareas.length) avisos.push('no encontré subtareas «S<n> · …»: despacha copiando los campos del plan')
   console.log(avisos.length ? `AVISOS:\n${avisos.map((a) => `  - ${a}`).join('\n')}` : 'AVISOS: ninguno')
-  anotarEstado({ plan: destino, subtareas: resumen })
+  anotarEstado({ plan: destino, subtareas: resumen, ...(clasificacion !== null ? { clasificacion } : {}) })
+}
+
+/** Rutas de archivo que cita un informe (`ruta:línea`, absolutas o relativas), relativas al repo cuando caen dentro. */
+export function rutasDeTexto(texto) {
+  const rutas = new Set()
+  const patron = /(?:[A-Za-z]:)?[\w.\-\\/À-ſ]*[\\/][\w.\-À-ſ]+\.[A-Za-z0-9]{1,8}|\b[\w\-À-ſ]+\.(?:md|json|mjs|cjs|js|ts|tsx|jsx|astro|vue|svelte|css|html|ya?ml|toml|sql|py|rs|go)\b/g
+  for (const m of String(texto).matchAll(patron)) {
+    const ruta = listaPermitidos(m[0])[0]
+    if (ruta) rutas.add(ruta)
+  }
+  return [...rutas]
+}
+
+/**
+ * Qué criterios de `criticos` tocan las rutas de la exploración, para elegir el esfuerzo del planificador:
+ * «ninguna (planificador con effort medium)» solo si el proyecto declara `criticos` y ninguna ruta citada cae en ellos.
+ * Una regla condicional (`si`) cuenta como crítica.
+ */
+function criticasDeExploracion(texto) {
+  const { criticos } = configDe(RAIZ)
+  if (!criticos.length) return 'el proyecto no declara «criticos» (planificador con su esfuerzo de siempre)'
+  const porCriterio = new Map()
+  for (const ruta of rutasDeTexto(texto)) {
+    const { fijos, condicionales } = criticosDe(ruta, criticos)
+    for (const n of [...fijos, ...condicionales.flatMap((c) => c.ns)]) if (!porCriterio.has(n)) porCriterio.set(n, ruta)
+  }
+  if (!porCriterio.size) return 'ninguna (planificador con effort medium)'
+  return [...porCriterio.keys()].sort((a, b) => a - b).map((n) => `#${n} (${porCriterio.get(n)})`).join(', ')
 }
 
 /** Guarda en la carpeta del flujo el informe del agente `id`: `plan` (con su resumen) o `exploracion`. */
@@ -360,6 +416,7 @@ function guardar(id, tipo, ajuste) {
     fs.writeFileSync(destino, texto + '\n')
     anotarEstado({ exploracion: destino })
     console.log(`GUARDADO: exploración → ${destino}`)
+    console.log(`RUTAS CRÍTICAS EN LA EXPLORACIÓN: ${criticasDeExploracion(texto)}`)
     return
   }
   const previo = ajuste ? leerTexto(destino) : null
@@ -424,7 +481,7 @@ function autoprueba() {
   }
 }
 
-function preflight() {
+function preflight(forzar) {
   const desde = new Date().toISOString()
   const rama = git(['rev-parse', '--abbrev-ref', 'HEAD'], { opcional: true })?.trim() ?? '?'
   const head = git(['log', '-1', '--format=%h %s'], { opcional: true })?.trim() || '(sin commits)'
@@ -438,10 +495,17 @@ function preflight() {
       : null
   const { pasos, origen } = pasosDe(RAIZ)
   let flujo = FLUJO
-  try {
-    nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [] })
-  } catch (e) {
-    flujo = `(no se pudo preparar: ${e.message}; despacha copiando el plan)`
+  const abierto = forzar ? null : flujoAbierto()
+  if (abierto) {
+    const hora = new Date(abierto.inicio).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+    console.log(`AVISO: hay otro flujo abierto en este repo (empezó a las ${hora}, BASE_GLOBAL ${corto(abierto.base_global)}, sin cierre, con actividad hace ${Math.round(abierto.minutos)} min). Si sigue corriendo en otra sesión, los dos se pisan los archivos y la carpeta del flujo, que no vacié. Si ya no corre, repite el preflight con --forzar.`)
+    flujo = '(ocupada por el flujo anterior: repite el preflight con --forzar si ya no corre)'
+  } else {
+    try {
+      nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [] })
+    } catch (e) {
+      flujo = `(no se pudo preparar: ${e.message}; despacha copiando el plan)`
+    }
   }
   console.log(`PROYECTO: ${RAIZ}`)
   console.log(`RAMA: ${rama} · HEAD ${head}`)
@@ -478,7 +542,55 @@ function imprimirReglas() {
   console.log(unico ?? SIN_REGLAS)
 }
 
-function cambios(base, desde, permitidos) {
+/** Agrupa rutas por carpeta, subiendo de nivel hasta que no pasen de `tope` grupos: `[{ carpeta, rutas }]`. */
+export function agruparPorCarpeta(rutas, tope = TOPE_GRUPOS) {
+  const profundidad = Math.max(1, ...rutas.map((r) => r.split('/').length - 1))
+  for (let n = profundidad; ; n--) {
+    const grupos = new Map()
+    for (const r of rutas) {
+      const carpetas = r.split('/').slice(0, -1)
+      const carpeta = carpetas.length ? `${carpetas.slice(0, n).join('/')}/` : './'
+      grupos.set(carpeta, [...(grupos.get(carpeta) ?? []), r])
+    }
+    if (grupos.size <= tope || n <= 1) return [...grupos].map(([carpeta, lista]) => ({ carpeta, rutas: lista }))
+  }
+}
+
+/** Comillas simples de bash para una ruta. */
+const comillas = (r) => `'${String(r).replace(/'/g, `'\\''`)}'`
+
+/**
+ * Los comandos que dejan los archivos del flujo como en la foto `base`: restaurar los modificados y borrados,
+ * borrar los nuevos y avisar lo que git no ve. Con pocos archivos van en la línea; con muchos, en `reversion.sh`.
+ */
+function reversion(base, restaurar, borrar, aMano) {
+  if (!restaurar.length && !borrar.length && !aMano.length) {
+    console.log('REVERSIÓN: nada que deshacer')
+    return
+  }
+  const comandos = []
+  if (restaurar.length) comandos.push(`git restore --source=${base} --worktree -- ${restaurar.map(comillas).join(' ')}`)
+  if (borrar.length) comandos.push(`rm -- ${borrar.map(comillas).join(' ')}`)
+  if (restaurar.length + borrar.length <= TOPE_REVERSION && !aMano.length) {
+    console.log(`REVERSIÓN: ${comandos.join(' && ')}`)
+    return
+  }
+  const archivo = path.join(FLUJO, 'reversion.sh')
+  try {
+    fs.mkdirSync(FLUJO, { recursive: true })
+    const notas = aMano.map((r) => `# a mano, git no la ve: ${r}`)
+    fs.writeFileSync(archivo, ['#!/usr/bin/env bash', `# Deja los archivos del flujo como en la foto ${corto(base)}. Revísalo antes de correrlo.`, ...comandos, ...notas, ''].join('\n'))
+    console.log(`REVERSIÓN: ${restaurar.length} a restaurar · ${borrar.length} a borrar${aMano.length ? ` · ${aMano.length} a mano` : ''} → bash ${archivo.replace(/\\/g, '/')}`)
+  } catch (e) {
+    console.log(`REVERSIÓN: no se pudo escribir ${archivo} (${e.message})`)
+  }
+}
+
+/**
+ * Qué cambió desde `base` y qué cae fuera de `permitidos`. Con muchos archivos dentro del alcance, van agrupados
+ * por carpeta; lo de fuera y lo que solo está en el registro, siempre uno por uno. En el cierre (`paso` 7) agrega `REVERSIÓN`.
+ */
+function cambios(base, desde, permitidos, paso, tokens) {
   const ahora = foto(permitidos)
   const mapa = new Map()
   const clave = (r) => (WIN ? r.toLowerCase() : r)
@@ -492,27 +604,88 @@ function cambios(base, desde, permitidos) {
     if (!mapa.has(clave(f.objetivo))) mapa.set(clave(f.objetivo), { estado: '·', ruta: f.objetivo, soloRegistro: true })
   }
   const lista = [...mapa.values()].sort((a, b) => a.ruta.localeCompare(b.ruta))
+  const marcaDentro = permitidos.length ? '✓' : ' '
   let fuera = 0
-  console.log(`CAMBIOS desde ${corto(base)} (${lista.length}):`)
+  const lineas = []
+  const agrupables = []
+  const restaurar = []
+  const borrar = []
+  const aMano = []
   for (const c of lista) {
     const dentro = enAlcance(c.ruta, permitidos)
     if (!dentro) fuera++
-    const marca = permitidos.length ? (dentro ? '✓' : '✗') : ' '
+    else if (c.soloRegistro) aMano.push(c.ruta)
+    else (c.estado === 'A' ? borrar : restaurar).push(c.ruta)
     const nota = [
       dentro ? '' : 'FUERA DE ALCANCE',
       c.soloRegistro ? 'solo en el registro: ruta ignorada por git o edición sin efecto' : '',
     ]
       .filter(Boolean)
       .join(' · ')
-    console.log(`  ${marca} ${c.estado} ${c.ruta}${nota ? `   ← ${nota}` : ''}`)
+    if (dentro && !nota) agrupables.push(c)
+    lineas.push({ texto: `  ${dentro ? marcaDentro : '✗'} ${c.estado} ${c.ruta}${nota ? `   ← ${nota}` : ''}`, suelta: !dentro || Boolean(nota) })
+  }
+  console.log(`CAMBIOS desde ${corto(base)} (${lista.length}):`)
+  if (agrupables.length <= TOPE_CAMBIOS) for (const l of lineas) console.log(l.texto)
+  else {
+    const porRuta = new Map(agrupables.map((c) => [c.ruta, c]))
+    for (const g of agruparPorCarpeta(agrupables.map((c) => c.ruta))) {
+      const cuenta = {}
+      for (const r of g.rutas) cuenta[porRuta.get(r).estado] = (cuenta[porRuta.get(r).estado] ?? 0) + 1
+      const detalle = Object.entries(cuenta).map(([e, n]) => `${e} ${n}`).join(', ')
+      console.log(`  ${marcaDentro} ${g.carpeta} — ${g.rutas.length} archivo(s) (${detalle})`)
+    }
+    for (const l of lineas) if (l.suelta) console.log(l.texto)
   }
   const negados = filas.filter((f) => f.decision === 'negado')
   if (negados.length) {
     console.log(`GUARDIA: ${negados.length} negación(es) desde ${desde}:`)
     for (const f of negados.slice(-5)) console.log(`  - ${f.rol} ${f.herramienta} «${String(f.objetivo ?? '').slice(0, 100)}» → ${f.motivo}`)
   }
+  if (paso === 7) {
+    const { base_global: global } = leerEstado()
+    if (global && global !== base) console.log(`AVISO: el cierre va con BASE_GLOBAL=${global} y DESDE_GLOBAL; esta foto (${corto(base)}) no cubre todo el flujo`)
+    reversion(base, restaurar, borrar, aMano)
+    cerrarFlujo(base, desde, tokens)
+  }
   if (!permitidos.length) console.log('ALCANCE: (sin lista de permitidos)')
   else console.log(fuera ? `ALCANCE: FUERA (${fuera})` : 'ALCANCE: OK')
+}
+
+/**
+ * Cierre: imprime el costo real del flujo y sus veredictos (de los transcripts) y lo anota en `registros/flujos.jsonl`,
+ * con la Clasificación, las subtareas y, si vinieron, los `--tokens`. Nunca rompe el cierre.
+ */
+function cerrarFlujo(base, desde, tokens) {
+  const e = leerEstado()
+  let costo = null
+  try {
+    costo = costoDelFlujo(RAIZ, e.inicio ?? desde ?? new Date().toISOString())
+  } catch {
+    // Sin costo, el cierre sigue.
+  }
+  if (costo) {
+    console.log(`COSTO: ${resumenDeCosto(costo)} (sin el mensaje de cierre)`)
+    console.log(`VEREDICTOS: ${resumenDeVeredictos(costo)}`)
+  } else console.log('COSTO: no encontré la sesión del flujo en los transcripts; el gasto está en «Flujo» del panel')
+  let porRol = null
+  if (tokens !== undefined) {
+    porRol = tokensDe(tokens)
+    if (!porRol) console.log(`AVISO: --tokens ${tokens} no es rol=n,…; el flujo se anota sin ellos`)
+  }
+  try {
+    anotarFlujo(path.join(path.dirname(registroDe(RAIZ)), 'flujos.jsonl'), {
+      t: new Date().toISOString(),
+      raiz: RAIZ,
+      base,
+      ...(porRol ? { tokens: porRol } : {}),
+      ...(costo ? { costo } : {}),
+      ...(e.clasificacion ? { clasificacion: e.clasificacion } : {}),
+      ...(Array.isArray(e.subtareas) ? { subtareas: e.subtareas.length } : {}),
+    })
+  } catch (err) {
+    console.log(`AVISO: no se pudo anotar el flujo: ${err.message}`)
+  }
 }
 
 function diff(base, permitidos, rutas) {
@@ -535,8 +708,8 @@ function diff(base, permitidos, rutas) {
 }
 
 /**
- * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, agente, tipo, ajuste }`. Las opciones valen
- * solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --estado > --guardar > --base > --cambios > --diff > preflight.
+ * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, agente, tipo, ajuste, forzar }`. Las opciones
+ * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --estado > --guardar > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
  * `agente` y `tipo`, los dos valores que siguen a `--guardar`.
  */
@@ -580,6 +753,7 @@ export function opcionesDe(args) {
     agente: modo === 'guardar' ? valor('--guardar') : undefined,
     tipo: modo === 'guardar' ? valor('--guardar', 2) : undefined,
     ajuste: opciones.includes('--ajuste'),
+    forzar: opciones.includes('--forzar'),
   }
 }
 
@@ -607,27 +781,8 @@ export function anotarFlujo(archivo, fila) {
   fs.appendFileSync(archivo, JSON.stringify(fila) + '\n')
 }
 
-/** Anota en el cierre los tokens por rol del flujo; avisa y sigue si no se puede. */
-function anotarCierre(paso, tokens, base) {
-  if (tokens === undefined) return
-  if (paso !== 7) {
-    console.log('AVISO: --tokens solo vale en el cierre (--cambios … --paso 7); se ignora')
-    return
-  }
-  const porRol = tokensDe(tokens)
-  if (!porRol) {
-    console.log(`AVISO: --tokens ${tokens} no es rol=n,…; no se anota`)
-    return
-  }
-  try {
-    anotarFlujo(path.join(path.dirname(registroDe(RAIZ)), 'flujos.jsonl'), { t: new Date().toISOString(), raiz: RAIZ, base, tokens: porRol })
-  } catch (e) {
-    console.log(`AVISO: no se pudo anotar el flujo: ${e.message}`)
-  }
-}
-
 function main() {
-  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, agente, tipo, ajuste } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, agente, tipo, ajuste, forzar } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   // Ni las reglas ni el estado necesitan git: las reglas se inyectan antes del preflight.
   if (modo === 'reglas') {
@@ -657,11 +812,11 @@ function main() {
       console.log(`BASE=${nueva.base} DESDE=${nueva.desde}`)
     } else if (modo === 'cambios') {
       exigirBase(base)
-      anotarCierre(paso, tokens, base)
+      if (tokens !== undefined && paso !== 7) console.log('AVISO: --tokens solo vale en el cierre (--cambios … --paso 7); se ignora')
+      cambios(base, desde, permitidos, paso, tokens)
       if (paso === 7) anotarEstado({ cierre: new Date().toISOString() })
-      cambios(base, desde, permitidos)
     } else if (modo === 'diff') diff(exigirBase(base), permitidos, rutas)
-    else preflight()
+    else preflight(forzar)
   } catch (e) {
     console.log(`ERROR: ${e.message}`)
     process.exitCode = 2

@@ -6,9 +6,9 @@ Desde la raíz del repo, con Bash (`~` = carpeta del usuario):
 
 | Comando | Qué hace |
 |---|---|
-| `node ~/.claude/flujos/estado.mjs [--paso <n>]` | Preflight: rama, sucios previos, `BASE_GLOBAL`, `DESDE_GLOBAL`, `FLUJO` (la carpeta del flujo, que vacía), reglas y config, pasos de verificación, guardia |
+| `node ~/.claude/flujos/estado.mjs [--paso <n>] [--forzar]` | Preflight: rama, sucios previos, `BASE_GLOBAL`, `DESDE_GLOBAL`, `FLUJO` (la carpeta del flujo, que vacía), reglas y config, pasos de verificación, guardia. Si otro flujo del repo sigue abierto, avisa y no vacía la carpeta; `--forzar` la vacía igual |
 | `node ~/.claude/flujos/estado.mjs --base [--paso <n>]` | Foto nueva: `BASE=<sha> DESDE=<iso>` |
-| `node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <DESDE> --permitidos "<a,b>" [--paso <n>] [--tokens …]` | Qué cambió desde la foto y qué cae fuera. Termina en `ALCANCE: OK` o `ALCANCE: FUERA (n)` |
+| `node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <DESDE> --permitidos "<a,b>" [--paso <n>] [--tokens …]` | Qué cambió desde la foto y qué cae fuera: con más de 20 archivos dentro del alcance los agrupa por carpeta, y lo de fuera va siempre uno por uno (no lo recortes con `\| tail`). En el cierre (`--paso 7`) agrega `REVERSIÓN:` (los comandos exactos para deshacer el flujo), `COSTO:` y `VEREDICTOS:` (leídos de los transcripts) y anota el flujo en `registros/flujos.jsonl`. Termina en `ALCANCE: OK` o `ALCANCE: FUERA (n)` |
 | `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<a,b>" [-- <rutas>]` | Diff desde la foto (solo el revisor) |
 | `node ~/.claude/flujos/estado.mjs --guardar <agentId> plan\|exploracion [--ajuste] [--paso <n>]` | Guarda en `FLUJO` el informe de ese agente (lo toma de su transcript). Con `plan`, también un `S<n>.md` por subtarea, sus permitidos y los AVISOS; `--ajuste` integra un re-plan |
 | `node ~/.claude/flujos/estado.mjs --estado [--paso <n>]` | Lo que lleva el flujo: bases, plan, fotos de cada subtarea y último VERDE |
@@ -36,7 +36,7 @@ La Clasificación (criterios #1–#10) y el formato completo del plan están en 
 ## 4. Reglas del orquestador
 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs y git de lectura. Cada estado.mjs y cada verificar.mjs va en su propia llamada a Bash, nunca encadenados (`&&`, `;`, `|`) entre sí ni con otro comando: el panel lee una sola señal por llamada y pierde la otra. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra.
-- **Juntas en un mismo mensaje**, en este orden y cada una en su propia llamada: (a) `estado.mjs --paso 0`, `verificar.mjs` y el explorador (o los exploradores); (b) `estado.mjs --guardar <id> exploracion` y el planificador; (c) `estado.mjs --base` y el ejecutor; (d) `estado.mjs --cambios` y tu `verificar.mjs`, si el ejecutor volvió HECHO; (e) el `--cambios` global del paso 6 y la revisión final. Lo demás va de a una, porque depende de la salida anterior. Cada llamada que te ahorras es un pedido menos con todo tu contexto.
+- **Juntas en un mismo mensaje**, en este orden y cada una en su propia llamada: (a) `estado.mjs --paso 0`, `verificar.mjs` y el explorador (o los exploradores); (b) `estado.mjs --base` y el ejecutor; (c) `estado.mjs --cambios` y tu `verificar.mjs`, si el ejecutor volvió HECHO; (d) el `--cambios` global del paso 6 y la revisión final. Lo demás va de a una, porque depende de la salida anterior (el planificador, por ejemplo, espera a `--guardar … exploracion`, que decide su esfuerzo). Cada llamada que te ahorras es un pedido menos con todo tu contexto.
 - **Cada llamada a Agent lleva `run_in_background: false`** (el resultado vuelve en este turno) y nunca `isolation`. `model` y `effort`: exactamente los de la tabla de tu skill.
 - Solo los agentes `explorador`, `planificador`, `revisor-plan`, `ejecutor` y `revisor` (este, solo para la revisión final). Uno a la vez, salvo en la Exploración (hasta 5 exploradores en paralelo, solo en el caso de §5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5), nunca la conversación ni el razonamiento de otro agente. La revisión final no recibe los reportes de los ejecutores: recibe el digest `EJECUTORES` (§6) y `VERIFICACIÓN FINAL`, y no repite verificar.mjs. En sus ciclos recibe su propia `REVISIÓN ANTERIOR`.
@@ -138,7 +138,7 @@ Qué mira cada aspecto: agente `revisor`. «Solo texto»: todos los archivos per
 - **Ejecutor:** según su ESTADO, con tu `--cambios` (y tu `verificar.mjs`, si volvió HECHO, en el mismo mensaje):
   - `ALCANCE: FUERA` → AskUserQuestion: «Aceptar» (amplía el alcance: va a `AJUSTES` y a tus `--permitidos`) / «Restaurar» (corrección que deja esos archivos como en la base) / «Detener». Si los archivos son del usuario (los editó él mientras tanto), «Aceptar».
   - `ESTADO: BLOQUEADO` (con o sin `NECESITA_ALCANCE:`) → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / detener. No cuenta como ciclo.
-  - `ESTADO: FALLA`, reporte sin `RESULTADO: VERDE` (salvo proyecto `SIN PASOS`) o salida parcial (tope de turnos) → cuenta como ciclo: Corrección con la falla.
+  - `ESTADO: FALLA` o salida parcial (tope de turnos) → cuenta como ciclo: Corrección con la falla. Un HECHO sin `RESULTADO: VERDE` en el reporte no es falla: decide tu `verificar.mjs`.
   - Con HECHO, mira tu `verificar.mjs`: un ROJO nuevo (ausente en la verificación inicial) cuenta como ciclo: Corrección con la falla. VERDE o SIN PASOS → anota su línea de `EJECUTORES` (`S<n>: HECHO (<c> correcciones) · nota`) y sigue con la siguiente subtarea; tras la última, el paso 6. Si la corrección viene de la revisión final, esa línea `RESULTADO` pasa a `VERIFICACIÓN FINAL`.
   - Hasta 2 ciclos por subtarea; agotados → DETENIDO.
 - **Revisión final:** RECHAZADO → una Corrección con sus PROBLEMAS (§5) → en un mismo mensaje, `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<unión>" --paso 6` y tu `verificar.mjs` → revisión final de nuevo con el mismo despacho más `REVISIÓN ANTERIOR` (un ciclo). Hasta 2 ciclos si la Clasificación del plan es CRÍTICO y 1 si es «sin criterios». Si falla o vuelve sin VEREDICTO claro, se relanza una vez; si sigue igual, cuenta como RECHAZADO.
@@ -146,7 +146,7 @@ Qué mira cada aspecto: agente `revisor`. «Solo texto»: todos los archivos per
 
 ## 7. Cierre
 
-Corre `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<unión>" --paso 7 --tokens "<rol>=<n>,…"`. No repites `verificar.mjs`: la «Verificación final» del cierre es tu última corrida, posterior al último cambio. En `--tokens` va un par por cada agente despachado, con su `subagent_tokens` y el rol `explorador`, `planificador`, `revisor-plan`, `ejecutor` o `final` (revisión final); `estado.mjs` lo anota en `registros/flujos.jsonl`. Luego, breve:
+Corre `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<unión>" --paso 7`, con la base y la hora del preflight, no las de una subtarea (si no, `estado.mjs` avisa). No repites `verificar.mjs`: la «Verificación final» del cierre es tu última corrida, posterior al último cambio. Ese `--cambios` lee de los transcripts el costo real del flujo y los veredictos de cada agente, los imprime (`COSTO:`, `VEREDICTOS:`) y los anota en `registros/flujos.jsonl`: no juntes tokens a mano. Luego, breve:
 
 ```
 CIERRE · <título> — COMPLETO | DETENIDO en <paso>
@@ -155,6 +155,7 @@ Verificación final: <tabla y RESULTADO, copiados de tu última corrida>
 Revisión: final APROBADO (<c> ciclos) · ejecutores: S1 (<c> correcciones) · …
 Riesgos pendientes: <… | ninguno>
 Queda para ti: <… | nada>
-Reversión: <solo si DETENIDO o con riesgos: comandos exactos (git restore --source=<BASE> --worktree -- <archivos>; borrar nuevos). No los corres sin OK>
-Consumo: contexto final por rol <…> (subagent_tokens: contexto del último turno, no gasto; no lo sumes) · gasto real y orquestador: sección «Flujo» del panel
+Reversión: <solo si DETENIDO o con riesgos: la línea REVERSIÓN de tu --cambios del cierre, copiada. No la corres sin OK>
+Consumo: <la línea COSTO de tu --cambios del cierre, copiada>
+Veredictos: <la línea VEREDICTOS, copiada>
 ```

@@ -48,13 +48,16 @@ export function raizDe(dir) {
 /** Proyecto actual: CLAUDE_PROJECT_DIR (hooks) o el cwd, subido a la raíz del repo. */
 export const RAIZ = raizDe(process.env.CLAUDE_PROJECT_DIR || process.cwd())
 
-/** Registro de llamadas de los subagentes, uno por proyecto. */
+/**
+ * Registro de llamadas de los subagentes, uno por proyecto. Junto a él viven la carpeta del flujo, la caché de
+ * verificar y `flujos.jsonl`. `FLUJOS_REGISTROS` cambia la carpeta (los tests la llevan a un temporal).
+ */
 export function registroDe(raiz) {
   const norma = path.resolve(raiz)
   const clave = WIN ? norma.toLowerCase() : norma
   const hash = crypto.createHash('sha1').update(clave).digest('hex').slice(0, 10)
   const nombre = (path.basename(norma) || 'raiz').replace(/[^\w.-]+/g, '_')
-  return path.join(DIR, 'registros', `${nombre}-${hash}.jsonl`)
+  return path.join(process.env.FLUJOS_REGISTROS || path.join(DIR, 'registros'), `${nombre}-${hash}.jsonl`)
 }
 
 /** Carpeta del flujo en curso del proyecto (estado, plan y subtareas), junto a su registro. */

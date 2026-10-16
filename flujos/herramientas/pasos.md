@@ -1,12 +1,12 @@
 **0. Preflight**
 - Pedido vacío → responde `Uso: /implementador <qué cambiar>` y termina.
 - Si tu herramienta Agent no tiene el parámetro `run_in_background`, fork mode está activo y el planificador y la revisión final perderían Opus: dilo (se apaga con `"CLAUDE_CODE_FORK_SUBAGENT": "0"` en `env` de `~/.claude/settings.json`, reiniciando Claude Code) y termina.
-- En un mismo mensaje (comun.md §4): `node ~/.claude/flujos/estado.mjs --paso 0`, `node ~/.claude/flujos/verificar.mjs` (verificación inicial) y el explorador del paso 1. Del preflight anota `BASE_GLOBAL`, `DESDE_GLOBAL`, `FLUJO`, rama y sucios previos. `ERROR` → comun.md §1. `GUARDIA: FALLA` → dilo y termina: los subagentes correrían sin guardia. `OK con avisos` → los avisos van en el plan. `SIN PASOS` → comun.md §1.
+- En un mismo mensaje (comun.md §4): `node ~/.claude/flujos/estado.mjs --paso 0`, `node ~/.claude/flujos/verificar.mjs` (verificación inicial) y el explorador del paso 1. Del preflight anota `BASE_GLOBAL`, `DESDE_GLOBAL`, `FLUJO`, rama y sucios previos. `ERROR` → comun.md §1. `GUARDIA: FALLA` → dilo y termina: los subagentes correrían sin guardia. `OK con avisos` → los avisos van en el plan. `SIN PASOS` → comun.md §1. `AVISO: hay otro flujo abierto` → AskUserQuestion «¿Ese flujo sigue corriendo en otra sesión?»: «No, quedó cortado» → repite `estado.mjs --paso 0 --forzar` y usa sus valores; «Sí» → dilo y termina, porque los dos se pisarían los archivos.
 
 **1. Exploración** — `explorador` (comun.md §5), siempre y junto con el preflight: no explores tú, porque lo que lees se vuelve a pagar en cada pedido tuyo y el explorador (Haiku) cuesta menos. Uno por defecto; varios solo según comun.md §5, todos en ese mismo mensaje. `effort: "max"` solo a un área muy grande, nunca a todos.
 
 **2. Clasificación y plan** (plan.md §2 y §3)
-- Con un explorador: en un mismo mensaje, `estado.mjs --guardar <su agentId> exploracion --paso 2` y el `planificador` con `EXPLORACIÓN: <FLUJO>/exploracion.md`. Con varios: el planificador con tu fusión (comun.md §6).
+- Con un explorador: `estado.mjs --guardar <su agentId> exploracion --paso 2`, y después el `planificador` con `EXPLORACIÓN: <FLUJO>/exploracion.md`, con `effort: "medium"` si esa salida dijo `RUTAS CRÍTICAS EN LA EXPLORACIÓN: ninguna` (tabla de tu skill). Con varios: el planificador con tu fusión (comun.md §6), sin override.
 - Con el plan: `estado.mjs --guardar <agentId del planificador> plan --paso 2`. Guarda `<FLUJO>/plan.md` y un `<FLUJO>/S<n>.md` por subtarea, y lista sus permitidos y los AVISOS (campos faltantes, o `Crítica` y Clasificación que no cubren las rutas críticas del proyecto).
 - Revisa que cumpla el resumen del plan en comun.md y completa tú lo menor, AVISOS incluidos: cada cambio va, una línea, en `AJUSTES AL PLAN` (comun.md §5). Sin Clasificación → CRÍTICO. Sin `Crítica` → `sí`. Una subtarea `no` que toca una ruta crítica → `sí`. Si trae PREGUNTAS, van en la aprobación (paso 4).
 
@@ -17,10 +17,10 @@
 - Ajustes → los aplicas tú (a `AJUSTES AL PLAN`) y muestras solo lo que cambió. Re-planificas **una vez** solo si el ajuste cambia el enfoque (comun.md §6): `PLAN VIGENTE` y solo el ajuste (comun.md §5). El planificador devuelve solo las subtareas afectadas; `estado.mjs --guardar <su agentId> plan --ajuste --paso 4` las integra en `plan.md` y rehace los `S<n>.md`. Muestras solo ellas más la línea `Sin cambios: …`; el resto ya lo vio el usuario. Vuelves a preguntar.
 
 **5. Ejecución**, una subtarea a la vez y sin revisor por subtarea: todo lo revisa la revisión final.
-- En un mismo mensaje: `estado.mjs --base --paso 5` y el `ejecutor` (comun.md §5).
+- En un mismo mensaje: `estado.mjs --base --paso 5` y el `ejecutor` (comun.md §5; con `effort: "medium"` si la subtarea es `Crítica: no`).
 - Si volvió HECHO, en un mismo mensaje: `estado.mjs --cambios <BASE_Sn> --desde <DESDE_Sn> --permitidos "<…>"` (con `--paso 5`, o `--paso 6` si es la única subtarea) y tu `verificar.mjs`. Si volvió BLOQUEADO o FALLA, solo el `--cambios`.
 - Lo que sigue, según comun.md §6: VERDE → la siguiente subtarea; ROJO nuevo o FALLA → corrección. Hasta **2 ciclos** por subtarea; agotados → DETENIDO.
 
-**6. Verificación final** — tu último `verificar.mjs` (el del último ejecutor o corrección) ya es la verificación final: no lo repites. En un mismo mensaje: con 2 o más subtareas, `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<unión>" --paso 6` (el alcance de todo el flujo; con una sola ya lo hiciste en el paso 5), y la revisión final (comun.md §5). Si ese `--cambios` da `ALCANCE: FUERA`, resuélvelo (comun.md §6) antes de tomar su veredicto. Sus correcciones y ciclos, en comun.md §6.
+**6. Verificación final** — tu último `verificar.mjs` (el del último ejecutor o corrección) ya es la verificación final: no lo repites. En un mismo mensaje: con 2 o más subtareas, `estado.mjs --cambios <BASE_GLOBAL> --desde <DESDE_GLOBAL> --permitidos "<unión>" --paso 6` (el alcance de todo el flujo; con una sola ya lo hiciste en el paso 5), y la revisión final (comun.md §5; en Sonnet si la Clasificación es «sin criterios», tabla de tu skill). Si ese `--cambios` da `ALCANCE: FUERA`, resuélvelo (comun.md §6) antes de tomar su veredicto. Sus correcciones y ciclos, en comun.md §6.
 
 **7. Cierre** — comun.md §7 (`estado.mjs --cambios … --paso 7`, sin repetir `verificar.mjs`).

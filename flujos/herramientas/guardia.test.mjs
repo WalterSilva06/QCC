@@ -14,10 +14,16 @@ import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, analizar, raizDe, registroDe, flujoDe, configDe, coincide } from './guardia.mjs'
-import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan } from './estado.mjs'
+import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta } from './estado.mjs'
 import { pasosDe, detalleTipos, resumenTest, detalleTest, conDetalle } from './verificar.mjs'
+import { costoDePedido, precioDe } from './costos.mjs'
 
 const WIN = process.platform === 'win32'
+
+// Registros, carpetas de flujo, caché y flujos.jsonl de las pruebas van a un temporal: corridas desde la copia
+// instalada, las pruebas no tocan el historial real de ~/.claude/flujos/registros.
+const PRUEBAS = fs.mkdtempSync(path.join(os.tmpdir(), 'flujos-pruebas-'))
+process.env.FLUJOS_REGISTROS = path.join(PRUEBAS, 'registros')
 
 function repo(nombre, archivos) {
   const raiz = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `guardia-${nombre}-`)))
@@ -376,7 +382,7 @@ test('estado: opciones y --paso', () => {
 
   assert.deepEqual(opcionesDe([]), {
     modo: 'preflight', base: undefined, desde: undefined, permitidos: [], rutas: [], paso: null, aviso: undefined, tokens: undefined,
-    agente: undefined, tipo: undefined, ajuste: false,
+    agente: undefined, tipo: undefined, ajuste: false, forzar: false,
   })
   const g = opcionesDe(['--guardar', 'a86c3e', 'plan', '--ajuste', '--paso', '2'])
   assert.deepEqual([g.modo, g.agente, g.tipo, g.ajuste, g.paso], ['guardar', 'a86c3e', 'plan', true, 2])
@@ -438,7 +444,7 @@ test('estado: --tokens', () => {
   assert.match(sinCierre.salida, /^AVISO: --tokens solo vale en el cierre \(--cambios … --paso 7\); se ignora$/m)
   assert.match(sinCierre.salida, /ALCANCE: [^\n]*\s*$/)
   const malo = estadoCon({}, (sha) => ['--cambios', sha, '--tokens', 'x=1', '--paso', '7'])
-  assert.match(malo.salida, /^AVISO: --tokens x=1 no es rol=n,…; no se anota$/m)
+  assert.match(malo.salida, /^AVISO: --tokens x=1 no es rol=n,…; el flujo se anota sin ellos$/m)
   assert.match(malo.salida, /ALCANCE: [^\n]*\s*$/)
 })
 
@@ -695,6 +701,49 @@ test('estado: --guardar arma el plan, un S<n>.md por subtarea y avisa las rutas 
   assert.match(estadoEn(raiz, ['--guardar', 'planuno', 'otro'], entorno).salida, /^AVISO: --guardar <agentId> plan\|exploracion: tipo desconocido «otro»/m)
 })
 
+test('estado: --cambios agrupa muchos archivos por carpeta y el cierre da la reversión exacta', () => {
+  assert.deepEqual(agruparPorCarpeta(['a/b/c/1', 'a/b/d/2', 'x/3'], 2), [
+    { carpeta: 'a/b/', rutas: ['a/b/c/1', 'a/b/d/2'] },
+    { carpeta: 'x/', rutas: ['x/3'] },
+  ])
+  assert.deepEqual(agruparPorCarpeta(['raiz.md']), [{ carpeta: './', rutas: ['raiz.md'] }])
+
+  const raiz = repo('agrupa', { 'src/a.ts': 'a\n', 'docs/x.md': 'x\n' })
+  temporales.push(raiz)
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
+  fs.writeFileSync(path.join(raiz, 'src/nuevo.ts'), 'n\n')
+
+  // Pocos archivos: uno por línea, y la reversión va en la misma línea.
+  const chico = estadoEn(raiz, ['--cambios', sha, '--permitidos', 'src/a.ts,src/nuevo.ts', '--paso', '7']).salida
+  assert.match(chico, /^ {2}✓ M src\/a\.ts$/m)
+  assert.match(chico, new RegExp(`^REVERSIÓN: git restore --source=${sha} --worktree -- 'src/a\\.ts' && rm -- 'src/nuevo\\.ts'$`, 'm'))
+  assert.match(chico, /ALCANCE: OK\s*$/)
+
+  // Muchos: agrupados por carpeta, lo de fuera uno por uno y la reversión en reversion.sh.
+  for (let i = 1; i <= 25; i++) {
+    fs.mkdirSync(path.join(raiz, 'gen', `p${i % 3}`), { recursive: true })
+    fs.writeFileSync(path.join(raiz, 'gen', `p${i % 3}`, `f${i}.png`), String(i))
+  }
+  fs.writeFileSync(path.join(raiz, 'docs/x.md'), 'x2\n')
+  const grande = estadoEn(raiz, ['--cambios', sha, '--permitidos', 'src/a.ts,src/nuevo.ts,gen/**', '--paso', '7']).salida
+  assert.match(grande, /^CAMBIOS desde \w+ \(28\):$/m)
+  assert.match(grande, /^ {2}✓ gen\/p1\/ — 9 archivo\(s\) \(A 9\)$/m)
+  assert.match(grande, /^ {2}✓ src\/ — 2 archivo\(s\) \(M 1, A 1\)$/m)
+  assert.match(grande, /^ {2}✗ M docs\/x\.md {3}← FUERA DE ALCANCE$/m)
+  assert.doesNotMatch(grande, /f1\.png/)
+  assert.match(grande, /^REVERSIÓN: 1 a restaurar · 26 a borrar → bash .*reversion\.sh$/m)
+  assert.match(grande, /ALCANCE: FUERA \(1\)\s*$/)
+  const guion = fs.readFileSync(path.join(flujoDe(raiz), 'reversion.sh'), 'utf8')
+  assert.match(guion, new RegExp(`^git restore --source=${sha} --worktree -- 'src/a\\.ts'$`, 'm'))
+  assert.match(guion, /^rm -- .*'gen\/p1\/f1\.png'/m)
+  assert.doesNotMatch(guion, /docs\/x\.md/)
+
+  // Con un flujo abierto, el cierre contra otra foto avisa.
+  estadoEn(raiz, ['--paso', '0'])
+  assert.match(estadoEn(raiz, ['--cambios', sha, '--paso', '7']).salida, /^AVISO: el cierre va con BASE_GLOBAL=\w+ y DESDE_GLOBAL/m)
+})
+
 test('estado: el preflight abre la carpeta del flujo y --estado la resume', () => {
   const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
   const { raiz, salida } = estadoCon(config, () => ['--paso', '0'])
@@ -707,11 +756,81 @@ test('estado: el preflight abre la carpeta del flujo y --estado la resume', () =
   assert.match(resumen, new RegExp(`^BASE_GLOBAL=${global[1]} DESDE_GLOBAL=${global[2]} · rama `, 'm'))
   assert.match(resumen, new RegExp(`^FOTO 1 \\(--base\\): BASE=${base[1]} DESDE=${base[2]}$`, 'm'))
 
-  // Un preflight nuevo vacía la carpeta: no quedan fotos ni plan del flujo anterior.
+  // Con el flujo anterior abierto (sin cierre y con actividad reciente), el preflight avisa y no vacía la carpeta.
   fs.writeFileSync(path.join(carpeta, 'S9.md'), 'viejo\n')
-  estadoEn(raiz, ['--paso', '0'])
+  const candado = estadoEn(raiz, ['--paso', '0']).salida
+  assert.match(candado, /^AVISO: hay otro flujo abierto en este repo \(empezó a las .*, sin cierre, con actividad hace \d+ min\)\./m)
+  assert.match(candado, /^FLUJO: \(ocupada por el flujo anterior: repite el preflight con --forzar si ya no corre\)$/m)
+  assert.ok(fs.existsSync(path.join(carpeta, 'S9.md')))
+  // Con --forzar, o después de un cierre, la vacía: no quedan fotos ni plan del flujo anterior.
+  assert.equal(/^FLUJO: (.*)$/m.exec(estadoEn(raiz, ['--paso', '0', '--forzar']).salida)?.[1], carpeta)
   assert.ok(!fs.existsSync(path.join(carpeta, 'S9.md')))
   assert.doesNotMatch(estadoEn(raiz, ['--estado']).salida, /^FOTO/m)
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  estadoEn(raiz, ['--cambios', sha, '--paso', '7'])
+  assert.doesNotMatch(estadoEn(raiz, ['--paso', '0']).salida, /^AVISO: hay otro flujo abierto/m)
+})
+
+test('estado: --guardar exploracion dice si la exploración toca rutas críticas', () => {
+  const claude = transcripts({
+    critica: 'ARCHIVOS\n- flujos/herramientas/estado.mjs:12 — modo nuevo\n- src/a.ts:3 — uso',
+    tranquila: 'ARCHIVOS\n- src/a.ts:3 — uso\n- README.md — índice',
+  })
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+  const critica = estadoCon({ criticos: CRITICOS }, () => ['--guardar', 'critica', 'exploracion', '--paso', '2'], {}, entorno)
+  assert.match(critica.salida, /^RUTAS CRÍTICAS EN LA EXPLORACIÓN: #1 \(flujos\/herramientas\/estado\.mjs\), #5 \(flujos\/herramientas\/estado\.mjs\)$/m)
+  assert.match(estadoEn(critica.raiz, ['--guardar', 'tranquila', 'exploracion'], entorno).salida, /^RUTAS CRÍTICAS EN LA EXPLORACIÓN: ninguna \(planificador con effort medium\)$/m)
+  const sinCriticos = estadoCon({}, () => ['--guardar', 'tranquila', 'exploracion'], {}, entorno)
+  assert.match(sinCriticos.salida, /^RUTAS CRÍTICAS EN LA EXPLORACIÓN: el proyecto no declara «criticos»/m)
+})
+
+test('costos: precio por pedido, y el cierre anota costo y veredictos del flujo', () => {
+  assert.equal(precioDe('claude-sonnet-5-5').lectura, 0.1)
+  assert.equal(precioDe('claude-haiku-5-5', 150_000).entrada, 0.5)
+  assert.equal(precioDe('otro-modelo'), null)
+  // Sonnet: 1000 de lectura, 100.000 escritos con caché de 1 h y 1000 de salida.
+  assert.equal(costoDePedido({ cache_read_input_tokens: 1000, cache_creation_input_tokens: 100_000, cache_creation: { ephemeral_1h_input_tokens: 100_000 }, output_tokens: 1000 }, 'claude-sonnet-5-5'), (1000 * 0.1 + 100_000 * 4 + 1000 * 10) / 1e6)
+
+  const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
+  const { raiz } = estadoCon(config, () => ['--paso', '0'])
+  const inicio = JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8')).inicio
+  // Las horas del transcript caen entre el preflight y ahora (el cierre llega después): `en(f)` es esa fracción del tramo.
+  const tramo = Math.max(Date.now() - Date.parse(inicio), 10)
+  const en = (f) => new Date(Date.parse(inicio) + Math.floor(tramo * f)).toISOString()
+  const claude = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
+  temporales.push(claude)
+  const sesion = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  const subagentes = path.join(sesion, 's1', 'subagents')
+  fs.mkdirSync(subagentes, { recursive: true })
+  const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
+  const pedido = (id, t, model, usage, texto) => ({ type: 'assistant', timestamp: t, message: { id, model, usage, content: [{ type: 'text', text: texto ?? '' }] } })
+  fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
+    { type: 'user', timestamp: en(-1), message: { role: 'user', content: '<command-name>/implementador</command-name>' } },
+    pedido('o1', en(0.1), 'claude-sonnet-5-5', { cache_creation_input_tokens: 100_000, cache_creation: { ephemeral_1h_input_tokens: 100_000 }, output_tokens: 1000 }),
+    pedido('o2', en(0.4), 'claude-sonnet-5-5', { cache_read_input_tokens: 100_000, output_tokens: 1000 }),
+  ]))
+  const agente = (nombre, tipo, prompt, filas) => {
+    fs.writeFileSync(path.join(subagentes, `${nombre}.meta.json`), JSON.stringify({ agentType: tipo }))
+    fs.writeFileSync(path.join(subagentes, `${nombre}.jsonl`), jsonl([{ type: 'user', timestamp: en(0.2), message: { role: 'user', content: prompt } }, ...filas]))
+  }
+  agente('agent-e', 'explorador', 'PEDIDO: x', [pedido('e1', en(0.25), 'claude-haiku-5-5', { cache_creation_input_tokens: 50_000, output_tokens: 1000 }, 'ARCHIVOS')])
+  agente('agent-f', 'revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))', [pedido('f1', en(0.3), 'claude-opus-5-5', { cache_creation_input_tokens: 10_000, output_tokens: 1000 }, 'VEREDICTO: APROBADO')])
+
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  const cierre = estadoEn(raiz, ['--cambios', sha, '--paso', '7'], { CLAUDE_CONFIG_DIR: claude }).salida
+  assert.match(cierre, /^COSTO: \$0,51 · [\d,]+ min · orquestador \$0,43 \(2 pedidos\) · final \$0,07 · explorador \$0,01 \(sin el mensaje de cierre\)$/m)
+  assert.match(cierre, /^VEREDICTOS: final APROBADO$/m)
+  assert.match(cierre, /ALCANCE: [^\n]*\s*$/)
+  const flujos = path.join(path.dirname(registroDe(raiz)), 'flujos.jsonl')
+  const fila = fs.readFileSync(flujos, 'utf8').trimEnd().split('\n').map((l) => JSON.parse(l)).at(-1)
+  assert.equal(fila.raiz, raiz)
+  assert.equal(Math.round(fila.costo.usd * 1000), 507)
+  assert.deepEqual(fila.costo.veredictos, { final: ['APROBADO'] })
+
+  const historial = spawnSync(process.execPath, [fileURLToPath(new URL('./costos.mjs', import.meta.url)), '--archivo', flujos], { encoding: 'utf8' }).stdout
+  assert.match(historial, /^FLUJOS \(últimos \d+ de \d+ con costo\):$/m)
+  assert.match(historial, /· \$0,51 · [\d,]+ min · orquestador \$0,43 \(2 pedidos\) · final \$0,07 · explorador \$0,01 · final APROBADO$/m)
+  assert.match(historial, /^PROMEDIO: \$[\d,]+ · /m)
 })
 
 test('verificar: repite un VERDE desde la caché mientras el árbol no cambie', () => {
@@ -866,10 +985,5 @@ test('estado: --cambios ignora las lecturas', () => {
 })
 
 test.after(() => {
-  for (const r of [ESTRICTO, GENERICO, ...temporales]) {
-    fs.rmSync(r, { recursive: true, force: true })
-    // Lo que las herramientas dejaron junto al registro de cada repo temporal: carpeta del flujo y caché.
-    fs.rmSync(flujoDe(r), { recursive: true, force: true })
-    fs.rmSync(registroDe(r).replace(/\.jsonl$/, '-verificar.json'), { force: true })
-  }
+  for (const r of [ESTRICTO, GENERICO, ...temporales, PRUEBAS]) fs.rmSync(r, { recursive: true, force: true })
 })
