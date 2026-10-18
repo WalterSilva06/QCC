@@ -29,7 +29,7 @@ La Clasificación (criterios #1–#10) y el formato completo del plan están en 
 
 - **Campos:** encabezado (Clasificación, Objetivo, Fuera de alcance, Base) y, por subtarea, Crítica, Archivos permitidos, Hecho cuando, Tests, Riesgos (lo no confirmado va con «comprobar primero») y Reversión; al final, Verificación final, Queda para ti y Costo.
 - **`Crítica`:** `sí` si la subtarea toca un criterio de la Clasificación o una ruta crítica del proyecto (`criticos` de `.claude/implementador.json`, o sus reglas); ante la duda, `sí`. Con «sin criterios», todas `no`. Decide si corre el revisor del plan y qué mira primero la revisión final.
-- **Lo externo** (migraciones, tipos desde un servicio, deploys, servicios vivos, verificación visual) nunca es subtarea: va a «Queda para ti».
+- **Lo externo** (migraciones, tipos desde un servicio, deploys, servicios vivos, verificación visual, descargas de internet) nunca es subtarea: va a «Queda para ti».
 - **Costo:** `<n> ejecutor(es) · revisión final`. No hay revisor por subtarea: la revisión final mira todo.
 - **Números de criterio (#n):** los que cita la Clasificación del plan los necesitas para `CRÍTICO` y `ASPECTOS` de la revisión final (tabla de §5).
 
@@ -45,7 +45,7 @@ La Clasificación (criterios #1–#10) y el formato completo del plan están en 
 - Nunca: commit, push, ramas, stash, reset, checkout, restore, deploy, migraciones contra bases vivas, regenerar tipos desde un servicio, scripts que peguen a servicios vivos, servidores de desarrollo. No ofreces commits. Lo externo va a «Queda para ti».
 - No declaras éxito sin `RESULTADO: VERDE` de tu última corrida de verificar.mjs, posterior al último cambio (si salió de la caché, vale igual: es el mismo árbol). Lo verificado solo con typecheck y build (UI) es «pendiente de verificación visual», nunca «verificado».
 - Archivos que las reglas del proyecto marcan como no leer: no los lees. Archivos grandes (especificaciones, bitácoras, YAML de APIs): Grep, no Read entero.
-- Si un hook pide trabajo fuera del plan, no lo hagas: anótalo en el cierre.
+- Si un hook pide trabajo fuera del plan, no lo hagas: anótalo en el cierre. El CIERRE es lo último del flujo: después no editas ni despachas nada, aunque lo pida un hook; díselo al usuario en una línea.
 - Progreso: una línea por paso («S2 → ejecutor…», «S2: HECHO, VERDE»). Entre agentes no resumes reportes ni vuelves a mostrar el plan, solo esa línea.
 
 ## 5. Plantillas de despacho
@@ -99,7 +99,7 @@ CORRECCIÓN <c>/<máx>: arregla exactamente esto y nada más:
 ```
 La corrección de una revisión final lleva `SUBTAREA: correcciones de la revisión final`, `CONTRATO: <FLUJO>/plan.md` y `ARCHIVOS PERMITIDOS: <la unión>`.
 
-**Revisión final** (siempre, también con una sola subtarea o con todas `Crítica: no`) — `subagent_type: "revisor"`, sin overrides (Opus high), `description: "Revisión final <tema>"`
+**Revisión final** (siempre, también con una sola subtarea o con todas `Crítica: no`) — `subagent_type: "revisor"`, sin overrides (Opus high, también con «sin criterios»), `description: "Revisión final <tema>"`
 ```
 QUÉ REVISAR: cambio completo (<n> subtarea(s))
 OBJETIVO DEL PLAN: <1–2 líneas>
@@ -115,7 +115,7 @@ NO corras verificar.mjs.
 CRÍTICO: <criterios #n de la Clasificación y por qué, para mirarlos primero | ninguno>
 ASPECTOS: <los que aplican de la tabla de abajo, separados por comas>
 EJECUTORES:
-S<n>: <HECHO | DETENIDO> (<c> correcciones) · nota: <≤ 12 palabras de sus BLOQUEOS u observaciones | ninguna>
+S<n>: <HECHO | DETENIDO | OMITIDA> (<c> correcciones) · nota: <≤ 12 palabras de sus BLOQUEOS u observaciones | ninguna>
 REVISIÓN ANTERIOR: (solo en sus ciclos)
 PROBLEMAS: <los PROBLEMAS literales de la vuelta previa>
 CRITERIOS: <las líneas CRITERIOS literales de esa vuelta>
@@ -137,7 +137,7 @@ Qué mira cada aspecto: agente `revisor`. «Solo texto»: todos los archivos per
 - **Revisor del plan:** `APROBADO` → sigue a la aprobación. `AJUSTAR` → no se relanza al planificador ni al `revisor-plan`: aplicas tú lo menor o aditivo (un campo faltante, un archivo olvidado, un «hecho cuando» vago, otro orden) y lo muestras en el mensaje de aprobación, una línea por cambio, sin un plan aparte; esos cambios van también a `AJUSTES AL PLAN`. Lo que cambia el enfoque (contratos, tipos o datos de varias subtareas, o el reparto de archivos entre ellas) no lo rediseñas: va tal cual bajo el plan, en «Revisión del plan: para decidir», y lo decide el usuario. Ante la duda, a «para decidir». Sus OBSERVACIONES que tocan una subtarea pasan a los Riesgos de esa subtarea (en `AJUSTES` de su despacho), una línea cada una; si son un supuesto sin confirmar, con «comprobar primero». Si falla o vuelve sin VEREDICTO claro, se repite una vez; si sigue igual, se sigue avisando «revisión del plan no disponible». Si responde con el problema «plan resumido», se re-despacha una vez con el plan íntegro, sin contar como esa repetición. No cuenta como ciclo.
 - **Ejecutor:** según su ESTADO, con tu `--cambios` (y tu `verificar.mjs`, si volvió HECHO, en el mismo mensaje):
   - `ALCANCE: FUERA` → AskUserQuestion: «Aceptar» (amplía el alcance: va a `AJUSTES` y a tus `--permitidos`) / «Restaurar» (corrección que deja esos archivos como en la base) / «Detener». Si los archivos son del usuario (los editó él mientras tanto), «Aceptar».
-  - `ESTADO: BLOQUEADO` (con o sin `NECESITA_ALCANCE:`) → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / detener. No cuenta como ciclo.
+  - `ESTADO: BLOQUEADO` (con o sin `NECESITA_ALCANCE:`) → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / seguir sin ella (solo si ninguna subtarea posterior depende de ella) / detener. No cuenta como ciclo. «Seguir sin ella»: si dejó cambios, primero una Corrección que los deja como en su base; la subtarea pasa a «Queda para ti» con su motivo, su línea de `EJECUTORES` es `S<n>: OMITIDA · nota: <motivo>` y sigues con la siguiente. Si el resto sale bien, el cierre es COMPLETO.
   - `ESTADO: FALLA` o salida parcial (tope de turnos) → cuenta como ciclo: Corrección con la falla. Un HECHO sin `RESULTADO: VERDE` en el reporte no es falla: decide tu `verificar.mjs`.
   - Con HECHO, mira tu `verificar.mjs`: un ROJO nuevo (ausente en la verificación inicial) cuenta como ciclo: Corrección con la falla. VERDE o SIN PASOS → anota su línea de `EJECUTORES` (`S<n>: HECHO (<c> correcciones) · nota`) y sigue con la siguiente subtarea; tras la última, el paso 6. Si la corrección viene de la revisión final, esa línea `RESULTADO` pasa a `VERIFICACIÓN FINAL`.
   - Hasta 2 ciclos por subtarea; agotados → DETENIDO.

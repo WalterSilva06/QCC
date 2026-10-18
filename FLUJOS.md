@@ -10,7 +10,7 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 
 ## Roles y modelos
 
-`/implementador` es un solo flujo, con un solo modo: los pasos, agentes, plantillas y ciclos están en `flujos/herramientas/pasos.md`. Opus solo corre en el planificador y en la revisión final de los planes CRÍTICO.
+`/implementador` es un solo flujo, con un solo modo: los pasos, agentes, plantillas y ciclos están en `flujos/herramientas/pasos.md`. Opus solo corre en el planificador y en la revisión final.
 
 | Rol | Modelo y esfuerzo |
 |---|---|
@@ -19,7 +19,7 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 | Planificador | Opus high; clasifica y planifica. Medium si la exploración no toca ninguna ruta de `criticos` |
 | Revisor del plan | Sonnet medium; se omite con «sin criterios», ninguna subtarea crítica y 1–2 subtareas (lo suple el orquestador) |
 | Ejecutor | Sonnet high; medium en una subtarea `Crítica: no` |
-| Revisión final | Corre siempre: Opus high con Clasificación CRÍTICO y Sonnet high con «sin criterios». Revisa el cambio completo, cada «hecho cuando» y las uniones entre subtareas |
+| Revisión final | Corre siempre, en Opus high con cualquier Clasificación. Revisa el cambio completo, cada «hecho cuando» y las uniones entre subtareas |
 
 - **Esfuerzo según el riesgo:** del 13 al 16 oct de 2026, los 2 rechazos reales de la revisión final fueron en planes CRÍTICO, y en 74 revisiones por subtarea ningún ejecutor fue rechazado. Por eso lo que no tiene criterios baja de modelo o de esfuerzo. Hay pocos flujos «sin criterios» medidos: el historial de `costos.mjs` dirá si la calidad se sostiene.
 
@@ -28,14 +28,15 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 - **Verificación:** el orquestador corre `verificar.mjs` tras cada ejecutor. La última corrida (tras el último ejecutor o corrección) ya es la verificación final: ni el paso 6 ni el cierre la repiten, y la revisión final la recibe en `VERIFICACIÓN FINAL`. Cada paso tiene un tope de `timeoutSeg` (600 s por defecto) y `verificar.mjs` se llama con `timeout: 600000` en Bash. Si el árbol y los pasos son los de un VERDE de los últimos 30 min (por ejemplo, el del ejecutor), lo repite desde la caché.
 - **Llamadas juntas:** lo que no depende de una salida previa va en un mismo mensaje, cada comando en su propia llamada: preflight, verificación inicial y explorador; foto y ejecutor; alcance y verificación; alcance global y revisión final. Cada llamada que se ahorra es un pedido menos con todo el contexto del orquestador. Guardar la exploración va antes del planificador, porque decide su esfuerzo.
 - **Costo real y veredictos:** el `--cambios` del cierre lee los transcripts del flujo (hilo principal y subagentes), imprime `COSTO:` (dólares, minutos y pedidos por rol) y `VEREDICTOS:`, y los anota en `registros/flujos.jsonl`, junto con la Clasificación y las subtareas. `node ~/.claude/flujos/costos.mjs [--ultimos <n>]` lista ese historial con su promedio, para comparar versiones del flujo. Los precios están en `costos.mjs`; si cambian, se actualizan ahí.
-- **Candado:** si otro flujo del repo sigue abierto (sin cierre y con actividad en los últimos 20 min), el preflight avisa y no vacía la carpeta del flujo. El orquestador pregunta: si ese flujo quedó cortado, repite el preflight con `--forzar`; si sigue corriendo, termina.
+- **Candado:** si otro flujo del repo sigue abierto (sin cierre y con actividad en los últimos 20 min, o en las últimas 6 h si ya guardó su plan, porque puede estar esperando la aprobación), el preflight avisa con el título de ese plan y no vacía la carpeta del flujo. El orquestador pregunta: si ese flujo quedó cortado, repite el preflight con `--forzar`; si sigue corriendo, termina.
 - **Carpeta del flujo:** el preflight abre `~/.claude/flujos/registros/<proyecto>-<hash>-flujo/`. `estado.mjs --guardar <agentId>` deja ahí la exploración y el plan, tomados del transcript del agente, y un `S<n>.md` por subtarea. Los despachos pasan rutas en vez de copiar el plan, y `estado.mjs --estado` resume el flujo si el orquestador pierde el hilo.
 - **Alcance y reversión:** con más de 20 archivos dentro del alcance, `--cambios` los agrupa por carpeta (lo de fuera va siempre uno por uno), así no llena el contexto del orquestador. El `--cambios` del cierre, con `BASE_GLOBAL`, imprime `REVERSIÓN:` con los comandos exactos para deshacer el flujo; con más de 10 archivos los deja en `reversion.sh`, en la carpeta del flujo. Si el cierre va con la foto de una subtarea, avisa.
 - **Ejecutor y suite sin filtro:** si las reglas del proyecto dicen que la suite de tests no se puede filtrar, el ejecutor no la corre aparte antes de `verificar.mjs`: va directo a este, que ya la incluye. El patrón filtrado queda para diagnosticar un `test` en ROJO.
 - **Exploración:** siempre la hace el explorador (Haiku), que cuesta centavos; lo que leyera el orquestador se pagaría de nuevo en cada uno de sus pedidos.
 - **Reglas del proyecto:** cada despacho lleva `REGLAS` con lo que dijo el preflight, para que cada agente lea las suyas sin buscarlas. La skill inyecta las del orquestador con `estado.mjs --reglas`.
 - **Supuestos:** lo que el plan no pudo confirmar va en Riesgos con «comprobar primero», y el ejecutor lo prueba antes de editar el resto. Las observaciones del revisor del plan sobre una subtarea pasan a sus Riesgos.
-- **Guardia:** si la autoprueba del preflight falla (por ejemplo, el proyecto redefine `ejecutor` o `revisor` sin la guardia), el flujo avisa y termina. El revisor no escribe en el repo, pero sí en temporales (para comparar con la base o simular).
+- **Guardia:** si la autoprueba del preflight falla (por ejemplo, el proyecto redefine `ejecutor` o `revisor` sin la guardia), el flujo avisa y termina. El revisor no escribe en el repo, pero sí en temporales (para comparar con la base con `git archive` o simular, también con `sed -i`). El ejecutor también escribe en temporales (scripts de medición), y `--cambios` no los cuenta en el alcance. En una copia solo cuenta el destino (copiar `dist/` a un temporal pasa) y las variables asignadas en el mismo comando se expanden.
+- **Subtarea BLOQUEADA:** el usuario puede seguir sin ella si ninguna posterior depende de ella; pasa a «Queda para ti» como `OMITIDA` y el flujo puede cerrar COMPLETO. Lo que hay que bajar de internet también va a «Queda para ti»: los subagentes no tienen red.
 - **Fork mode:** los subagentes heredarían el modelo de la sesión y el planificador y la revisión final perderían Opus. Si está activo, el flujo avisa y termina.
 - **Topes de reporte:** explorador ≤ 25 líneas, ejecutor ≤ 10 y revisión final ≤ 20.
 - **Contexto de la revisión final:** en sus ciclos, `REVISIÓN ANTERIOR` lleva solo sus PROBLEMAS y CRITERIOS de la vuelta previa, nunca el reporte del ejecutor.

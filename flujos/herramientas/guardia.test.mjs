@@ -204,7 +204,7 @@ test('ejecutor: git que modifica, servicios vivos, dependencias y borrados se ni
     '.claude/settings.local.json',
     'src/routeTree.gen.ts',
     'supabase/migrations/20261010000001_citas_precio.sql',
-    '../otro-repo/x.ts',
+    path.join(os.homedir(), 'otro-repo', 'x.ts'),
     path.join(os.homedir(), 'x.txt'),
     '.env',
     'pnpm-lock.yaml',
@@ -212,6 +212,35 @@ test('ejecutor: git que modifica, servicios vivos, dependencias y borrados se ni
     'CUENTAS_PRUEBA.md',
     'scripts/flow/.evidence/x.json',
   ]) niega(edita(R, r, 'Write'))
+})
+
+test('ejecutor: copias desde lo protegido, variables y temporales (casos de los flujos del 16 oct)', () => {
+  const R = ESTRICTO
+  const tmp = os.tmpdir().replace(/\\/g, '/')
+  for (const c of [
+    // Copiar un artefacto protegido a un temporal solo lo lee: cuenta el destino.
+    'cp dist/index.html /tmp/antes.html',
+    'pnpm run build 2>&1 | tail -5; S="/tmp/medir"; cp dist/index.html "$S/antes.html"',
+    'cp -t /tmp dist/a.js dist/b.js',
+    `S="${tmp}/m"; mkdir -p "$S/c" && cp dist/x.js "\${S}/c/x.js"`,
+    'git archive HEAD src > /tmp/base.tar',
+    'git archive -o /tmp/base.tar HEAD src',
+  ]) deja(bash(R, c))
+  deja(edita(R, path.join(os.tmpdir(), 'medir.mjs'), 'Write'))
+  for (const c of [
+    'cp /tmp/a dist/x.js',
+    'cp -t dist /tmp/a.js',
+    'cp /tmp/a.js /tmp/b.js node_modules/',
+    'cp --target-directory=node_modules/x /tmp/a.js',
+    'S=dist; echo x > "$S/a.js"',
+    'F=.env; cat $F',
+    'git archive -o dist/base.tar HEAD',
+    'git archive --remote=git@x:y.git HEAD',
+  ]) niega(bash(R, c))
+  niega(ps(R, 'Copy-Item -Destination dist\\x.js -Path a.js'))
+  niega(ps(R, '$S = "dist"; Set-Content -Path "$S/x.js" -Value 1'))
+  // npx se niega, pero el motivo nombra el gestor del proyecto.
+  assert.match(evaluar(bash(R, 'npx astro build'), 'ejecutor', R).motivo, /usa `pnpm exec astro`/)
 })
 
 test('valores por defecto en un proyecto npm sin config', () => {
@@ -278,6 +307,16 @@ test('revisor: lee y verifica, y solo escribe en temporales', () => {
     'git diff abc | tee /tmp/t.txt',
     'git diff --output=/tmp/x.patch abc',
     'rm /tmp/x.ts',
+    // Variables asignadas en el mismo comando, la base con git archive y edición en sitio de temporales.
+    'S="/tmp/rev"; mkdir -p "$S/exp"',
+    'export B=/tmp/base; mkdir -p "$B" && git archive HEAD src | tar -x -C "$B"',
+    `T="${tmp}/sim"; mkdir -p "$T" && cd "$T" && git -C "${R.replace(/\\/g, '/')}" archive --format=tar HEAD src > base.tar`,
+    'git archive -o /tmp/base.tar HEAD',
+    "sed -i 's/a/b/' /tmp/rev/x.mjs",
+    `cd "$TEMP" && sed -i "s/.slice(0,6)/.slice(0,8)/" desborde.mjs && node desborde.mjs`,
+    "sed -i -e 's/a/b/' -e 's/c/d/' /tmp/x",
+    "perl -pi -e 's/a/b/' /tmp/x.txt",
+    'git diff --output-indicator-new=+ abc',
   ]) deja(bash(R, c), 'revisor')
   niega(edita(R, 'src/x.ts'), 'revisor')
   niega(edita(R, 'src/x.ts', 'Write'), 'revisor')
@@ -297,6 +336,13 @@ test('revisor: lee y verifica, y solo escribe en temporales', () => {
     'git checkout x',
     "perl -pi -e 's/a/b/' x",
     'git diff --output=x.patch',
+    'S="$(pwd)"; mkdir "$S/x"',
+    'S=src; mkdir -p "$S/x"',
+    "sed -i -e 's/a/b/' /tmp/x src/y.ts",
+    'sed -i /tmp/solo-script.sed',
+    "sed -i -- 's/a/b/' src/x.ts",
+    'git archive -o base.tar HEAD',
+    'git archive --output base.tar HEAD',
   ]) niega(bash(R, c), 'revisor')
 })
 
@@ -759,7 +805,7 @@ test('estado: el preflight abre la carpeta del flujo y --estado la resume', () =
   // Con el flujo anterior abierto (sin cierre y con actividad reciente), el preflight avisa y no vacía la carpeta.
   fs.writeFileSync(path.join(carpeta, 'S9.md'), 'viejo\n')
   const candado = estadoEn(raiz, ['--paso', '0']).salida
-  assert.match(candado, /^AVISO: hay otro flujo abierto en este repo \(empezó a las .*, sin cierre, con actividad hace \d+ min\)\./m)
+  assert.match(candado, /^AVISO: hay otro flujo abierto en este repo \(sin plan todavía, empezó a las .*, sin cierre, con actividad hace \d+ min\)\./m)
   assert.match(candado, /^FLUJO: \(ocupada por el flujo anterior: repite el preflight con --forzar si ya no corre\)$/m)
   assert.ok(fs.existsSync(path.join(carpeta, 'S9.md')))
   // Con --forzar, o después de un cierre, la vacía: no quedan fotos ni plan del flujo anterior.
@@ -768,6 +814,22 @@ test('estado: el preflight abre la carpeta del flujo y --estado la resume', () =
   assert.doesNotMatch(estadoEn(raiz, ['--estado']).salida, /^FOTO/m)
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
   estadoEn(raiz, ['--cambios', sha, '--paso', '7'])
+  assert.doesNotMatch(estadoEn(raiz, ['--paso', '0']).salida, /^AVISO: hay otro flujo abierto/m)
+
+  // Con plan guardado, el candado dura 6 h (puede estar esperando la aprobación) y el aviso nombra el plan.
+  const archivo = path.join(carpeta, 'estado.json')
+  const envejecer = (horas) => {
+    const t = new Date(Date.now() - horas * 3_600_000)
+    for (const a of [archivo, registroDe(raiz)]) if (fs.existsSync(a)) fs.utimesSync(a, t, t)
+  }
+  const conPlan = { ...JSON.parse(fs.readFileSync(archivo, 'utf8')), plan: path.join(carpeta, 'plan.md'), titulo: 'Corporativas' }
+  fs.writeFileSync(archivo, JSON.stringify(conPlan))
+  envejecer(2)
+  assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^AVISO: hay otro flujo abierto en este repo \(«Corporativas», empezó a las .*, con actividad hace 120 min\)\./m)
+  envejecer(7)
+  assert.doesNotMatch(estadoEn(raiz, ['--paso', '0']).salida, /^AVISO: hay otro flujo abierto/m)
+  // Sin plan, a los 20 min ya no cuenta como abierto.
+  envejecer(1)
   assert.doesNotMatch(estadoEn(raiz, ['--paso', '0']).salida, /^AVISO: hay otro flujo abierto/m)
 })
 
@@ -985,6 +1047,12 @@ test('estado: --cambios ignora las lecturas', () => {
     assert.doesNotMatch(despues, /leida\.md/)
     assert.doesNotMatch(despues, /FUERA DE ALCANCE/)
     assert.equal(despues, antes)
+
+    // Un script del ejecutor en un temporal queda en el registro, pero no es del alcance.
+    const medir = path.join(os.tmpdir(), 'medir-flujo.mjs')
+    assert.equal(hook(raiz, 'ejecutor', ev(raiz, 'Write', { file_path: medir })).stdout, '')
+    assert.equal(filasDe(raiz).at(-1)?.decision, 'permitido')
+    assert.equal(cambios(), antes)
   } finally {
     borrarRegistro(raiz)
   }

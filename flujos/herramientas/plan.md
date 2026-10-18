@@ -46,4 +46,4 @@ Costo: <n> ejecutor(es) · revisión final
 - Lo que no está en «Archivos permitidos» no se toca. Las migraciones ya versionadas no se editan: se crea una nueva con la convención de nombres del proyecto. Si hay migración, la Reversión aclara que, aplicada a una base viva, revertirla exige otra migración.
 - Sin tests: la lógica de negocio los escribe primero, con la infraestructura de tests del proyecto. Lo que no tiene infraestructura de tests (típicamente la UI) se verifica con typecheck y build.
 - Una dependencia nueva va nombrada en el plan (la instala el orquestador).
-- Lo externo (aplicar migraciones, regenerar tipos, deploys, servicios vivos, verificación visual) nunca es subtarea: va a «Queda para ti».
+- Lo externo (aplicar migraciones, regenerar tipos, deploys, servicios vivos, verificación visual) nunca es subtarea: va a «Queda para ti». También descargar de internet (fotos, fuentes, datos): los subagentes no tienen red, así que va a «Queda para ti» con las URL y la ruta donde dejar cada archivo, y la subtarea que lo usa lo da por presente.

@@ -21,7 +21,8 @@
 //
 // La carpeta del flujo (`registros/<proyecto>-<hash>-flujo/`) guarda `estado.json` (fotos, plan,
 // cierre), el informe del explorador, el plan y un `S<n>.md` por subtarea; el preflight la vacía, salvo
-// que otro flujo del repo siga abierto (sin cierre y con actividad reciente): entonces avisa y pide `--forzar`.
+// que otro flujo del repo siga abierto (sin cierre y con actividad en los últimos 20 min, o 6 h si ya tiene
+// plan): entonces avisa con el título del plan y pide `--forzar`.
 // El cierre (`--cambios … --paso 7`) anota en `registros/flujos.jsonl` el costo real y los veredictos (costos.mjs).
 // `--guardar` toma el informe de un agente de su transcript, en `projects/*/*/subagents/agent-<id>.jsonl`
 // dentro de `CLAUDE_CONFIG_DIR` (o `~/.claude`).
@@ -44,6 +45,8 @@ const TOPE_CAMBIOS = 20
 const TOPE_GRUPOS = 15
 const TOPE_REVERSION = 10
 const ABIERTO_MIN = 20
+// Con el plan ya guardado, el flujo puede pasar horas esperando la aprobación sin actividad.
+const ABIERTO_CON_PLAN_MIN = 6 * 60
 const EDICIONES = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
 
 // ── Permitidos ──────────────────────────────────────────────────────────────
@@ -176,12 +179,15 @@ function ultimaActividad() {
   return t
 }
 
-/** El flujo anterior del repo si sigue abierto: sin cierre y con actividad en los últimos `ABIERTO_MIN` minutos; null si no. */
+/**
+ * El flujo anterior del repo si sigue abierto: sin cierre y con actividad en los últimos `ABIERTO_MIN` minutos
+ * (`ABIERTO_CON_PLAN_MIN` si ya tiene plan, porque puede estar esperando la aprobación); null si no.
+ */
 function flujoAbierto() {
   const previo = leerEstado()
   if (!previo.base_global || previo.cierre) return null
   const minutos = (Date.now() - ultimaActividad()) / 60_000
-  return minutos < ABIERTO_MIN ? { ...previo, minutos } : null
+  return minutos < (previo.plan ? ABIERTO_CON_PLAN_MIN : ABIERTO_MIN) ? { ...previo, minutos } : null
 }
 
 /** Vacía la carpeta del flujo y la abre con `estado`: la llama el preflight. */
@@ -327,6 +333,7 @@ function resumirPlan(texto, destino) {
   const { criticos } = configDe(RAIZ)
   for (const f of fs.readdirSync(FLUJO)) if (/^S\d+\.md$/.test(f)) fs.rmSync(path.join(FLUJO, f), { force: true })
   const encabezado = cabecera.filter((l) => /^\s*(?:#{1,6}\s+)?(?:\*\*)?(PLAN ·|Objetivo|Fuera de alcance)/i.test(l))
+  const titulo = cabecera.map((l) => /^\s*(?:#{1,6}\s+)?(?:\*\*)?PLAN ·\s*(.*?)(?:\*\*)?\s*$/i.exec(l)?.[1]).find(Boolean)
   const clasificacion = campoDe(cabecera, 'Clasificación')
   const avisos = []
   if (clasificacion === null) avisos.push('falta «Clasificación»')
@@ -367,7 +374,7 @@ function resumirPlan(texto, destino) {
   }
   if (!subtareas.length) avisos.push('no encontré subtareas «S<n> · …»: despacha copiando los campos del plan')
   console.log(avisos.length ? `AVISOS:\n${avisos.map((a) => `  - ${a}`).join('\n')}` : 'AVISOS: ninguno')
-  anotarEstado({ plan: destino, subtareas: resumen, ...(clasificacion !== null ? { clasificacion } : {}) })
+  anotarEstado({ plan: destino, subtareas: resumen, ...(clasificacion !== null ? { clasificacion } : {}), ...(titulo ? { titulo: sinMarcas(titulo) } : {}) })
 }
 
 /** Rutas de archivo que cita un informe (`ruta:línea`, absolutas o relativas), relativas al repo cuando caen dentro. */
@@ -498,7 +505,8 @@ function preflight(forzar) {
   const abierto = forzar ? null : flujoAbierto()
   if (abierto) {
     const hora = new Date(abierto.inicio).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
-    console.log(`AVISO: hay otro flujo abierto en este repo (empezó a las ${hora}, BASE_GLOBAL ${corto(abierto.base_global)}, sin cierre, con actividad hace ${Math.round(abierto.minutos)} min). Si sigue corriendo en otra sesión, los dos se pisan los archivos y la carpeta del flujo, que no vacié. Si ya no corre, repite el preflight con --forzar.`)
+    const plan = abierto.titulo ? `«${abierto.titulo}», ` : abierto.plan ? 'con plan, ' : 'sin plan todavía, '
+    console.log(`AVISO: hay otro flujo abierto en este repo (${plan}empezó a las ${hora}, BASE_GLOBAL ${corto(abierto.base_global)}, sin cierre, con actividad hace ${Math.round(abierto.minutos)} min). Si sigue corriendo en otra sesión (o esperando su aprobación), los dos se pisan los archivos y la carpeta del flujo, que no vacié. Si ya no corre, repite el preflight con --forzar.`)
     flujo = '(ocupada por el flujo anterior: repite el preflight con --forzar si ya no corre)'
   } else {
     try {
@@ -601,6 +609,8 @@ function cambios(base, desde, permitidos, paso, tokens) {
   const filas = desde ? leerRegistro(desde) : []
   for (const f of filas) {
     if (f.rol !== 'ejecutor' || f.decision !== 'permitido' || !EDICIONES.has(f.herramienta) || !f.objetivo) continue
+    // Ruta absoluta = fuera del repo: un temporal del ejecutor (scripts de medición), que no es del alcance.
+    if (path.isAbsolute(f.objetivo)) continue
     if (!mapa.has(clave(f.objetivo))) mapa.set(clave(f.objetivo), { estado: '·', ruta: f.objetivo, soloRegistro: true })
   }
   const lista = [...mapa.values()].sort((a, b) => a.ruta.localeCompare(b.ruta))

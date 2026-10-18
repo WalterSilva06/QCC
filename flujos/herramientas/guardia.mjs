@@ -15,6 +15,9 @@
 // Lo propio de cada proyecto va en `<raíz>/.claude/implementador.json`, clave `guardia`
 // (ver `config.ejemplo.md`). Sin ese archivo rigen los valores por defecto.
 //
+// En una copia solo cuenta el destino; las variables asignadas en el mismo comando (`S=/tmp/x; mkdir "$S"`) se
+// expanden; el ejecutor escribe en temporales y el revisor, además, edita en sitio (`sed -i`) solo ahí.
+//
 // Ante la duda, deja pasar: un guardia que castra al ejecutor cuesta la tarea entera.
 // Un error de parseo nunca niega.
 //
@@ -557,11 +560,22 @@ const GIT_LECTURA = new Set([
   'status', 'diff', 'log', 'show', 'blame', 'annotate', 'ls-files', 'ls-tree', 'rev-parse', 'grep',
   'cat-file', 'check-ignore', 'check-attr', 'describe', 'shortlog', 'merge-base', 'name-rev',
   'rev-list', 'whatchanged', 'diff-tree', 'diff-files', 'diff-index', 'for-each-ref', 'show-ref',
-  'version', 'help', 'count-objects', 'var', 'cherry', 'range-diff', 'show-branch',
+  'version', 'help', 'count-objects', 'var', 'cherry', 'range-diff', 'show-branch', 'archive',
 ])
 const GIT_OPC_CON_VALOR = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--exec-path'])
 const GIT_RAMA_PELIGRO = /^(-d|-D|-m|-M|-c|-C|-f|-u|-t|--delete|--move|--copy|--force|--set-upstream-to.*|--unset-upstream|--track.*|--edit-description|--create-reflog)$/
 const GIT_RAMA_CON_VALOR = /^--(contains|no-contains|merged|no-merged|points-at|sort|format)$/
+
+/** Archivo que escribe un git de lectura (`--output`, y `-o` en `git archive`); '' si falta el valor, null si no escribe. */
+function salidaGit(sub, resto) {
+  for (let k = 0; k < resto.length; k++) {
+    const a = resto[k]
+    if (a === '--output' || (sub === 'archive' && a === '-o')) return resto[k + 1] ?? ''
+    if (a.startsWith('--output=')) return a.slice('--output='.length)
+    if (sub === 'archive' && /^-o./.test(a)) return a.slice(2)
+  }
+  return null
+}
 
 function evaluarGit(args, ctx) {
   let k = 0
@@ -570,12 +584,11 @@ function evaluarGit(args, ctx) {
   const resto = args.slice(k + 1)
   if (!sub) return null
   if (GIT_LECTURA.has(sub)) {
-    const k = resto.findIndex((a) => a.startsWith('--output'))
-    if (ctx.rol === 'revisor' && k >= 0) {
-      const destino = resto[k].includes('=') ? resto[k].slice(resto[k].indexOf('=') + 1) : resto[k + 1]
-      if (!destino || !temporal(destino, ctx)) return 'el revisor solo escribe en temporales (git --output)'
-    }
-    return null
+    if (sub === 'archive' && resto.some((a) => a.startsWith('--remote'))) return 'git archive --remote habla con el remoto: red'
+    const destino = salidaGit(sub, resto)
+    if (destino === null) return null
+    if (ctx.rol === 'revisor') return destino && temporal(destino, ctx) ? null : `el revisor solo escribe en temporales (git ${sub} a ${destino || '?'})`
+    return motivoRuta(destino, { raiz: ctx.raiz, base: ctx.cwd, permitirTemporal: true })
   }
   if (sub === 'branch') {
     const peligro = resto.some((a) => GIT_RAMA_PELIGRO.test(a))
@@ -783,14 +796,105 @@ const CON_DESTINO = new Set([
 ])
 const COPIAN = new Set(['cp', 'copy', 'copy-item', 'cpi', 'install'])
 
-/** ¿Todo lo que `prog` escribe cae en temporales? En una copia solo cuenta el destino (el último argumento). */
-function soloTemporales(prog, args, ctx) {
+/**
+ * Las rutas que escribe `prog`. En una copia solo el destino (el origen solo se lee): `-t <dir>`,
+ * `--target-directory`, `-Destination` de PowerShell o, si no, el último argumento suelto. Si el destino es una
+ * carpeta (`-t`, termina en `/` o ya existe como carpeta), cuenta cada archivo que cae dentro. `install -d` crea todas.
+ */
+function destinosDe(prog, args, ctx) {
   const rutas = args.filter((a) => !a.startsWith('-'))
-  const destinos = COPIAN.has(prog) ? rutas.slice(-1) : rutas
+  if (!COPIAN.has(prog) || (prog === 'install' && args.some((a) => a === '-d' || a === '--directory'))) return rutas
+  let destino = null
+  let carpeta = false
+  for (let k = 0; k < args.length && destino === null; k++) {
+    const a = args[k]
+    const pegado = /^(?:--target-directory=|-dest(?:ination)?:)(.+)$/i.exec(a)
+    if (a === '-t' || a === '--target-directory' || /^-dest(ination)?$/i.test(a)) {
+      if (args[k + 1] === undefined) return []
+      destino = args[k + 1]
+      carpeta = !/^-dest/i.test(a)
+    } else if (pegado) {
+      destino = pegado[1]
+      carpeta = !/^-dest/i.test(a)
+    }
+  }
+  const origenes = destino === null ? rutas.slice(0, -1) : rutas.filter((r) => r !== destino)
+  destino ??= rutas.at(-1)
+  if (destino === undefined) return []
+  if (!carpeta) {
+    try {
+      carpeta = /[\\/]$/.test(destino) || fs.statSync(path.resolve(ctx.cwd, rutaNativa(destino))).isDirectory()
+    } catch {
+      // No existe: es el archivo de destino.
+    }
+  }
+  if (!carpeta || !origenes.length) return [destino]
+  return [destino, ...origenes.map((o) => `${destino.replace(/[\\/]+$/, '')}/${path.basename(rutaNativa(o))}`)]
+}
+
+/** ¿Todo lo que `prog` escribe cae en temporales? */
+function soloTemporales(prog, args, ctx) {
+  const destinos = destinosDe(prog, args, ctx)
   return destinos.length > 0 && destinos.every((a) => temporal(a, ctx))
 }
 
-function evaluarSimple({ palabras, redirs }, ctx) {
+/**
+ * Archivos que edita en sitio un `sed -i` o `perl -i`: sin el script ni los valores de `-e`/`-f` (sed) o
+ * `-e`/`-E` (perl, también al final de un grupo como `-pie`). Sin `-e`, el primer argumento suelto es el script.
+ */
+function archivosEnSitio(prog, args) {
+  const archivos = []
+  let script = false
+  const conValor = prog === 'sed' ? /^(-[a-zA-Z]*[ef]|--expression|--file)$/ : /^-[a-zA-Z0-9]*[eE]$/
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k]
+    if (a === '--') {
+      archivos.push(...args.slice(k + 1).slice(script ? 0 : 1))
+      break
+    }
+    if (a.startsWith('-') && a.length > 1) {
+      if (conValor.test(a)) {
+        k++
+        script = true
+      } else if (/^--(expression|file)=/.test(a)) script = true
+      continue
+    }
+    if (script) archivos.push(a)
+    else script = true
+  }
+  return archivos
+}
+
+const NOMBRE_VARIABLE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g
+
+/** `texto` con las variables que el mismo comando asignó antes (`S="/tmp/x"; mkdir "$S/a"`); las demás quedan igual. */
+function expandir(texto, ctx) {
+  if (!ctx.variables?.size) return texto
+  return String(texto).replace(NOMBRE_VARIABLE, (todo, llaves, suelta) => ctx.variables.get(llaves ?? suelta) ?? todo)
+}
+
+/**
+ * Anota las variables de un comando que solo asigna (`S=…`, `export S=…`, `$S = …` en PowerShell) para expandirlas en
+ * los comandos siguientes. Un valor con `$(…)` o comillas invertidas no se conoce: la variable se olvida.
+ */
+function anotarVariables({ palabras, redirs }, ctx) {
+  if (redirs.length || !palabras.length) return
+  let ws = palabras
+  if (['export', 'declare', 'typeset', 'local', 'readonly'].includes(ws[0])) ws = ws.slice(1).filter((w) => !w.startsWith('-'))
+  if (ctx.powershell && ws.length === 3 && /^\$[A-Za-z_]\w*$/.test(ws[0]) && ws[1] === '=') ws = [`${ws[0].slice(1)}=${ws[2]}`]
+  if (!ws.length || !ws.every((w) => ASIGNACION.test(w))) return
+  ctx.variables ??= new Map()
+  for (const w of ws) {
+    const k = w.indexOf('=')
+    const valor = expandir(w.slice(k + 1), ctx)
+    if (valor.includes('\u0000')) ctx.variables.delete(w.slice(0, k))
+    else ctx.variables.set(w.slice(0, k), valor)
+  }
+}
+
+function evaluarSimple(simple, ctx) {
+  const palabras = simple.palabras.map((w) => expandir(w, ctx))
+  const redirs = simple.redirs.map((r) => ({ ...r, objetivo: expandir(r.objetivo, ctx) }))
   const config = configDe(ctx.raiz)
   for (const r of redirs) {
     if (SECRETO.test(r.objetivo)) return 'toca un .env (secretos)'
@@ -844,6 +948,10 @@ function evaluarSimple({ palabras, redirs }, ctx) {
     const j = args.findIndex((a) => !a.startsWith('-'))
     return j >= 0 ? evaluarBinario(nombreProg(args[j]), args.slice(j + 1), ctx) : null
   }
+  if (prog === 'npx' && config.pm && config.externos.npx === EXTERNOS_BASE.npx) {
+    const bin = args.find((a) => !a.startsWith('-'))
+    return `npx puede descargar y ejecutar paquetes: usa \`${config.pm === 'npm' ? 'npm exec --no --' : `${config.pm} exec`} ${bin ?? '<bin>'}\``
+  }
   if (Object.hasOwn(config.externos, prog)) return config.externos[prog]
   if (prog === 'git') return evaluarGit(args, ctx)
   if (GESTORES.has(prog)) return evaluarGestor(prog, args, ctx)
@@ -866,14 +974,17 @@ function evaluarSimple({ palabras, redirs }, ctx) {
 
   if (ctx.rol === 'revisor') {
     if (ESCRIBEN.has(prog) && !soloTemporales(prog, args, ctx)) return `el revisor solo escribe en temporales (${prog})`
-    if ((prog === 'sed' || prog === 'perl') && args.some(EDITA_EN_SITIO)) return 'el revisor no modifica archivos (edición en sitio)'
+    if ((prog === 'sed' || prog === 'perl') && args.some(EDITA_EN_SITIO)) {
+      const archivos = archivosEnSitio(prog, args)
+      if (!archivos.length || !archivos.every((a) => temporal(a, ctx))) return 'el revisor no modifica archivos del repo (edición en sitio; en temporales sí)'
+    }
     if ((prog === 'awk' || prog === 'gawk') && args.some((a, j) => a === '-i' && /inplace/.test(args[j + 1] ?? ''))) {
       return 'el revisor no modifica archivos (awk inplace)'
     }
     return null
   }
-  if (CON_DESTINO.has(prog) || ((prog === 'sed' || prog === 'perl') && args.some(EDITA_EN_SITIO))) {
-    for (const a of args) {
+  if (CON_DESTINO.has(prog) || COPIAN.has(prog) || ((prog === 'sed' || prog === 'perl') && args.some(EDITA_EN_SITIO))) {
+    for (const a of COPIAN.has(prog) ? destinosDe(prog, args, ctx) : args) {
       if (a.startsWith('-')) continue
       const m = motivoRuta(a, { raiz: ctx.raiz, base: ctx.cwd, permitirTemporal: true })
       if (m) return m
@@ -887,6 +998,7 @@ export function evaluarCadena(cmd, ctx) {
   for (const simple of analizar(cmd, { powershell: ctx.powershell })) {
     const m = evaluarSimple(simple, ctx)
     if (m) return m
+    anotarVariables(simple, ctx)
   }
   return null
 }
@@ -905,7 +1017,8 @@ export function evaluar(evento, rol, raiz = RAIZ) {
   }
   if (['Edit', 'Write', 'NotebookEdit', 'MultiEdit'].includes(herramienta)) {
     const ruta = String(entrada.file_path ?? entrada.notebook_path ?? '')
-    const motivo = rol === 'revisor' ? 'el revisor no edita archivos' : motivoRuta(ruta, { raiz, base: cwd })
+    // El ejecutor puede escribir en temporales (scripts de medición); `--cambios` no los cuenta.
+    const motivo = rol === 'revisor' ? 'el revisor no edita archivos' : motivoRuta(ruta, { raiz, base: cwd, permitirTemporal: true })
     const abs = path.resolve(cwd, rutaNativa(ruta))
     return { motivo, objetivo: relativaAlRepo(abs, raiz) ?? abs }
   }

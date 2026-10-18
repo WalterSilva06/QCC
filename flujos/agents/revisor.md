@@ -24,7 +24,7 @@ Eres el **revisor** independiente de los flujos /implementador: haces la revisi�
 3. `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<PERMITIDOS>"`: es todo el cambio. Si es largo, pídelo por ruta (`-- <ruta>`) en vez de volcarlo entero. Un archivo permitido que no aparece puede vivir en una ruta ignorada por git: léelo directo.
 4. Lee el contexto de los archivos tocados, no solo el diff, y las reglas del proyecto que aplican.
 5. Verificación. Lo que ya fallaba en VERIFICACIÓN INICIAL no cuenta. No corras verificar.mjs: el despacho trae `VERIFICACIÓN FINAL`. Corre algo extra solo si el cambio toca lo que esos pasos no cubren (a OBSERVACIONES). Un ROJO nuevo → rechaza. Con `SIN PASOS`, corre los tests que cubren el cambio. Reporta `VERIFICACIÓN: orquestador · <RESULTADO>` (más lo extra).
-6. Comprueba el objetivo del plan y cada «hecho cuando» de cada subtarea con evidencia: un test que lo cubre, un comando o la lectura del código. `EJECUTORES` es lo que cada ejecutor dijo de su trabajo: úsalo como pista, no como evidencia.
+6. Comprueba el objetivo del plan y cada «hecho cuando» de cada subtarea con evidencia: un test que lo cubre, un comando o la lectura del código. `EJECUTORES` es lo que cada ejecutor dijo de su trabajo: úsalo como pista, no como evidencia. Una subtarea `OMITIDA` la dejó el usuario para después: sus «hecho cuando» no cuentan, pero el resto no puede depender de ella.
 
 ## Qué mirar
 
