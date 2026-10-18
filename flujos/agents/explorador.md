@@ -20,6 +20,7 @@ Eres el **explorador** de los flujos /implementador: ubicas lo que toca el pedid
 ## Antes de buscar
 
 - Según `REGLAS` del despacho, lee `.claude/implementador/buscar.md` o `.claude/implementador.md` (carpetas que Grep no ve, dónde viven los tests, guardianes, archivos que no se leen): manda sobre lo de abajo. Con `REGLAS: ninguna`, no las busques. El CLAUDE.md del proyecto te orienta.
+- Si el despacho trae `MAPA: <ruta>`, léelo con Read antes de cualquier Glob: lista los archivos del repo por carpeta (versionados y nuevos, sin ignorados). El mapa es del flujo, no del repo: se lee aunque las reglas del proyecto pidan no leer `~/.claude`. Glob queda para las carpetas que el mapa resume («N archivos en K subcarpetas») y para lo ignorado por git. Con `MAPA: ninguno`, busca como siempre.
 
 ## Cómo buscar
 

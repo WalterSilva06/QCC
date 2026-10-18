@@ -4,10 +4,12 @@
 //
 //   node ~/.claude/flujos/estado.mjs [--paso <n>] [--forzar]  preflight + foto global; abre la carpeta del flujo
 //   node ~/.claude/flujos/estado.mjs --base [--paso <n>]   foto nueva: BASE=<sha> DESDE=<iso>
+//   node ~/.claude/flujos/estado.mjs --base --sub <n> [--paso <n>]   foto de la subtarea n, guardada en la carpeta del flujo (si ya hay, conserva la primera)
 //   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"]
+//   node ~/.claude/flujos/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens "…"]   BASE, DESDE y permitidos salen de la carpeta del flujo
 //   node ~/.claude/flujos/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
-//   node ~/.claude/flujos/estado.mjs --guardar <agentId> plan|exploracion [--ajuste] [--paso <n>]
-//   node ~/.claude/flujos/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso
+//   node ~/.claude/flujos/estado.mjs --guardar <agentId> plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (revisor del plan, ciclos, CRÍTICO, ASPECTOS)
+//   node ~/.claude/flujos/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan)
 //   node ~/.claude/flujos/estado.mjs --reglas                reglas del proyecto para el orquestador
 //
 // `--paso <n>` (0 a 7) anota en qué paso del flujo se llama; la salida no cambia. Otro valor
@@ -20,7 +22,8 @@
 // el ejecutor escribió en otras rutas ignoradas aparece por el registro de la guardia.
 //
 // La carpeta del flujo (`registros/<proyecto>-<hash>-flujo/`) guarda `estado.json` (fotos, plan,
-// cierre), el informe del explorador, el plan y un `S<n>.md` por subtarea; el preflight la vacía, salvo
+// cierre), `mapa.md` (los archivos del repo por carpeta, que el preflight deja para el explorador), el informe
+// del explorador, el plan y un `S<n>.md` por subtarea; el preflight la vacía, salvo
 // que otro flujo del repo siga abierto (sin cierre y con actividad en los últimos 20 min, o 6 h si ya tiene
 // plan): entonces avisa con el título del plan y pide `--forzar`.
 // El cierre (`--cambios … --paso 7`) anota en `registros/flujos.jsonl` el costo real y los veredictos (costos.mjs).
@@ -43,6 +46,8 @@ const TOPE_DIFF = 1000
 const TOPE_SUCIOS = 30
 const TOPE_CAMBIOS = 20
 const TOPE_GRUPOS = 15
+const TOPE_MAPA = 300
+const TOPE_NOMBRES = 25
 const TOPE_REVERSION = 10
 const ABIERTO_MIN = 20
 // Con el plan ya guardado, el flujo puede pasar horas esperando la aprobación sin actividad.
@@ -164,6 +169,12 @@ function anotarEstado(cambio) {
   } catch {
     // Sin estado el flujo sigue igual.
   }
+}
+
+/** Las fotos por subtarea (`--base --sub`) del estado: `{ "<n>": { base, desde } }`, sin las entradas rotas. */
+function basesDe(estado) {
+  const crudas = estado.bases && typeof estado.bases === 'object' && !Array.isArray(estado.bases) ? estado.bases : {}
+  return Object.fromEntries(Object.entries(crudas).filter(([, f]) => f && typeof f.base === 'string' && f.base && typeof f.desde === 'string' && f.desde))
 }
 
 /** Hora (ms) de la última actividad de un flujo en este repo: su estado o el registro de la guardia; 0 si no hay. */
@@ -327,6 +338,64 @@ export function fusionarPlanes(previo, nuevo) {
   return [...cabecera, ...subtareas.flatMap((s) => [...s.lineas, '']), ...pie].join('\n').trim()
 }
 
+const RE_PRUEBAS = /(^|\/)(__tests__|tests?|specs?)\/|[._-](test|spec)\.[^/]+$/i
+
+/**
+ * Las decisiones que salen solas del plan (pasos.md pasos 2 y 3, comun.md §5 y §6), como líneas listas para imprimir:
+ * `{ revisorPlan, ciclos, critico, aspectos }`. `subtareas` trae `{ n, critica, permitidos, fijos }` (`fijos`: los criterios
+ * incondicionales de sus rutas críticas) y `pedidos` los criterios que piden las rutas críticas del plan (números, o `{ n, ruta }`).
+ * Ante cualquier duda gana lo más estricto: sin Clasificación, o una que no empieza con «sin criterios», cuenta como CRÍTICO,
+ * y también si hay pedidos o una subtarea de Crítica efectiva sí (la tiene si `critica` falta, no empieza con «no» o tiene `fijos`).
+ */
+export function decisionesDelPlan({ clasificacion = null, subtareas = [], pedidos = [] }) {
+  const lista = Array.isArray(subtareas) ? subtareas : []
+  const pedidas = (Array.isArray(pedidos) ? pedidos : [])
+    .map((p) => (typeof p === 'object' && p !== null ? { n: Number(p.n), ruta: p.ruta } : { n: Number(p), ruta: undefined }))
+    .filter((p) => Number.isInteger(p.n))
+  const textoClasificacion = clasificacion === null || clasificacion === undefined ? null : String(clasificacion).trim()
+  const criticas = lista.filter((s) => s.critica === null || s.critica === undefined || !/^no\b/i.test(String(s.critica).trim()) || (s.fijos ?? []).length > 0)
+  const critico = textoClasificacion === null || !/^sin criterios/i.test(textoClasificacion) || pedidas.length > 0 || criticas.length > 0
+  const delTexto = textoClasificacion === null ? [] : [...textoClasificacion.matchAll(/#(\d+)/g)].map((m) => Number(m[1]))
+  const citados = [...new Set([...delTexto, ...pedidas.map((p) => p.n)])].sort((a, b) => a - b)
+
+  const motivos = [
+    ...(critico ? ['CRÍTICO'] : []),
+    ...criticas.map((s) => `S${s.n} Crítica: sí`),
+    ...(lista.length >= 3 ? [`${lista.length} subtareas`] : []),
+    ...(lista.length === 0 ? ['sin subtareas'] : []),
+  ]
+  const revisorPlan = !critico && lista.length >= 1 && lista.length <= 2
+    ? `REVISOR DEL PLAN: se omite (sin criterios, ${lista.length} subtarea(s))`
+    : `REVISOR DEL PLAN: corre (${motivos.join(' · ')})`
+  const ciclos = `CICLOS DE LA REVISIÓN FINAL: ${critico ? 2 : 1}`
+
+  let linea
+  if (textoClasificacion === null) linea = 'sin Clasificación en el plan (cuenta como CRÍTICO)'
+  else if (!critico) linea = 'ninguno'
+  else {
+    const razon = /\s[—–]\s+(.+)$/s.exec(textoClasificacion)?.[1]?.trim()
+    const sinCitar = pedidas.filter((p) => !delTexto.includes(p.n))
+    linea = [
+      `${citados.length ? citados.map((n) => `#${n}`).join(', ') : 'sin números de criterio'}${razon ? ` — ${razon}` : ''}`,
+      ...(sinCitar.length ? [`rutas críticas: ${sinCitar.map((p) => `#${p.n}${p.ruta ? ` (${p.ruta})` : ''}`).join(', ')}`] : []),
+      ...(criticas.length ? [`primero ${criticas.map((s) => `S${s.n}`).join(', ')}`] : []),
+    ].join(' · ')
+  }
+
+  const permitidos = lista.flatMap((s) => (Array.isArray(s.permitidos) ? s.permitidos : []))
+  const soloTexto = permitidos.length > 0 && permitidos.every((p) => /\.md$/i.test(p))
+  const aspectos = [
+    'contratos, tipos y documentación',
+    ...(permitidos.some((p) => RE_PRUEBAS.test(p)) ? ['tests'] : []),
+    ...((textoClasificacion === null || citados.some((n) => [1, 2, 3, 6, 9].includes(n))) && !soloTexto ? ['casos borde y seguridad'] : []),
+  ].join(', ')
+
+  return { revisorPlan, ciclos, critico: `CRÍTICO: ${linea}`, aspectos: `ASPECTOS: ${aspectos}` }
+}
+
+/** Las líneas de `decisiones` (de `decisionesDelPlan`) en el orden en que se imprimen. */
+const lineasDeDecisiones = (d) => [d.revisorPlan, d.ciclos, d.critico, d.aspectos]
+
 /** Escribe un `S<n>.md` por subtarea, revisa campos y rutas críticas, anota el plan en el estado e imprime el resumen. */
 function resumirPlan(texto, destino) {
   const { cabecera, subtareas } = partesDelPlan(texto)
@@ -340,6 +409,7 @@ function resumirPlan(texto, destino) {
   if (campoDe(cabecera, 'Objetivo') === null) avisos.push('falta «Objetivo»')
   const porCriterio = new Map()
   const resumen = []
+  const paraDecidir = []
   console.log(`GUARDADO: plan → ${destino}`)
   console.log(`PLAN: ${subtareas.length} subtarea(s) · Clasificación: ${clasificacion ?? '(falta)'}`)
   for (const s of subtareas) {
@@ -361,6 +431,7 @@ function resumirPlan(texto, destino) {
       avisos.push(`S${s.n} · Crítica: no, pero sus rutas críticas piden #${[...fijos].sort((a, b) => a - b).join(', #')}: debe ser sí`)
     }
     resumen.push({ n: s.n, objetivo: s.objetivo, critica, permitidos })
+    paraDecidir.push({ n: s.n, critica, permitidos, fijos: [...fijos] })
     console.log(`S${s.n} · ${s.objetivo} · Crítica: ${critica ?? '(falta)'} · permitidos: ${permitidos.join(', ') || '(faltan)'} → ${archivo}`)
   }
   const pedidos = [...porCriterio.keys()].sort((a, b) => a - b)
@@ -374,7 +445,10 @@ function resumirPlan(texto, destino) {
   }
   if (!subtareas.length) avisos.push('no encontré subtareas «S<n> · …»: despacha copiando los campos del plan')
   console.log(avisos.length ? `AVISOS:\n${avisos.map((a) => `  - ${a}`).join('\n')}` : 'AVISOS: ninguno')
-  anotarEstado({ plan: destino, subtareas: resumen, ...(clasificacion !== null ? { clasificacion } : {}), ...(titulo ? { titulo: sinMarcas(titulo) } : {}) })
+  const decisiones = decisionesDelPlan({ clasificacion, subtareas: paraDecidir, pedidos: pedidos.map((n) => ({ n, ruta: porCriterio.get(n) })) })
+  console.log('DECISIONES (con los AVISOS resueltos a lo más estricto):')
+  for (const l of lineasDeDecisiones(decisiones)) console.log(l)
+  anotarEstado({ plan: destino, subtareas: resumen, decisiones, ...(clasificacion !== null ? { clasificacion } : {}), ...(titulo ? { titulo: sinMarcas(titulo) } : {}) })
 }
 
 /** Rutas de archivo que cita un informe (`ruta:línea`, absolutas o relativas), relativas al repo cuando caen dentro. */
@@ -446,8 +520,17 @@ function mostrarEstado() {
   for (const s of Array.isArray(e.subtareas) ? e.subtareas : []) {
     console.log(`  S${s.n} · ${s.objetivo} · permitidos: ${(s.permitidos ?? []).join(', ')} → ${path.join(FLUJO, `S${s.n}.md`)}`)
   }
+  const d = e.decisiones
+  if (d && typeof d === 'object' && [d.revisorPlan, d.ciclos, d.critico, d.aspectos].every((l) => typeof l === 'string')) {
+    console.log('DECISIONES (con los AVISOS resueltos a lo más estricto):')
+    for (const l of lineasDeDecisiones(d)) console.log(l)
+  }
   const fotos = Array.isArray(e.fotos) ? e.fotos : []
   fotos.forEach((f, i) => console.log(`FOTO ${i + 1} (--base): BASE=${f.base} DESDE=${f.desde}`))
+  const bases = basesDe(e)
+  for (const n of Object.keys(bases).sort((a, b) => Number(a) - Number(b))) {
+    console.log(`FOTO S${n} (--base --sub): BASE=${bases[n].base} DESDE=${bases[n].desde}`)
+  }
   const verde = ultimaVerde(RAIZ)
   if (verde) console.log(`ÚLTIMO VERDE: árbol ${corto(verde.arbol)} · ${verde.t}`)
 }
@@ -502,15 +585,18 @@ function preflight(forzar) {
       : null
   const { pasos, origen } = pasosDe(RAIZ)
   let flujo = FLUJO
+  let mapa = 'MAPA: ninguno (la carpeta del flujo no se preparó)'
   const abierto = forzar ? null : flujoAbierto()
   if (abierto) {
     const hora = new Date(abierto.inicio).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
     const plan = abierto.titulo ? `«${abierto.titulo}», ` : abierto.plan ? 'con plan, ' : 'sin plan todavía, '
     console.log(`AVISO: hay otro flujo abierto en este repo (${plan}empezó a las ${hora}, BASE_GLOBAL ${corto(abierto.base_global)}, sin cierre, con actividad hace ${Math.round(abierto.minutos)} min). Si sigue corriendo en otra sesión (o esperando su aprobación), los dos se pisan los archivos y la carpeta del flujo, que no vacié. Si ya no corre, repite el preflight con --forzar.`)
     flujo = '(ocupada por el flujo anterior: repite el preflight con --forzar si ya no corre)'
+    mapa = 'MAPA: ninguno (la carpeta del flujo está ocupada por el flujo anterior)'
   } else {
     try {
       nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [] })
+      mapa = escribirMapa()
     } catch (e) {
       flujo = `(no se pudo preparar: ${e.message}; despacha copiando el plan)`
     }
@@ -525,6 +611,7 @@ function preflight(forzar) {
   }
   console.log(`BASE_GLOBAL=${base} DESDE_GLOBAL=${desde}`)
   console.log(`FLUJO: ${flujo}`)
+  console.log(mapa)
   console.log(`REGLAS DEL PROYECTO: ${reglas ?? 'ninguna (no hay .claude/implementador/ ni .claude/implementador.md; rigen CLAUDE.md y las reglas comunes)'}`)
   console.log(`CONFIG: ${config.archivo ? '.claude/implementador.json' : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
   console.log(`VERIFICACIÓN (${origen}): ${pasos.length ? pasos.map((p) => p.cmd).join(' → ') : 'SIN PASOS'}`)
@@ -558,9 +645,61 @@ export function agruparPorCarpeta(rutas, tope = TOPE_GRUPOS) {
     for (const r of rutas) {
       const carpetas = r.split('/').slice(0, -1)
       const carpeta = carpetas.length ? `${carpetas.slice(0, n).join('/')}/` : './'
-      grupos.set(carpeta, [...(grupos.get(carpeta) ?? []), r])
+      if (grupos.has(carpeta)) grupos.get(carpeta).push(r)
+      else grupos.set(carpeta, [r])
     }
     if (grupos.size <= tope || n <= 1) return [...grupos].map(([carpeta, lista]) => ({ carpeta, rutas: lista }))
+  }
+}
+
+/** Extensión de una ruta (`.ts`); `(sin ext)` si el nombre no tiene. */
+const extensionDe = (ruta) => {
+  const nombre = ruta.slice(ruta.lastIndexOf('/') + 1)
+  const i = nombre.lastIndexOf('.')
+  return i > 0 ? nombre.slice(i) : '(sin ext)'
+}
+
+/**
+ * Las líneas del mapa del repo para el explorador: una por carpeta (con los nombres si los archivos están en ella,
+ * resumida por extensión si hay subcarpetas). Nunca más de `tope + 2` líneas.
+ */
+export function mapaDelRepo(rutas, tope = TOPE_MAPA) {
+  const grupos = agruparPorCarpeta(rutas, tope)
+  const lineas = [
+    `MAPA · ${rutas.length} archivos (git ls-files: versionados y nuevos, sin ignorados) · ${grupos.length} carpeta(s)`,
+    'Las carpetas resumidas se exploran con Glob; lo ignorado por git no aparece.',
+  ]
+  const mostrados = grupos.length > tope ? grupos.slice(0, Math.max(0, tope - 1)) : grupos
+  for (const { carpeta, rutas: lista } of mostrados) {
+    const prefijo = carpeta === './' ? '' : carpeta
+    const nombres = lista.map((r) => r.slice(prefijo.length))
+    if (nombres.every((n) => !n.includes('/'))) {
+      const resto = nombres.length - TOPE_NOMBRES
+      lineas.push(`${carpeta} — ${nombres.slice(0, TOPE_NOMBRES).join(', ')}${resto > 0 ? `, … y ${resto} más` : ''}`)
+      continue
+    }
+    const subcarpetas = new Set(lista.map((r) => r.slice(0, r.lastIndexOf('/') + 1)).filter((c) => c !== prefijo))
+    const extensiones = new Map()
+    for (const r of lista) extensiones.set(extensionDe(r), (extensiones.get(extensionDe(r)) ?? 0) + 1)
+    const top = [...extensiones].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 5)
+    lineas.push(`${carpeta} — ${lista.length} archivos en ${subcarpetas.size} subcarpetas (${top.map(([e, c]) => `${e} ${c}`).join(', ')})`)
+  }
+  if (mostrados.length < grupos.length) {
+    const sobran = grupos.slice(mostrados.length)
+    lineas.push(`… y ${sobran.length} carpetas más (${sobran.reduce((s, g) => s + g.rutas.length, 0)} archivos)`)
+  }
+  return lineas
+}
+
+/** Escribe `<FLUJO>/mapa.md` con los archivos del repo (versionados y nuevos, sin ignorados) y devuelve la línea `MAPA:` del preflight. */
+function escribirMapa() {
+  try {
+    const rutas = [...new Set(git(['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0').filter(Boolean))].sort()
+    const archivo = path.join(FLUJO, 'mapa.md')
+    fs.writeFileSync(archivo, mapaDelRepo(rutas).join('\n') + '\n')
+    return `MAPA: ${archivo} (${rutas.length} archivos)`
+  } catch (e) {
+    return `MAPA: ninguno (${String(e.message).split('\n')[0]})`
   }
 }
 
@@ -698,6 +837,56 @@ function cerrarFlujo(base, desde, tokens) {
   }
 }
 
+/**
+ * `--base --sub <n>`: guarda la foto de la subtarea `n` en `bases` del estado del flujo e imprime `BASE=… DESDE=…`.
+ * Si ya había una, conserva la primera (un reintento no esconde lo que el ejecutor ya editó).
+ */
+function fotoDeSubtarea(n) {
+  if (n === null) throw new Error('--sub necesita el número de la subtarea (un entero ≥ 1)')
+  const bases = basesDe(leerEstado())
+  const previa = bases[String(n)]
+  if (previa) console.log(`AVISO: S${n} ya tenía foto; se conserva la primera (la de antes de su ejecutor)`)
+  const vigente = previa ?? { base: foto(), desde: new Date().toISOString() }
+  if (!previa) anotarEstado({ bases: { ...bases, [String(n)]: vigente } })
+  console.log(`BASE=${vigente.base} DESDE=${vigente.desde}`)
+}
+
+/**
+ * `--cambios --sub <n>` o `--cambios --global`: BASE, DESDE y permitidos salen de la carpeta del flujo.
+ * Los permitidos son los del plan (los de la subtarea, o los de todas) más los `--permitidos` explícitos (los ampliados).
+ * Devuelve `{ base, desde, permitidos }` e imprime la línea `FOTO`; lanza un error si falta algo.
+ */
+function contextoDelFlujo({ base, desde, permitidos, sub, global }) {
+  if (sub === null) throw new Error('--sub necesita el número de la subtarea (un entero ≥ 1)')
+  if (sub !== undefined && global) throw new Error('--sub y --global no van juntos')
+  if (base !== undefined || desde !== undefined) {
+    throw new Error('--sub y --global toman la BASE y el DESDE de la carpeta del flujo: quita <BASE> y --desde, o usa la forma explícita')
+  }
+  const e = leerEstado()
+  const subtareas = Array.isArray(e.subtareas) ? e.subtareas : []
+  const delPlan = (s) => (Array.isArray(s?.permitidos) ? s.permitidos.map(String) : [])
+  let etiqueta
+  let inicio
+  let previstos
+  if (global) {
+    if (!e.base_global) throw new Error('sin BASE_GLOBAL en la carpeta del flujo: usa --cambios <BASE> --desde <DESDE> --permitidos "…"')
+    etiqueta = 'GLOBAL'
+    inicio = { base: e.base_global, desde: e.desde_global }
+    previstos = [...new Set(subtareas.flatMap(delPlan))]
+  } else {
+    const f = basesDe(e)[String(sub)]
+    if (!f) throw new Error(`sin foto de S${sub} en la carpeta del flujo: usa --cambios <BASE> --desde <DESDE> --permitidos "…"`)
+    etiqueta = `S${sub}`
+    inicio = f
+    previstos = [...new Set(delPlan(subtareas.find((s) => Number(s?.n) === sub)))]
+  }
+  const ampliados = [...new Set(permitidos)].filter((p) => !previstos.includes(p))
+  const unidos = [...previstos, ...ampliados]
+  if (!unidos.length) throw new Error('sin plan guardado ni --permitidos: usa la forma explícita (--cambios <BASE> --desde <DESDE> --permitidos "…")')
+  console.log(`FOTO ${etiqueta}: BASE=${corto(inicio.base)} DESDE=${inicio.desde} · permitidos: ${previstos.length} del plan + ${ampliados.length} ampliados`)
+  return { base: inicio.base, desde: inicio.desde, permitidos: unidos }
+}
+
 function diff(base, permitidos, rutas) {
   const ahora = foto(permitidos)
   const filtro = ['--', ...rutas]
@@ -722,6 +911,8 @@ function diff(base, permitidos, rutas) {
  * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --estado > --guardar > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
  * `agente` y `tipo`, los dos valores que siguen a `--guardar`.
+ * `--sub <n>` agrega `sub` (el entero ≥ 1, o null si no lo es) y `--global` agrega `global: true`; sin el flag no aparece la clave.
+ * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
 export function opcionesDe(args) {
   const corte = args.indexOf('--')
@@ -744,6 +935,9 @@ export function opcionesDe(args) {
     modo = 'diff'
     base = valor('--diff')
   }
+  const conSub = opciones.includes('--sub')
+  const conGlobal = opciones.includes('--global')
+  if (modo === 'cambios' && (conSub || conGlobal) && String(base ?? '').startsWith('--')) base = undefined
   let paso = null
   let aviso
   if (opciones.includes('--paso')) {
@@ -764,6 +958,8 @@ export function opcionesDe(args) {
     tipo: modo === 'guardar' ? valor('--guardar', 2) : undefined,
     ajuste: opciones.includes('--ajuste'),
     forzar: opciones.includes('--forzar'),
+    ...(conSub ? { sub: /^\d+$/.test(valor('--sub') ?? '') && Number.isSafeInteger(Number(valor('--sub'))) && Number(valor('--sub')) >= 1 ? Number(valor('--sub')) : null } : {}),
+    ...(conGlobal ? { global: true } : {}),
   }
 }
 
@@ -792,7 +988,7 @@ export function anotarFlujo(archivo, fila) {
 }
 
 function main() {
-  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, agente, tipo, ajuste, forzar } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, agente, tipo, ajuste, forzar, sub, global } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   // Ni las reglas ni el estado necesitan git: las reglas se inyectan antes del preflight.
   if (modo === 'reglas') {
@@ -815,15 +1011,17 @@ function main() {
     if (git(['rev-parse', '--is-inside-work-tree'], { opcional: true })?.trim() !== 'true') {
       throw new Error(`${RAIZ} no es un repositorio git: los flujos necesitan git (el usuario puede hacer git init)`)
     }
-    if (modo === 'base') {
+    if (modo === 'base' && sub !== undefined) fotoDeSubtarea(sub)
+    else if (modo === 'base') {
       const nueva = { base: foto(), desde: new Date().toISOString() }
       const { fotos } = leerEstado()
       anotarEstado({ fotos: [...(Array.isArray(fotos) ? fotos : []), nueva] })
       console.log(`BASE=${nueva.base} DESDE=${nueva.desde}`)
     } else if (modo === 'cambios') {
-      exigirBase(base)
+      const del = sub !== undefined || global ? contextoDelFlujo({ base, desde, permitidos, sub, global }) : { base, desde, permitidos }
+      exigirBase(del.base)
       if (tokens !== undefined && paso !== 7) console.log('AVISO: --tokens solo vale en el cierre (--cambios … --paso 7); se ignora')
-      cambios(base, desde, permitidos, paso, tokens)
+      cambios(del.base, del.desde, del.permitidos, paso, tokens)
       if (paso === 7) anotarEstado({ cierre: new Date().toISOString() })
     } else if (modo === 'diff') diff(exigirBase(base), permitidos, rutas)
     else preflight(forzar)

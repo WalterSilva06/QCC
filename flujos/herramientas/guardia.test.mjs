@@ -14,7 +14,7 @@ import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, analizar, raizDe, registroDe, flujoDe, configDe, coincide } from './guardia.mjs'
-import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta } from './estado.mjs'
+import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta, mapaDelRepo, decisionesDelPlan } from './estado.mjs'
 import { pasosDe, detalleTipos, resumenTest, detalleTest, conDetalle } from './verificar.mjs'
 import { costoDePedido, precioDe } from './costos.mjs'
 
@@ -446,6 +446,17 @@ test('estado: opciones y --paso', () => {
   assert.deepEqual(c.permitidos, ['a', 'b'])
   assert.equal(c.paso, 6)
 
+  // --sub y --global: las claves solo aparecen si el flag está, y --cambios no toma una opción como BASE.
+  const s = opcionesDe(['--cambios', '--sub', '2', '--paso', '5'])
+  assert.deepEqual([s.modo, s.base, s.sub, s.paso, 'global' in s], ['cambios', undefined, 2, 5, false])
+  const gl = opcionesDe(['--cambios', '--global'])
+  assert.deepEqual([gl.modo, gl.base, gl.global, 'sub' in gl], ['cambios', undefined, true, false])
+  assert.equal(opcionesDe(['--cambios', '--sub', 'x']).sub, null)
+  assert.equal(opcionesDe(['--cambios', '--sub', '0']).sub, null)
+  assert.equal(opcionesDe(['--cambios', '--sub']).sub, null)
+  assert.equal(opcionesDe(['--cambios', 'abc123', '--sub', '1']).base, 'abc123')
+  assert.equal(opcionesDe(['--base', '--sub', '3']).sub, 3)
+
   const d = opcionesDe(['--diff', 'abc123', '--', 'x.ts', '--paso', '2'])
   assert.equal(d.modo, 'diff')
   assert.equal(d.base, 'abc123')
@@ -520,6 +531,74 @@ test('estado: preflight y --paso', () => {
   const malo = estadoCon(config, () => ['--paso', 'x'])
   assert.match(malo.salida, /^AVISO: --paso x no es un paso \(0–7\); se ignora$/m)
   preflight(malo)
+})
+
+test('estado: mapaDelRepo resume por carpeta con tope', () => {
+  const cabecera = (n, k) => [
+    `MAPA · ${n} archivos (git ls-files: versionados y nuevos, sin ignorados) · ${k} carpeta(s)`,
+    'Las carpetas resumidas se exploran con Glob; lo ignorado por git no aparece.',
+  ]
+
+  // Pocas rutas: una línea por carpeta, con los nombres; la raíz es ./.
+  assert.deepEqual(mapaDelRepo(['README.md', 'docs/x.md', 'src/a.ts', 'src/b.ts']), [
+    ...cabecera(4, 3),
+    './ — README.md',
+    'docs/ — x.md',
+    'src/ — a.ts, b.ts',
+  ])
+  assert.deepEqual(mapaDelRepo([]), cabecera(0, 0))
+
+  // Con subcarpetas dentro del grupo: cuenta, subcarpetas y extensiones más frecuentes.
+  assert.deepEqual(mapaDelRepo(['src/a/x.ts', 'src/b/y.ts', 'src/b/z.md', 'src/w.ts'], 2), [
+    ...cabecera(4, 1),
+    'src/ — 4 archivos en 2 subcarpetas (.ts 3, .md 1)',
+  ])
+
+  // 30 archivos en una carpeta: 25 nombres y el resto contado.
+  const treinta = Array.from({ length: 30 }, (_, i) => `docs/f${String(i + 1).padStart(2, '0')}.md`)
+  const [, , linea] = mapaDelRepo(treinta)
+  assert.equal(linea, `docs/ — ${treinta.slice(0, 25).map((r) => r.slice(5)).join(', ')}, … y 5 más`)
+
+  // 400 carpetas bajo a/: el resumen cabe en el tope.
+  const muchas = Array.from({ length: 400 }, (_, i) => `a/${i}/b/f.ts`).sort()
+  const resumen = mapaDelRepo(muchas)
+  assert.ok(resumen.length <= 302, `líneas: ${resumen.length}`)
+  assert.equal(resumen[2], 'a/ — 400 archivos en 400 subcarpetas (.ts 400)')
+
+  // Más carpetas de primer nivel que el tope: se cortan y la última línea cuenta lo que falta.
+  const raices = Array.from({ length: 310 }, (_, i) => `d${i}/f.ts`).sort()
+  const cortado = mapaDelRepo(raices)
+  assert.ok(cortado.length <= 302, `líneas: ${cortado.length}`)
+  assert.match(cortado.at(-1), /^… y \d+ carpetas más \(\d+ archivos\)$/)
+})
+
+test('estado: el preflight deja mapa.md', () => {
+  const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
+  const { raiz, salida } = estadoCon(config, () => ['--paso', '0'], {
+    '.gitignore': 'ignorado.txt\n',
+    'ignorado.txt': 'i\n',
+    'docs/canción.md': 'c\n',
+  })
+  const linea = /^MAPA: (.*mapa\.md) \(\d+ archivos\)$/m.exec(salida)
+  assert.ok(linea, salida)
+  assert.equal(linea[1], path.join(flujoDe(raiz), 'mapa.md'))
+  // Va justo después de FLUJO.
+  assert.match(salida, /^FLUJO: .*\n^MAPA: /m)
+  const mapa = fs.readFileSync(linea[1], 'utf8')
+  assert.match(mapa, /^docs\/ — canción\.md$/m)
+  assert.doesNotMatch(mapa, /"|\\\d{3}/)
+  assert.doesNotMatch(mapa, /ignorado\.txt/)
+
+  // Con la carpeta ocupada no se toca el mapa.
+  fs.writeFileSync(path.join(raiz, 'nuevo.ts'), 'n\n')
+  assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^MAPA: ninguno/m)
+  assert.doesNotMatch(fs.readFileSync(linea[1], 'utf8'), /nuevo\.ts/)
+
+  // Con --forzar se rehace e incluye lo nuevo sin commit.
+  const forzado = estadoEn(raiz, ['--paso', '0', '--forzar'])
+  assert.match(forzado.salida, /^MAPA: .*mapa\.md \(\d+ archivos\)$/m)
+  assert.match(fs.readFileSync(linea[1], 'utf8'), /nuevo\.ts/)
+  assert.equal(forzado.codigo, 0)
 })
 
 test('estado: preflight informa las reglas del proyecto', () => {
@@ -711,6 +790,71 @@ test('estado: permitidos, rutas críticas y fusión de un re-plan (puras)', () =
   assert.match(fusion, /^Clasificación: sin criterios/m)
 })
 
+test('estado: decisionesDelPlan replica pasos.md y comun.md', () => {
+  const sub = (n, permitidos, critica = 'no', fijos = []) => ({ n, critica, permitidos, fijos })
+  const SIN = 'sin criterios — solo texto'
+
+  // Sin criterios, 2 subtareas `no` y solo .md: se omite, un ciclo, nada crítico.
+  const a = decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['README.md']), sub(2, ['docs/x.MD'])], pedidos: [] })
+  assert.equal(a.revisorPlan, 'REVISOR DEL PLAN: se omite (sin criterios, 2 subtarea(s))')
+  assert.equal(a.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 1')
+  assert.equal(a.critico, 'CRÍTICO: ninguno')
+  assert.equal(a.aspectos, 'ASPECTOS: contratos, tipos y documentación')
+
+  // Una sola subtarea también se omite; con tres o ninguna, corre.
+  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.mjs'])] }).revisorPlan, /^REVISOR DEL PLAN: se omite \(sin criterios, 1 subtarea\(s\)\)$/)
+  const tres = decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md']), sub(2, ['b.md']), sub(3, ['c.md'])] })
+  assert.equal(tres.revisorPlan, 'REVISOR DEL PLAN: corre (3 subtareas)')
+  assert.equal(tres.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 1')
+  assert.equal(decisionesDelPlan({ clasificacion: SIN, subtareas: [] }).revisorPlan, 'REVISOR DEL PLAN: corre (sin subtareas)')
+
+  // Sin Clasificación cuenta como CRÍTICO y mira los casos borde si no es solo texto.
+  const sinClas = decisionesDelPlan({ clasificacion: null, subtareas: [sub(1, ['flujos/herramientas/estado.mjs'])] })
+  assert.equal(sinClas.revisorPlan, 'REVISOR DEL PLAN: corre (CRÍTICO)')
+  assert.equal(sinClas.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 2')
+  assert.equal(sinClas.critico, 'CRÍTICO: sin Clasificación en el plan (cuenta como CRÍTICO)')
+  assert.match(sinClas.aspectos, /casos borde y seguridad/)
+  assert.doesNotMatch(decisionesDelPlan({ clasificacion: null, subtareas: [sub(1, ['README.md'])] }).aspectos, /casos borde/)
+
+  // CRÍTICO (#1, #5) cita #1: casos borde solo si el cambio no es solo texto.
+  const solo = decisionesDelPlan({ clasificacion: 'CRÍTICO (#1, #5) — x', subtareas: [sub(1, ['README.md'], 'sí')] })
+  assert.equal(solo.critico, 'CRÍTICO: #1, #5 — x · primero S1')
+  assert.doesNotMatch(solo.aspectos, /casos borde/)
+  assert.equal(solo.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 2')
+  assert.equal(solo.revisorPlan, 'REVISOR DEL PLAN: corre (CRÍTICO · S1 Crítica: sí)')
+  assert.match(decisionesDelPlan({ clasificacion: 'CRÍTICO (#1, #5) — x', subtareas: [sub(1, ['a.mjs'], 'sí')] }).aspectos, /^ASPECTOS: contratos, tipos y documentación, casos borde y seguridad$/)
+
+  // CRÍTICO (#5) no cita ninguno de #1, #2, #3, #6, #9: sin casos borde.
+  assert.doesNotMatch(decisionesDelPlan({ clasificacion: 'CRÍTICO (#5)', subtareas: [sub(1, ['a.mjs'], 'sí')] }).aspectos, /casos borde/)
+  for (const n of [2, 3, 6, 9]) assert.match(decisionesDelPlan({ clasificacion: `CRÍTICO (#${n})`, subtareas: [sub(1, ['a.mjs'], 'sí')] }).aspectos, /casos borde/, `#${n}`)
+
+  // `critica` ausente o que no empieza con «no» cuenta como sí; «nota» no es «no».
+  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'], null)] }).revisorPlan, /^REVISOR DEL PLAN: corre \(CRÍTICO · S1 Crítica: sí\)$/)
+  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'], 'nota')] }).revisorPlan, /^REVISOR DEL PLAN: corre /)
+  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'], 'No — texto')] }).revisorPlan, /^REVISOR DEL PLAN: se omite /)
+  // Una subtarea `no` con rutas críticas fijas pasa a sí.
+  const fijas = decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['flujos/x.mjs'], 'no', [1])] })
+  assert.equal(fijas.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 2')
+  assert.match(fijas.critico, /· primero S1$/)
+
+  // Sin criterios con pedidos [1, 5]: CRÍTICO, dos ciclos y las rutas que lo piden.
+  const pedidos = decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'])], pedidos: [{ n: 1, ruta: 'flujos/a.mjs' }, 5] })
+  assert.equal(pedidos.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 2')
+  assert.equal(pedidos.critico, 'CRÍTICO: #1, #5 — solo texto · rutas críticas: #1 (flujos/a.mjs), #5')
+  assert.match(pedidos.revisorPlan, /^REVISOR DEL PLAN: corre \(CRÍTICO\)$/)
+  // Si la Clasificación ya cita el criterio, no se repite como ruta crítica.
+  assert.doesNotMatch(decisionesDelPlan({ clasificacion: 'CRÍTICO (#1) — y', subtareas: [sub(1, ['a.mjs'])], pedidos: [1] }).critico, /rutas críticas/)
+  // Una Clasificación con texto extra no es «sin criterios»; un guion largo en la razón se conserva.
+  assert.equal(decisionesDelPlan({ clasificacion: 'casi sin criterios', subtareas: [sub(1, ['a.md'])] }).ciclos, 'CICLOS DE LA REVISIÓN FINAL: 2')
+  assert.equal(decisionesDelPlan({ clasificacion: 'CRÍTICO (#3) – uno — dos', subtareas: [sub(1, ['a.mjs'])] }).critico, 'CRÍTICO: #3 — uno — dos')
+
+  // Tests entre los permitidos: `tests` en ASPECTOS (carpeta o sufijo, sin distinguir mayúsculas).
+  for (const ruta of ['flujos/herramientas/guardia.test.mjs', 'panel-uso/tests/panel.tsx', 'src/__tests__/a.ts', 'x/Foo.SPEC.ts', 'a_test.py']) {
+    assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, [ruta])] }).aspectos, /, tests/, ruta)
+  }
+  assert.doesNotMatch(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['src/contest.ts', 'latest/a.ts'])] }).aspectos, /tests/)
+})
+
 test('estado: --guardar arma el plan, un S<n>.md por subtarea y avisa las rutas críticas', () => {
   const claude = transcripts({ planuno: PLAN, explora: 'ARCHIVOS\n- a.ts:1 — x', ajuste: 'S1 · Cambiar la guardia\n- Crítica: sí (#1, #5)\n- Archivos permitidos: flujos/herramientas/guardia.mjs\n- Hecho cuando: verde\n- Tests: t\n- Riesgos: r\n- Reversión: v\nSin cambios: S2' })
   const entorno = { CLAUDE_CONFIG_DIR: claude }
@@ -730,6 +874,14 @@ test('estado: --guardar arma el plan, un S<n>.md por subtarea y avisa las rutas 
   assert.match(s1, /^- Hecho cuando: node --test → verde$/m)
   assert.doesNotMatch(s1, /Documentar|PREGUNTAS/)
   assert.equal(JSON.parse(fs.readFileSync(path.join(carpeta, 'estado.json'), 'utf8')).subtareas.length, 2)
+  assert.match(salida, /^DECISIONES \(con los AVISOS resueltos a lo más estricto\):$/m)
+  assert.match(salida, /^REVISOR DEL PLAN: corre /m)
+  assert.match(salida, /^CICLOS DE LA REVISIÓN FINAL: 2$/m)
+  assert.match(salida, /^CRÍTICO: #1, #5 /m)
+  assert.match(salida, /^ASPECTOS: .*casos borde y seguridad/m)
+  const decisiones = JSON.parse(fs.readFileSync(path.join(carpeta, 'estado.json'), 'utf8')).decisiones
+  assert.deepEqual(Object.keys(decisiones).sort(), ['aspectos', 'ciclos', 'critico', 'revisorPlan'])
+  assert.match(decisiones.critico, /^CRÍTICO: #1, #5 — solo un ajuste · rutas críticas: #1 \(flujos\/herramientas\/guardia\.mjs\), #5 \(flujos\/herramientas\/guardia\.mjs\) · primero S1$/)
 
   // Un re-plan con --ajuste reemplaza solo S1; la Clasificación sigue siendo la del plan.
   const ajuste = estadoEn(raiz, ['--guardar', 'ajuste', 'plan', '--ajuste', '--paso', '4'], entorno).salida
@@ -745,6 +897,100 @@ test('estado: --guardar arma el plan, un S<n>.md por subtarea y avisa las rutas 
   assert.match(nadie.salida, /^AVISO: no encontré el informe del agente nadie: despacha copiando su texto, como antes$/m)
   assert.equal(nadie.codigo, 0)
   assert.match(estadoEn(raiz, ['--guardar', 'planuno', 'otro'], entorno).salida, /^AVISO: --guardar <agentId> plan\|exploracion: tipo desconocido «otro»/m)
+})
+
+test('estado: --base --sub y --cambios --sub/--global toman la foto y los permitidos del flujo', () => {
+  const subtarea = (n, permitidos) => `S${n} · Tarea ${n}\n- Crítica: no\n- Archivos permitidos: ${permitidos}\n- Hecho cuando: x\n- Tests: t\n- Riesgos: r\n- Reversión: v`
+  const plan = `PLAN · Fotos\nClasificación: sin criterios\nObjetivo: probar\n\n${subtarea(1, 'src/a.ts')}\n\n${subtarea(2, 'docs/x.md')}`
+  const claude = transcripts({ plano: plan, ajuste: subtarea(1, 'src/a.ts, src/b.ts') })
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+  const raiz = repo('foto-sub', { 'src/a.ts': 'a\n', 'dist/x.js': 'x\n', 'docs/x.md': 'd\n' })
+  temporales.push(raiz)
+  estadoEn(raiz, ['--paso', '0'], entorno)
+  assert.match(estadoEn(raiz, ['--guardar', 'plano', 'plan'], entorno).salida, /^PLAN: 2 subtarea\(s\)/m)
+
+  const foto = estadoEn(raiz, ['--base', '--sub', '1', '--paso', '5'], entorno)
+  const f = /^BASE=(\w+) DESDE=(\S+)$/m.exec(foto.salida)
+  assert.ok(f, foto.salida)
+  assert.doesNotMatch(foto.salida, /AVISO/)
+  const estadoJson = () => JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8'))
+  assert.deepEqual(estadoJson().bases['1'], { base: f[1], desde: f[2] })
+  assert.deepEqual(estadoJson().fotos, [])
+
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
+  fs.writeFileSync(path.join(raiz, 'dist/x.js'), 'x2\n')
+  const c = estadoEn(raiz, ['--cambios', '--sub', '1', '--paso', '6'], entorno)
+  assert.match(c.salida, new RegExp(`^FOTO S1: BASE=${f[1].slice(0, 9)} DESDE=${f[2]} · permitidos: 1 del plan \\+ 0 ampliados$`, 'm'))
+  assert.match(c.salida, /^ {2}✓ M src\/a\.ts$/m)
+  assert.match(c.salida, /^ {2}✗ M dist\/x\.js {3}← FUERA DE ALCANCE$/m)
+  assert.match(c.salida, /ALCANCE: FUERA \(1\)\s*$/)
+  assert.equal(c.codigo, 0)
+  const ampliado = estadoEn(raiz, ['--cambios', '--sub', '1', '--permitidos', 'dist/x.js,src/a.ts'], entorno).salida
+  assert.match(ampliado, /permitidos: 1 del plan \+ 1 ampliados$/m)
+  assert.match(ampliado, /ALCANCE: OK\s*$/)
+
+  // Repetir --base --sub conserva la primera foto: no esconde lo que el ejecutor ya editó.
+  const otra = estadoEn(raiz, ['--base', '--sub', '1'], entorno).salida
+  assert.match(otra, /^AVISO: S1 ya tenía foto; se conserva la primera \(la de antes de su ejecutor\)$/m)
+  assert.match(otra, new RegExp(`^BASE=${f[1]} DESDE=${f[2]}$`, 'm'))
+  assert.match(estadoEn(raiz, ['--cambios', '--sub', '1'], entorno).salida, /^ {2}✓ M src\/a\.ts$/m)
+
+  // Un re-plan con --ajuste reemplaza las subtareas, pero las fotos siguen.
+  const ajustado = estadoEn(raiz, ['--guardar', 'ajuste', 'plan', '--ajuste'], entorno).salida
+  assert.match(ajustado, /permitidos: src\/a\.ts, src\/b\.ts/)
+  assert.deepEqual(estadoJson().bases['1'], { base: f[1], desde: f[2] })
+  assert.match(estadoEn(raiz, ['--cambios', '--sub', '1'], entorno).salida, /permitidos: 2 del plan \+ 0 ampliados$/m)
+
+  // --base sin --sub sigue en `fotos`; --estado lista las dos.
+  const sinSub = /^BASE=(\w+) DESDE=(\S+)$/m.exec(estadoEn(raiz, ['--base', '--paso', '5'], entorno).salida)
+  assert.deepEqual(estadoJson().fotos, [{ base: sinSub[1], desde: sinSub[2] }])
+  estadoEn(raiz, ['--base', '--sub', '2'], entorno)
+  const resumen = estadoEn(raiz, ['--estado'], entorno).salida
+  assert.match(resumen, new RegExp(`^FOTO 1 \\(--base\\): BASE=${sinSub[1]} DESDE=${sinSub[2]}$`, 'm'))
+  assert.match(resumen, new RegExp(`^FOTO S1 \\(--base --sub\\): BASE=${f[1]} DESDE=${f[2]}$`, 'm'))
+  assert.match(resumen, /^FOTO S2 \(--base --sub\): BASE=\w+ DESDE=\S+$/m)
+
+  // --estado reimprime las DECISIONES guardadas después de PLAN:
+  const decisiones = estadoJson().decisiones
+  assert.match(decisiones.revisorPlan, /^REVISOR DEL PLAN: se omite \(sin criterios, 2 subtarea\(s\)\)$/)
+  assert.ok(resumen.indexOf('PLAN:') < resumen.indexOf('DECISIONES (con los AVISOS resueltos a lo más estricto):'))
+  for (const l of [decisiones.revisorPlan, decisiones.ciclos, decisiones.critico, decisiones.aspectos]) assert.ok(resumen.includes(`\n${l}\n`), l)
+
+  // Errores: sin foto, argumentos incompatibles y --sub sin número.
+  for (const args of [['--sub', '3'], ['--sub', '1', '--global'], ['--sub', 'x'], ['--sub']]) {
+    const r = estadoEn(raiz, ['--cambios', ...args], entorno)
+    assert.match(r.salida, /^ERROR: /m, args.join(' '))
+    assert.equal(r.codigo, 2, args.join(' '))
+  }
+  assert.match(estadoEn(raiz, ['--cambios', '--sub', '3'], entorno).salida, /^ERROR: sin foto de S3 en la carpeta del flujo: usa --cambios <BASE> --desde <DESDE> --permitidos "…"$/m)
+  const conBase = estadoEn(raiz, ['--cambios', f[1], '--sub', '1'], entorno)
+  assert.match(conBase.salida, /^ERROR: /m)
+  assert.equal(conBase.codigo, 2)
+  const conDesde = estadoEn(raiz, ['--cambios', '--sub', '1', '--desde', f[2]], entorno)
+  assert.match(conDesde.salida, /^ERROR: /m)
+  assert.equal(conDesde.codigo, 2)
+  const sinNumero = estadoEn(raiz, ['--base', '--sub', 'x'], entorno)
+  assert.match(sinNumero.salida, /^ERROR: /m)
+  assert.equal(sinNumero.codigo, 2)
+
+  // --global: la foto del preflight y la unión de los permitidos del plan; en el cierre no avisa de otra BASE.
+  const global = estadoEn(raiz, ['--cambios', '--global', '--paso', '7'], entorno)
+  assert.match(global.salida, /^FOTO GLOBAL: BASE=\w+ DESDE=\S+ · permitidos: 3 del plan \+ 0 ampliados$/m)
+  assert.doesNotMatch(global.salida, /AVISO: el cierre va con BASE_GLOBAL/)
+  assert.match(global.salida, /^REVERSIÓN: /m)
+  assert.match(global.salida, /ALCANCE: FUERA \(1\)\s*$/)
+  assert.equal(global.codigo, 0)
+
+  // Un flujo viejo (sin plan ni fotos por subtarea) pide la forma explícita.
+  const vieja = repo('foto-vieja', { 'src/a.ts': 'a\n' })
+  temporales.push(vieja)
+  estadoEn(vieja, ['--paso', '0'], entorno)
+  for (const args of [['--sub', '1'], ['--global']]) {
+    const r = estadoEn(vieja, ['--cambios', ...args], entorno)
+    assert.match(r.salida, /^ERROR: sin /m, args.join(' '))
+    assert.equal(r.codigo, 2, args.join(' '))
+  }
+  assert.match(estadoEn(vieja, ['--cambios', '--global', '--permitidos', 'src/a.ts'], entorno).salida, /permitidos: 0 del plan \+ 1 ampliados$/m)
 })
 
 test('estado: --cambios agrupa muchos archivos por carpeta y el cierre da la reversión exacta', () => {
