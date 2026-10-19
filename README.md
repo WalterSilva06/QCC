@@ -7,8 +7,8 @@ Son herramientas personales, en dos partes separadas.
 
 | Parte | Carpeta | Qué es | Documentación |
 |---|---|---|---|
-| Mod | `panel-uso/` | Panel lateral con el contexto de la sesión, los límites de uso, el esfuerzo, el consumo de tokens y el paso del flujo en curso. Comando `/uso`. | [MODS.md](MODS.md) |
-| Flujos | `flujos/` | Los flujos `/implementador` y `/generar-commit` (mensaje y commit automáticos, en Haiku), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
+| Mod | `panel-uso/` | Panel lateral con los límites de uso y cuatro pestañas: Inicio (contexto de la sesión, esfuerzo y tokens), Flujo (el paso del flujo en curso), Gasto semanal e Historial de flujos. Comandos `/uso` y `/uso carpeta`. | [MODS.md](MODS.md) |
+| Flujos | `flujos/` | `/implementador` (explora, planifica, ejecuta por subtareas y cierra con una revisión final independiente) y `/generar-commit` (mensaje y commit automáticos, en Haiku high), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
 
 ## Instalar
 
@@ -19,15 +19,26 @@ claude plugin marketplace add <ruta del repo>\panel-uso
 claude plugin install panel-uso@mods-locales
 ```
 
-Flujos, desde la raíz del repo (detalles en [FLUJOS.md](FLUJOS.md#instalación)):
+Después de editar el mod, `/reload-plugins` lo vuelve a leer.
+
+Flujos, desde la raíz del repo (detalles y opciones en [FLUJOS.md](FLUJOS.md#instalación)):
 
 ```
 node flujos/instalar.mjs
 ```
 
+Los flujos corren desde la copia instalada en `~/.claude`: un cambio en `flujos/` no rige hasta volver a instalarlo. Lo que se edite directo en `~/.claude` se trae al repo con `node flujos/instalar.mjs --traer`.
+
 ## Verificar
 
-Los comandos de verificación del mod y de la guardia de los flujos están en [AGENTS.md](AGENTS.md#verificar); tienen que terminar sin errores antes de dar algo por hecho.
+```
+claude plugin validate panel-uso
+claude plugin test panel-uso
+node --test flujos/herramientas/guardia.test.mjs
+node --test flujos/herramientas/generar-commit/solo-git.test.mjs
+```
+
+Los cuatro tienen que terminar sin errores antes de dar algo por hecho (ver [AGENTS.md](AGENTS.md#verificar)).
 
 ## Índice
 
