@@ -5,7 +5,7 @@ Herramientas personales para Claude Code, en dos partes separadas.
 | Parte | Carpeta | Qué es | Documentación |
 |---|---|---|---|
 | Mod | `panel-uso/` | Panel lateral con el contexto de la sesión, los límites de uso, el esfuerzo, el consumo de tokens y el paso del flujo en curso. Comando `/uso`. | [MODS.md](MODS.md) |
-| Flujos | `flujos/` | El flujo `/implementador`, con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
+| Flujos | `flujos/` | Los flujos `/implementador` y `/generar-commit` (mensaje de commit con confirmación), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
 
 ## Instalar
 
@@ -30,4 +30,4 @@ Los comandos de verificación del mod y de la guardia de los flujos están en [A
 
 - [AGENTS.md](AGENTS.md): reglas generales del repo para Claude (estructura, verificación y convenciones).
 - [MODS.md](MODS.md): el panel de uso.
-- [FLUJOS.md](FLUJOS.md): los flujos.
+- [FLUJOS.md](FLUJOS.md): los flujos (`/implementador` y `/generar-commit`).

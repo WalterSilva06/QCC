@@ -3,7 +3,7 @@
 Herramientas personales para Claude Code, en dos partes separadas:
 
 - **`panel-uso/`**: mod (plugin) con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Ver [MODS.md](MODS.md).
-- **`flujos/`**: el flujo `/implementador` (un solo flujo, con un solo modo), con sus agentes y herramientas. Se instalan copiándolos a `~/.claude`. Ver [FLUJOS.md](FLUJOS.md).
+- **`flujos/`**: los flujos `/implementador` (con un solo modo) y `/generar-commit`, con sus agentes y herramientas. Se instalan copiándolos a `~/.claude`. Ver [FLUJOS.md](FLUJOS.md).
 
 [README.md](README.md) es la entrada al repo: resume la instalación y enlaza a todo.
 
@@ -20,7 +20,10 @@ flujos/
   instalar.mjs                    copia los flujos a ~/.claude (o los trae con --traer)
   skills/<nombre>/SKILL.md        → ~/.claude/skills/<nombre>/SKILL.md
   agents/<nombre>.md              → ~/.claude/agents/<nombre>.md
+  skills/generar-commit/SKILL.md  → ~/.claude/skills/generar-commit/SKILL.md (/generar-commit)
+  agents/generador-commit.md      → ~/.claude/agents/generador-commit.md (agente Haiku de /generar-commit)
   herramientas/                   → ~/.claude/flujos/ (estado, verificar, guardia, costos, guardia.test, comun.md, plan.md, pasos.md, config.ejemplo.md)
+  herramientas/generar-commit/    → ~/.claude/flujos/generar-commit/ (solo-git.mjs y su test)
 panel-uso/
   .claude-plugin/plugin.json      manifiesto (nombre, versión, types)
   .claude-plugin/marketplace.json marketplace «mods-locales»
@@ -42,9 +45,10 @@ panel-uso/
 claude plugin validate panel-uso
 claude plugin test panel-uso
 node --test flujos/herramientas/guardia.test.mjs
+node --test flujos/herramientas/generar-commit/solo-git.test.mjs
 ```
 
-Los tres tienen que terminar sin errores antes de dar algo por hecho. Qué no prueban los tests del panel está en [MODS.md](MODS.md#verificar).
+Los cuatro tienen que terminar sin errores antes de dar algo por hecho. Qué no prueban los tests del panel está en [MODS.md](MODS.md#verificar).
 
 ## Convenciones
 
@@ -54,4 +58,4 @@ Los tres tienen que terminar sin errores antes de dar algo por hecho. Qué no pr
 
 ## Flujo con /implementador
 
-`.claude/implementador.json` define la verificación (validate → test → test flujos). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador/` y mandan sobre las comunes. `/implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica; medium si la exploración no toca rutas críticas), revisor del plan Sonnet medium, ejecutor Sonnet (medium en subtareas `Crítica: no`) y revisión final siempre, Opus high, sin revisor por subtarea. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
+`.claude/implementador.json` define la verificación (validate → test → test flujos → test generar-commit). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/implementador/` y mandan sobre las comunes. `/implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica; medium si la exploración no toca rutas críticas), revisor del plan Sonnet medium, ejecutor Sonnet (medium en subtareas `Crítica: no`) y revisión final siempre, Opus high, sin revisor por subtarea. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
