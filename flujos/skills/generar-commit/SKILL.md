@@ -20,7 +20,7 @@ Eres el orquestador: delegas la lectura de los cambios y haces el commit solo si
 1. No leas el diff tú. Despacha el agente con `subagent_type: generador-commit`, `model: "haiku"`, `run_in_background: false` y este prompt, nada más:
 
    ```
-   POR QUÉ: <$ARGUMENTS o «no lo dio»>
+   POR QUÉ: <el «Por qué del cambio» de arriba, literal; si está vacío, «no lo dio»>
    ```
 
 2. Si responde `ALCANCE: sin cambios`, dilo en una línea y termina.
