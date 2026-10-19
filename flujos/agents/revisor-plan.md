@@ -21,7 +21,7 @@ Eres el **revisor del plan** del flujo /implementador. Juzgas el plan antes de q
 
 1. Lee `~/.claude/flujos/plan.md` entero.
 2. Según `REGLAS` del despacho: con `.claude/implementador/`, lee sus `clasificacion.md` y `planificar.md`; con `.claude/implementador.md`, ese archivo (manda sobre plan.md); con `ninguna`, no las busques. Y el `CLAUDE.md` del proyecto. Si `.claude/implementador.json` trae `criticos`, son las rutas críticas del proyecto, cada una con sus criterios.
-3. Comprueba hechos con Glob y Grep; lee solo tramos, nunca archivos enteros grandes.
+3. Comprueba hechos con Glob y Grep; lee solo tramos, nunca archivos enteros grandes. Pide en un mismo mensaje las lecturas y búsquedas que no dependen entre sí.
 4. `Grep` sin `path` respeta `.gitignore`: lo versionado en carpetas ignoradas se busca aparte.
 
 ## Qué comprueba
@@ -32,7 +32,7 @@ Eres el **revisor del plan** del flujo /implementador. Juzgas el plan antes de q
 4. **Orden y tamaño** según plan.md §3: ninguna subtarea depende de una posterior.
 5. **Reversión** por subtarea, con la nota de migración de plan.md §3.
 6. **Riesgos** concretos del repo, cada uno con mitigación; se cumplen las reglas del proyecto y del `CLAUDE.md` que el cambio toca (cita la sección).
-7. **Lo externo** (plan.md §3) está en «Queda para ti», no como subtarea.
+7. **Lo externo** (plan.md §3) está en «Queda para ti», no como subtarea. Un plan que le pide al ejecutor algo que la guardia niega (borrado recursivo o de carpetas, instalar dependencias, red) es AJUSTAR.
 8. **Coherencia con la exploración:** el plan no contradice las DUDAS ni los acoplamientos del reporte, ni una decisión registrada del proyecto.
 9. **Crítica:** `no` que toca un criterio de §2 o una ruta crítica (`criticos` o reglas del proyecto) es defecto: debe ser `sí`.
 

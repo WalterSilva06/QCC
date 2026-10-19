@@ -2,10 +2,16 @@
 // Costo real de los flujos /implementador, leído de los transcripts de Claude Code.
 //
 //   node ~/.claude/flujos/costos.mjs [--ultimos <n>] [--archivo <flujos.jsonl>]
+//   node ~/.claude/flujos/costos.mjs --fuga [--ultimos <n>] [--archivo <flujos.jsonl>]
+//   node ~/.claude/flujos/costos.mjs --anotar <t> "<texto>" [--archivo <flujos.jsonl>]
 //
-// Lista los últimos flujos anotados en `registros/flujos.jsonl` (10 por defecto): costo, minutos, pedidos del
-// orquestador, costo por rol, Clasificación, subtareas y veredictos, con el promedio al final. estado.mjs usa
-// `costoDelFlujo` en el cierre (`--cambios … --paso 7`) para anotar cada flujo.
+// Lista los últimos flujos anotados en `registros/flujos.jsonl` (10 por defecto), de la versión 1 y de la 2: costo,
+// minutos, pedidos del orquestador, costo por rol, Clasificación, subtareas y veredictos (en la 2, además el resultado
+// y los defectos anotados), con el promedio al final. `--fuga` mide, por flujo v2, lo gastado en su sesión después del
+// cierre y hasta el siguiente `/implementador`. `--anotar` suma un defecto al flujo cuyo `t` empieza con `<t>` (exit 2
+// si no es uno solo). estado.mjs usa `costoDelFlujo` en el cierre (`--cambios … --paso 7`) para anotar cada flujo;
+// `metricasDelFlujo` suma al costo lo que se lee de los mismos transcripts (tokens, tiempos por fase, ejecutores,
+// problemas de los revisores).
 //
 // Precios por millón de tokens de la página oficial de Anthropic (octubre de 2026): entrada, salida, lectura de
 // caché y escritura de caché de 5 min y de 1 h. El hilo principal de Claude Code escribe con 1 h; los subagentes, con 5 min.
@@ -67,8 +73,8 @@ function filasDe(archivo) {
   return filas
 }
 
-/** Pedidos al modelo de esas filas de transcript, cada mensaje una vez y con su uso final: `{ pedidos, usd, sinPrecio }`. */
-export function usoDe(filas) {
+/** Cada mensaje del asistente de esas filas una vez y con su uso final, en el orden en que apareció: `Map(id → { uso, modelo })`. */
+function mensajesDe(filas) {
   const porMensaje = new Map()
   for (const f of filas) {
     const m = f?.type === 'assistant' ? f.message : null
@@ -76,14 +82,29 @@ export function usoDe(filas) {
     const previo = porMensaje.get(m.id)
     if (!previo || (m.usage?.output_tokens ?? 0) >= (previo.uso?.output_tokens ?? 0)) porMensaje.set(m.id, { uso: m.usage, modelo: m.model })
   }
+  return porMensaje
+}
+
+const tokensVacios = () => ({ entrada: 0, leidos: 0, escritos: 0, salida: 0, thinking: 0 })
+
+/** Pedidos al modelo de esas filas de transcript, cada mensaje una vez y con su uso final: `{ pedidos, usd, sinPrecio, tokens }`. */
+export function usoDe(filas) {
+  const porMensaje = mensajesDe(filas)
+  const tokens = tokensVacios()
   let usd = 0
   let sinPrecio = 0
   for (const { uso, modelo } of porMensaje.values()) {
     const c = costoDePedido(uso, modelo)
     if (c === null) sinPrecio++
     else usd += c
+    const u = uso ?? {}
+    tokens.entrada += u.input_tokens ?? 0
+    tokens.leidos += u.cache_read_input_tokens ?? 0
+    tokens.escritos += u.cache_creation_input_tokens ?? 0
+    tokens.salida += u.output_tokens ?? 0
+    tokens.thinking += u.output_tokens_details?.thinking_tokens ?? u.thinking_tokens ?? 0
   }
-  return { pedidos: porMensaje.size, usd, sinPrecio }
+  return { pedidos: porMensaje.size, usd, sinPrecio, tokens }
 }
 
 /** Qué línea de su informe trae el veredicto de cada rol; los demás (explorador, planificador) no dan uno. */
@@ -96,6 +117,9 @@ function veredictoDe(filas, rol) {
   const textos = filas.filter((f) => f?.type === 'assistant').flatMap((f) => (f.message?.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text))
   return new RegExp(`^[\\s*_>\`-]*${campo}:\\s*\\**\\s*([A-ZÁÉÍÓÚ]+)`, 'm').exec(textos.at(-1) ?? '')?.[1] ?? null
 }
+
+/** Si la fila es el `/implementador` que el usuario escribió en el hilo principal. */
+const esComando = (f) => f?.type === 'user' && !f.isSidechain && f.timestamp && textoDe(f.message?.content).includes('<command-name>/implementador')
 
 /**
  * El transcript de la sesión del flujo de `raiz` que empezó cerca de `desde` (DESDE_GLOBAL), con la hora de su
@@ -116,7 +140,6 @@ export function sesionDelFlujo(raiz, desde, proyectos = proyectosDe(), base = nu
     .map((archivo) => ({ archivo, mtime: fs.statSync(archivo).mtimeMs }))
     .filter((a) => a.mtime >= limite - 60_000)
     .sort((a, b) => b.mtime - a.mtime)
-  const esComando = (f) => f?.type === 'user' && !f.isSidechain && f.timestamp && textoDe(f.message?.content).includes('<command-name>/implementador')
   if (base) {
     const marca = `BASE_GLOBAL=${base}`
     for (const { archivo } of recientes) {
@@ -145,27 +168,32 @@ export function sesionDelFlujo(raiz, desde, proyectos = proyectosDe(), base = nu
 }
 
 /**
- * Costo real del flujo de `raiz` que empezó en `desde` (con `base`, su BASE_GLOBAL), hasta `hasta`: el hilo principal
- * (orquestador) y cada subagente lanzado en ese tramo, por rol (`final` es la revisión final), con sus veredictos.
- * null si no se encuentra la sesión.
+ * Lee una sola vez el hilo principal y los subagentes del flujo de `raiz` en su tramo (de `desde` a `hasta`):
+ * `{ sesion, hasta, todas, principal, agentes }`, con los agentes en orden de llegada y cada uno como
+ * `{ rol, tipo, prompt, filas, inicio }`. null si no se encuentra la sesión.
  */
-export function costoDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = new Date().toISOString(), base = null } = {}) {
+function leerFlujo(raiz, desde, proyectos, hasta, base) {
   const sesion = sesionDelFlujo(raiz, desde, proyectos, base)
-  if (!sesion) return null
+  return sesion ? leerTramo(sesion, hasta) : null
+}
+
+/** Lo mismo que `leerFlujo` para una sesión ya conocida (`{ archivo, inicio }`): el tramo de `inicio` a `hasta`. */
+function leerTramo(sesion, hasta) {
   const enTramo = (t) => t && t >= sesion.inicio && t <= hasta
-  const principal = filasDe(sesion.archivo).filter((f) => !f.isSidechain && enTramo(f.timestamp))
-  const roles = { orquestador: { ...usoDe(principal), agentes: 0 } }
-  const veredictos = {}
+  const todas = filasDe(sesion.archivo)
+  const principal = todas.filter((f) => !f.isSidechain && enTramo(f.timestamp))
   const carpeta = path.join(path.dirname(sesion.archivo), path.basename(sesion.archivo, '.jsonl'), 'subagents')
-  let agentes = []
+  let nombres = []
   try {
-    agentes = fs.readdirSync(carpeta).filter((a) => a.endsWith('.jsonl')).sort()
+    nombres = fs.readdirSync(carpeta).filter((a) => a.endsWith('.jsonl')).sort()
   } catch {
     // Sin subagentes.
   }
-  for (const a of agentes) {
+  const agentes = []
+  for (const a of nombres) {
     const filas = filasDe(path.join(carpeta, a))
-    if (!enTramo(filas.find((f) => f.timestamp)?.timestamp)) continue
+    const inicio = filas.find((f) => f.timestamp)?.timestamp
+    if (!enTramo(inicio)) continue
     let tipo = '?'
     try {
       tipo = JSON.parse(fs.readFileSync(path.join(carpeta, a.replace(/\.jsonl$/, '.meta.json')), 'utf8')).agentType ?? '?'
@@ -174,17 +202,184 @@ export function costoDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = 
     }
     const prompt = textoDe(filas.find((f) => f.type === 'user')?.message?.content)
     const rol = tipo === 'revisor' && /QUÉ REVISAR: cambio completo|YA REVISADO|EJECUTORES:/.test(prompt) ? 'final' : tipo
+    agentes.push({ rol, tipo, prompt, filas, inicio })
+  }
+  agentes.sort((a, b) => Date.parse(a.inicio) - Date.parse(b.inicio))
+  return { sesion, hasta, todas, principal, agentes }
+}
+
+/** El costo del flujo ya leído: `{ inicio, minutos, usd, roles, veredictos }`. */
+function costoDe({ sesion, hasta, principal, agentes }) {
+  const roles = { orquestador: { ...usoDe(principal), agentes: 0 } }
+  const veredictos = {}
+  for (const { rol, filas } of agentes) {
     const u = usoDe(filas)
-    roles[rol] ??= { pedidos: 0, usd: 0, sinPrecio: 0, agentes: 0 }
+    roles[rol] ??= { pedidos: 0, usd: 0, sinPrecio: 0, agentes: 0, tokens: tokensVacios() }
     roles[rol].pedidos += u.pedidos
     roles[rol].usd += u.usd
     roles[rol].sinPrecio += u.sinPrecio
+    for (const k of Object.keys(u.tokens)) roles[rol].tokens[k] += u.tokens[k]
     roles[rol].agentes++
     const v = veredictoDe(filas, rol)
     if (v) (veredictos[rol] ??= []).push(v)
   }
   const usd = Object.values(roles).reduce((s, r) => s + r.usd, 0)
   return { inicio: sesion.inicio, minutos: Math.max(0, Date.parse(hasta) - Date.parse(sesion.inicio)) / 60_000, usd, roles, veredictos }
+}
+
+/**
+ * Costo real del flujo de `raiz` que empezó en `desde` (con `base`, su BASE_GLOBAL), hasta `hasta`: el hilo principal
+ * (orquestador) y cada subagente lanzado en ese tramo, por rol (`final` es la revisión final), con sus veredictos y
+ * sus `tokens` (`entrada`, `leidos`, `escritos`, `salida`, `thinking`). null si no se encuentra la sesión.
+ */
+export function costoDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = new Date().toISOString(), base = null } = {}) {
+  const lectura = leerFlujo(raiz, desde, proyectos, hasta, base)
+  return lectura ? costoDe(lectura) : null
+}
+
+/**
+ * Lo gastado en la sesión `archivo` después de `cierre` (la hora del cierre del flujo): el hilo principal y los
+ * subagentes desde ahí hasta el siguiente `/implementador` de la sesión, o hasta el final. `{ usd, pedidos }`; null si no se puede leer.
+ */
+export function fugaDe(archivo, cierre) {
+  if (!archivo || !fs.existsSync(archivo)) return null
+  const siguiente = filasDe(archivo).find((f) => esComando(f) && f.timestamp > cierre)?.timestamp
+  const { principal, agentes } = leerTramo({ archivo, inicio: cierre }, siguiente ?? '9999-12-31T23:59:59.999Z')
+  const usos = [usoDe(principal), ...agentes.map((a) => usoDe(a.filas))]
+  return { usd: usos.reduce((s, u) => s + u.usd, 0), pedidos: usos.reduce((s, u) => s + u.pedidos, 0) }
+}
+
+/** Texto de cada bloque de la fila que sea de ese `tipo`, en orden. */
+const bloquesDe = (f, tipo) => (Array.isArray(f?.message?.content) ? f.message.content.filter((c) => c?.type === tipo) : [])
+
+/** Texto del último mensaje del asistente de esas filas (su informe); '' si no hay. */
+const ultimoTexto = (filas) => filas.filter((f) => f?.type === 'assistant').flatMap((f) => bloquesDe(f, 'text').map((c) => c.text)).at(-1) ?? ''
+
+/** Los ítems numerados entre `PROBLEMAS:` y `OBSERVACIONES:` (o el final) de un informe, de a ≤ 200 caracteres. */
+function problemasDe(texto) {
+  const desdeProblemas = /PROBLEMAS:([\s\S]*)/.exec(texto)?.[1] ?? ''
+  const cuerpo = desdeProblemas.split(/^[\s*_>`-]*OBSERVACIONES:/m)[0]
+  return [...cuerpo.matchAll(/^\s*\d+[.)]\s*(.+)$/gm)].map((m) => m[1].trim().slice(0, 200))
+}
+
+/** Prompt de las llamadas al `Agent` (o `Task`) del hilo principal: `[{ prompt, tipo, effort, t }]`. */
+function lanzamientosDe(principal) {
+  const lanzamientos = []
+  for (const f of principal) {
+    for (const c of bloquesDe(f, 'tool_use')) {
+      if (c.name === 'Agent' || c.name === 'Task') lanzamientos.push({ prompt: String(c.input?.prompt ?? ''), tipo: c.input?.subagent_type, effort: c.input?.effort, t: f.timestamp })
+    }
+  }
+  return lanzamientos
+}
+
+/**
+ * Tiempos del hilo principal en segundos: `fases` (pared de cada paso menos la espera que cae en él), `espera` (lo que
+ * tardó el usuario en cada `AskUserQuestion`) y `activo` (el total menos la espera). Las marcas de fase son
+ * `estado.mjs … --paso n`, el explorador (1), el revisor-plan (3) y el AskUserQuestion «Plan» (4).
+ */
+function tiemposDe(principal, inicio) {
+  const t0 = Date.parse(inicio)
+  const marcas = []
+  const preguntas = new Map()
+  const resultados = new Map()
+  let fin = t0
+  for (const f of principal) {
+    const t = Date.parse(f.timestamp)
+    if (t > fin) fin = t
+    for (const c of bloquesDe(f, 'tool_use')) {
+      const paso = c.name === 'Bash' ? /estado\.mjs\b[^\n]*?--paso\s+(\d+)/.exec(String(c.input?.command ?? ''))?.[1] : null
+      if (paso) marcas.push({ t, n: paso })
+      else if (c.name === 'Agent' || c.name === 'Task') {
+        const n = { explorador: '1', 'revisor-plan': '3' }[c.input?.subagent_type]
+        if (n) marcas.push({ t, n })
+      } else if (c.name === 'AskUserQuestion') {
+        preguntas.set(c.id, t)
+        if ((c.input?.questions ?? []).some((q) => q?.header === 'Plan')) marcas.push({ t, n: '4' })
+      }
+    }
+    for (const c of bloquesDe(f, 'tool_result')) resultados.set(c.tool_use_id, t)
+  }
+  const esperas = [...preguntas].map(([id, a]) => [a, Math.min(resultados.get(id) ?? fin, fin)]).filter(([a, b]) => b > a)
+  const tramos = [{ t: t0, n: '0' }, ...marcas.sort((a, b) => a.t - b.t)]
+  const fases = {}
+  tramos.forEach(({ t, n }, i) => {
+    const hasta = tramos[i + 1]?.t ?? fin
+    const solape = esperas.reduce((s, [a, b]) => s + Math.max(0, Math.min(b, hasta) - Math.max(a, t)), 0)
+    fases[n] = (fases[n] ?? 0) + Math.max(0, hasta - t - solape)
+  })
+  const espera = esperas.reduce((s, [a, b]) => s + (b - a), 0)
+  return {
+    fases: Object.fromEntries(Object.entries(fases).map(([n, ms]) => [n, Math.round(ms / 1000)])),
+    activo: Math.round((fin - t0 - espera) / 1000),
+    espera: Math.round(espera / 1000),
+  }
+}
+
+/** Los ejecutores agrupados por subtarea (`1`, `2`… o `final`): `{ usd, segundos, correcciones, estado, esfuerzo }`. */
+function ejecutoresDe(agentes, lanzamientos) {
+  const claveDe = (prompt) => /^\s*SUBTAREA (\d+)\//m.exec(prompt)?.[1] ?? (/^\s*SUBTAREA:\s*correcciones de la revisión final/mi.test(prompt) ? 'final' : '?')
+  const grupos = {}
+  for (const a of agentes.filter((x) => x.rol === 'ejecutor')) {
+    const g = (grupos[claveDe(a.prompt)] ??= { usd: 0, segundos: 0, correcciones: 0, estado: null, esfuerzo: null, base: null })
+    const tiempos = a.filas.map((f) => Date.parse(f.timestamp)).filter(Number.isFinite)
+    g.usd += usoDe(a.filas).usd
+    g.segundos += tiempos.length ? (Math.max(...tiempos) - Math.min(...tiempos)) / 1000 : 0
+    if (a.prompt.includes('CORRECCIÓN')) g.correcciones++
+    else g.base ??= a.prompt
+    g.estado = veredictoDe(a.filas, 'ejecutor')
+  }
+  for (const g of Object.values(grupos)) {
+    const inicio = g.base?.trim().slice(0, 60)
+    const l = inicio ? lanzamientos.find((x) => !x.prompt.includes('CORRECCIÓN') && x.prompt.trim().startsWith(inicio)) : null
+    g.esfuerzo = l ? (l.effort ?? 'high') : null
+    g.segundos = Math.round(g.segundos)
+    delete g.base
+  }
+  return grupos
+}
+
+/**
+ * Métricas del flujo de `raiz` que empezó en `desde` leídas de sus transcripts: `{ costo, sesion, pedido, contexto,
+ * tiempos, ejecutores, problemas, alcanceFuera, explorador }`, con el costo de `costoDelFlujo` y lo demás como lo
+ * describen `tiemposDe`, `ejecutoresDe` y `problemasDe`. `pedido` es el texto que se escribió tras `/implementador`
+ * (≤ 120 caracteres), `contexto` los tokens del primer y del último pedido del hilo principal, `alcanceFuera` las
+ * líneas `ALCANCE: FUERA` que vio el orquestador y `explorador.mapa` si algún prompt trajo un `MAPA:` útil.
+ * null si no se encuentra la sesión.
+ */
+export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = new Date().toISOString(), base = null } = {}) {
+  const lectura = leerFlujo(raiz, desde, proyectos, hasta, base)
+  if (!lectura) return null
+  const { sesion, todas, principal, agentes } = lectura
+  const comando = todas.find((f) => esComando(f) && f.timestamp === sesion.inicio)
+  const crudo = textoDe(comando?.message?.content)
+  const pedido = comando ? (/<command-args>([\s\S]*?)<\/command-args>/.exec(crudo)?.[1] ?? crudo.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 120) : null
+  const mensajes = [...mensajesDe(principal).values()]
+  const contextoDe = (m) => (m ? (m.uso?.input_tokens ?? 0) + (m.uso?.cache_read_input_tokens ?? 0) + (m.uso?.cache_creation_input_tokens ?? 0) : null)
+  const informe = (a) => ({ veredicto: veredictoDe(a.filas, a.rol), items: problemasDe(ultimoTexto(a.filas)) })
+  const exploradores = agentes.filter((a) => a.rol === 'explorador')
+  const herramientasDe = (nombre) => exploradores.reduce((s, a) => s + a.filas.reduce((n, f) => n + bloquesDe(f, 'tool_use').filter((c) => c.name === nombre).length, 0), 0)
+  const alcanceFuera = []
+  for (const f of principal) {
+    for (const c of bloquesDe(f, 'tool_result')) alcanceFuera.push(...(textoDe(c.content).match(/ALCANCE: FUERA[^\n]*/g) ?? []))
+  }
+  const ultimoPlan = agentes.filter((a) => a.rol === 'revisor-plan').at(-1)
+  return {
+    costo: costoDe(lectura),
+    sesion: sesion.archivo,
+    pedido,
+    contexto: { primero: contextoDe(mensajes[0]), ultimo: contextoDe(mensajes.at(-1)) },
+    tiempos: tiemposDe(principal, sesion.inicio),
+    ejecutores: ejecutoresDe(agentes, lanzamientosDe(principal)),
+    problemas: { revisorPlan: ultimoPlan ? informe(ultimoPlan).items : [], final: agentes.filter((a) => a.rol === 'final').map(informe) },
+    alcanceFuera,
+    explorador: {
+      pedidos: exploradores.reduce((s, a) => s + usoDe(a.filas).pedidos, 0),
+      glob: herramientasDe('Glob'),
+      read: herramientasDe('Read'),
+      mapa: exploradores.some((a) => /^MAPA:[ \t]*(?!ninguno)\S/im.test(a.prompt)),
+    },
+  }
 }
 
 /** «$0,98 · 9,6 min · orquestador $0,39 (10 pedidos) · final $0,26 · …», con los roles de mayor a menor costo. */
@@ -206,6 +401,46 @@ export function resumenDeVeredictos(c) {
 /** «CRÍTICO (#1, #5)» o «sin criterios», sin la explicación que sigue. */
 const clasificacionCorta = (texto) => /^(CRÍTICO(?:\s*\([^)]*\))?|sin criterios)/i.exec(String(texto ?? '').trim())?.[1] ?? String(texto ?? '').slice(0, 30)
 
+/** Cuántas subtareas anotó el flujo: un número (v1) o el largo de la lista (v2). */
+const subtareasDe = (f) => (Array.isArray(f.subtareas) ? f.subtareas.length : f.subtareas)
+
+const fechaDe = (f) => String(f.t).slice(0, 16).replace('T', ' ')
+
+/** `--anotar <t> "<texto>"`: agrega un defecto al flujo cuyo `t` empieza con `<t>` (con espacio o `T`); exit 2 si no es uno solo. */
+function anotarDefecto(archivo, prefijo, texto) {
+  const buscado = String(prefijo ?? '').trim().replace(' ', 'T')
+  const textoLimpio = String(texto ?? '').trim()
+  if (!buscado || !textoLimpio) {
+    console.log('ERROR: uso: costos.mjs --anotar <t> "<texto>" (t es el comienzo de la fecha de un flujo, p. ej. 2026-10-18T09:30)')
+    process.exitCode = 2
+    return
+  }
+  const coinciden = filasDe(archivo).filter((f) => f && !f.tipo && f.t && String(f.t).startsWith(buscado))
+  if (coinciden.length !== 1) {
+    console.log(coinciden.length ? `ERROR: «${prefijo}» coincide con ${coinciden.length} flujos (${coinciden.map(fechaDe).join(', ')}); da más dígitos` : `ERROR: ningún flujo de ${archivo} empieza con «${prefijo}»`)
+    process.exitCode = 2
+    return
+  }
+  const fila = { v: 2, tipo: 'defecto', flujo: coinciden[0].t, texto: textoLimpio, t: new Date().toISOString() }
+  fs.mkdirSync(path.dirname(archivo), { recursive: true })
+  fs.appendFileSync(archivo, JSON.stringify(fila) + '\n')
+  console.log(`ANOTADO: defecto en el flujo ${fechaDe(coinciden[0])}: ${textoLimpio}`)
+}
+
+/** `--fuga`: lo que se gastó en la sesión de cada flujo v2 después de su cierre, hasta el siguiente `/implementador`. */
+function fuga(flujos, n) {
+  const conSesion = flujos.filter((f) => f.v === 2 && f.sesion && f.t).slice(-n)
+  if (!conSesion.length) {
+    console.log('FUGA: no hay flujos v2 con sesión anotada')
+    return
+  }
+  for (const f of conSesion) {
+    const gasto = fugaDe(f.sesion, f.t)
+    const proyecto = path.basename(String(f.raiz ?? '?'))
+    console.log(gasto ? `FUGA: ${fechaDe(f)} · ${proyecto} · ${dolares(gasto.usd)} (${gasto.pedidos} pedidos) después del cierre` : `FUGA: ${fechaDe(f)} · ${proyecto} · no se pudo leer la sesión ${f.sesion}`)
+  }
+}
+
 function main() {
   const args = process.argv.slice(2)
   const valor = (nombre) => {
@@ -214,7 +449,17 @@ function main() {
   }
   const n = Math.max(1, Number(valor('--ultimos') ?? 10) || 10)
   const archivo = valor('--archivo') ?? path.join(path.dirname(registroDe(RAIZ)), 'flujos.jsonl')
-  const flujos = filasDe(archivo).filter((f) => f?.costo)
+  if (args.includes('--anotar')) {
+    const texto = args[args.indexOf('--anotar') + 2]
+    anotarDefecto(archivo, valor('--anotar'), ['--archivo', '--ultimos'].includes(texto) ? undefined : texto)
+    return
+  }
+  const todas = filasDe(archivo)
+  if (args.includes('--fuga')) {
+    fuga(todas.filter((f) => f && !f.tipo), n)
+    return
+  }
+  const flujos = todas.filter((f) => f?.costo && !f.tipo)
   if (!flujos.length) {
     console.log(`COSTOS: no hay flujos con costo en ${archivo}`)
     return
@@ -222,8 +467,10 @@ function main() {
   const ultimos = flujos.slice(-n)
   console.log(`FLUJOS (últimos ${ultimos.length} de ${flujos.length} con costo):`)
   for (const f of ultimos) {
-    const datos = [f.clasificacion && clasificacionCorta(f.clasificacion), f.subtareas && `${f.subtareas} subtarea(s)`].filter(Boolean).join(' · ')
-    console.log(`  ${String(f.t).slice(0, 16).replace('T', ' ')} · ${path.basename(String(f.raiz ?? '?'))} · ${resumenDeCosto(f.costo)}${datos ? ` · ${datos}` : ''} · ${resumenDeVeredictos(f.costo)}`)
+    const datos = [f.clasificacion && clasificacionCorta(f.clasificacion), subtareasDe(f) && `${subtareasDe(f)} subtarea(s)`].filter(Boolean).join(' · ')
+    const defectos = f.v === 2 ? todas.filter((d) => d?.tipo === 'defecto' && d.flujo === f.t).length : 0
+    const v2 = f.v === 2 ? `${f.resultado ? ` · ${f.resultado}` : ''}${defectos ? ` · defectos: ${defectos}` : ''}` : ''
+    console.log(`  ${fechaDe(f)} · ${path.basename(String(f.raiz ?? '?'))} · ${resumenDeCosto(f.costo)}${datos ? ` · ${datos}` : ''} · ${resumenDeVeredictos(f.costo)}${v2}`)
   }
   const promedio = (valorDe) => ultimos.reduce((s, f) => s + valorDe(f.costo), 0) / ultimos.length
   console.log(`PROMEDIO: ${dolares(promedio((c) => c.usd))} · ${decimal(promedio((c) => c.minutos))} min · orquestador ${decimal(promedio((c) => c.roles.orquestador?.pedidos ?? 0))} pedidos`)

@@ -148,6 +148,8 @@ export type Flujo = {
   detalleExploradores?: { id: string; descripcion?: string; desde?: number; ms?: number; gasto?: number; llamada?: string; config?: string[] }[]
   /** Hora (ms) en que empezó la espera abierta al usuario; `null` o ausente si no hay. */
   preguntaDesde?: number | null
+  /** Ms que el flujo pasó interrumpido antes de reanudarse (un turno cortado, p. ej. por el límite de uso); no es trabajo ni espera. Si falta, 0. */
+  pausa?: number
   /** Hora (ms) en que terminó; `null` mientras está en curso. */
   fin: number | null
   /** Lo que la sesión llevaba gastado al empezar el flujo, por fila de «Esta sesión» (`modelo|esfuerzo|origen`): `[total, salida]`. Si falta, 0 en cada fila. */
@@ -163,6 +165,42 @@ export type Flujo = {
    * en orden de primera aparición y sin repetir: `{ 5: { revisor: ['Sonnet 5.5 high', 'Sonnet 5.5 medium'] } }`. Solo se escribe lo observado: nunca `{}` ni `[]`.
    */
   configs?: Record<number, Record<string, string[]>>
+}
+
+/** Una fila del historial de flujos (`~/.claude/flujos/registros/flujos.jsonl`), ya reducida a lo que muestra la pestaña «Flujo». */
+export type FilaHistorial = {
+  /** Hora de cierre del flujo, ISO. */
+  t: string
+  /** Nombre de la carpeta del repo (último tramo de `raiz`); `?` si falta. */
+  repo: string
+  /** Costo real en dólares; falta si no se anotó. */
+  usd?: number
+  /** Minutos activos; falta si no se anotaron. */
+  minutos?: number
+  /** Revisión final: `✓` aprobó a la primera, `↻` hubo rechazos, `✗` flujo detenido o cancelado, `·` sin dato. */
+  revision: '✓' | '↻' | '✗' | '·'
+  /** Clasificación corta: «CRÍTICO (#1, #5)», «sin criterios» o los primeros 30 caracteres. */
+  clasificacion: string
+  /** Cuántas subtareas anotó el flujo; falta si no hubo dato. */
+  subtareas?: number
+  /** El flujo se canceló o alguna subtarea quedó BLOQUEADA. */
+  aviso: boolean
+}
+
+/** El historial leído del archivo: su fecha de modificación (ms) y las últimas filas, la más reciente primero. */
+export type Historial = {
+  mtimeMs: number
+  filas: FilaHistorial[]
+}
+
+/**
+ * Estado del freno de contexto de `prompt.submit`. Solo se escribe lo que tiene valor; sin campos el freno es `null`, nunca `{}`.
+ */
+export type Freno = {
+  /** El último envío se frenó con un aviso; el siguiente pasa (es el reenvío) y borra la marca. */
+  frenado?: true
+  /** `fin` del último flujo cerrado cuyo primer mensaje posterior ya se vio, para avisar una sola vez por cierre. */
+  cierreVisto?: number
 }
 
 declare module 'claude-code' {
@@ -186,6 +224,14 @@ declare module 'claude-code' {
       flujoAbierto: boolean
       /** Ids de fila de subagente vistas mientras había exploradores o revisores en vuelo; solo de esta terminal; se vacía al iniciar un flujo, al abrir una tanda de exploradores o revisores y al cerrar la sesión. */
       filasExploradores: string[]
+      /** Las últimas filas de `flujos.jsonl` con la fecha de modificación con que se leyeron; `null` hasta la primera lectura o si falló. Si falta (estado de una versión anterior), `null`. */
+      historial?: Historial | null
+      /** El historial desplegado en la pestaña «Flujo»; se recuerda en el store con la clave `prefs:historial`. Si falta, `true`. */
+      historialAbierto?: boolean
+      /** La carpeta personal, pedida a `node` una vez por sesión: `null` si aún no se pidió, `''` si falló (y no se vuelve a pedir). Si falta, `null`. */
+      home?: string | null
+      /** El freno de contexto de `prompt.submit`; `null` si no hay nada que recordar. Solo de esta terminal. Si falta (estado de una versión anterior), `null`. */
+      freno?: Freno | null
     }
   }
 }

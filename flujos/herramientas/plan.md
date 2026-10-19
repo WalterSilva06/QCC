@@ -35,7 +35,7 @@ S1 · <objetivo de la subtarea>
 S2 · …
 
 Verificación final: verificar.mjs + revisión final (siempre)
-Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>
+Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>; lo que es un comando, como `! <comando>  # requiere <permiso, red…>`
 Costo: <n> ejecutor(es) · revisión final
 ```
 
@@ -45,5 +45,6 @@ Costo: <n> ejecutor(es) · revisión final
 - Un supuesto técnico que no pudiste confirmar leyendo (cómo se comporta una API, un motor de tests, un tipo externo) va en Riesgos con «comprobar primero»: el ejecutor lo comprueba antes de editar el resto y, si falla, se detiene.
 - Lo que no está en «Archivos permitidos» no se toca. Las migraciones ya versionadas no se editan: se crea una nueva con la convención de nombres del proyecto. Si hay migración, la Reversión aclara que, aplicada a una base viva, revertirla exige otra migración.
 - Sin tests: la lógica de negocio los escribe primero, con la infraestructura de tests del proyecto. Lo que no tiene infraestructura de tests (típicamente la UI) se verifica con typecheck y build.
-- Una dependencia nueva va nombrada en el plan (la instala el orquestador).
+- Una dependencia nueva va nombrada en el plan: la instala el orquestador antes del `--base --sub` de la subtarea que la usa, y esa subtarea lleva en sus permitidos el manifiesto y el lockfile (los cambia el orquestador, no el ejecutor; así el alcance no los marca fuera).
+- Borrar carpetas o archivos en bloque (borrado recursivo) no es subtarea: la guardia lo niega al ejecutor. Va a «Queda para ti» con el comando exacto.
 - Lo externo (aplicar migraciones, regenerar tipos, deploys, servicios vivos, verificación visual) nunca es subtarea: va a «Queda para ti». También descargar de internet (fotos, fuentes, datos): los subagentes no tienen red, así que va a «Queda para ti» con las URL y la ruta donde dejar cada archivo, y la subtarea que lo usa lo da por presente.

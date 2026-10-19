@@ -40,7 +40,7 @@ const WIN = process.platform === 'win32'
 export function raizDe(dir) {
   const d = path.resolve(rutaNativa(dir || process.cwd()))
   try {
-    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: d, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: d, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim()
     if (top) return path.resolve(rutaNativa(top))
   } catch {
     // No es un repo, o git no responde.
@@ -75,7 +75,7 @@ export function flujoDe(raiz) {
 export function arbolDe(raiz, forzar = []) {
   const git = (args, env = process.env) => {
     try {
-      return execFileSync('git', args, { cwd: raiz, encoding: 'utf8', env, maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] })
+      return execFileSync('git', args, { cwd: raiz, encoding: 'utf8', env, maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     } catch (e) {
       throw new Error(`git ${args.join(' ')}: ${String(e.stderr || e.message).trim()}`)
     }
@@ -259,7 +259,7 @@ function versionado(rel, raiz) {
   if (!versionados.has(clave)) {
     let si = false
     try {
-      execFileSync('git', ['ls-files', '--error-unmatch', '--', rel], { cwd: raiz, stdio: 'ignore' })
+      execFileSync('git', ['ls-files', '--error-unmatch', '--', rel], { cwd: raiz, stdio: 'ignore', windowsHide: true })
       si = true
     } catch {
       // No versionado, o git no responde: ante la duda, deja pasar.

@@ -33,6 +33,8 @@ import {
   terminarFlujo,
 } from '../hooks/flujo'
 import type { Nodo, Senal } from '../hooks/flujo'
+import { decidirFreno, UMBRAL_FRENO } from '../hooks/freno'
+import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaHistorial, promedioHistorial, rutaHistorial } from '../hooks/historial'
 import { aDesglose, barra, barraPartida, barraTramos, desgloseTramos, duracion, etiquetasAlineadas, falta, pct, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
   ESPERA_MAX_MS,
@@ -55,7 +57,7 @@ import {
   unirOrigenes,
 } from '../hooks/semana'
 import type { Cuentas, Registro } from '../hooks/semana'
-import type { Actividad, FilaSemana, Flujo, Semana } from '../types'
+import type { Actividad, FilaSemana, Flujo, Freno, Semana } from '../types'
 
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
 
@@ -447,6 +449,8 @@ function motorCarpeta(on: On, root: string, salidas: Record<string, { exitCode: 
   const estado = { root, negar: false }
   on('session.root', () => ({ value: estado.root }))
   on('process.run', (_$, e) => {
+    // La carpeta personal que pide el historial al abrir la pestaña «Flujo» no es una corrida de «Carpeta»: se niega sin anotarla.
+    if (e.argv[0] === 'node') return { deny: 'sin node en este motor' }
     corridas.push({ argv: [...e.argv], cwd: e.init?.cwd })
     if (estado.negar) return { deny: `negado: ${e.argv[0]}` }
     const s = salidas[e.argv[0] ?? ''] ?? { exitCode: 0 }
@@ -1819,8 +1823,10 @@ describe('flujo (puro)', () => {
     // Después de `--` son rutas: no cuenta.
     expect(bash('node ~/.claude/flujos/estado.mjs --diff abc123 -- --paso 6')).toEqual(estado('diff'))
 
-    // --guardar, --estado y --reglas son «otro»: no son el preflight, con o sin --paso.
+    // --guardar, --estado, --cancelar y --reglas son «otro»: no son el preflight, con o sin --paso.
     expect(bash('node ~/.claude/flujos/estado.mjs --guardar a86c3e plan --paso 2')).toEqual({ tipo: 'estado', modo: 'otro', paso: 2 })
+    expect(bash('node ~/.claude/flujos/estado.mjs --cancelar --paso 4')).toEqual({ tipo: 'estado', modo: 'otro', paso: 4 })
+    expect(bash('node ~/.claude/flujos/estado.mjs --cancelar')).toEqual(estado('otro'))
     expect(bash('node ~/.claude/flujos/estado.mjs --estado')).toEqual(estado('otro'))
     expect(bash('node "$HOME/.claude/flujos/estado.mjs" --reglas')).toEqual(estado('otro'))
   })
@@ -2167,11 +2173,41 @@ describe('flujo (puro)', () => {
 
     for (const s of senales) expect(avanzar(null, s)).toBeNull()
 
-    for (const razon of ['answer', 'abort', 'error']) {
-      const f = terminarFlujo({ ...(iniciarFlujo('implementador', '') as Flujo), paso: 5 }, razon, 'listo')
+    for (const respuesta of ['CIERRE · listo', 'CIERRE · x — DETENIDO']) {
+      const f = terminarFlujo({ ...(iniciarFlujo('implementador', '') as Flujo), paso: 5 }, 'answer', respuesta)
 
       for (const s of senales) expect(avanzar(f, s)).toEqual(f)
     }
+
+    // Interrumpido: el preflight, `verificar`, una pregunta y la vuelta de un agente no lo retoman (ver «reanudar»).
+    for (const razon of ['answer', 'abort', 'error']) {
+      const f = terminarFlujo({ ...(iniciarFlujo('implementador', '') as Flujo), paso: 5 }, razon, 'listo')
+
+      for (const s of [estado('preflight'), verificar, pregunta(true), agenteFin('revisor'), agente('otro')]) expect(avanzar(f, s)).toEqual(f)
+    }
+  })
+
+  test('reanudar: un flujo interrumpido sin CIERRE sigue con estado.mjs o un agente del flujo, y la pausa no cuenta como trabajo', async () => {
+    const f: Flujo = { ...(iniciarFlujo('implementador', '', 1_000) as Flujo), paso: 5, ejecuto: true, desde: 4_000 }
+    // El límite de uso corta el turno con una respuesta sin CIERRE a los 10 s: queda interrumpido, con el consumo fijado.
+    const cortado = { ...(terminarFlujo(f, 'answer', 'Llegué al límite de uso', 10_000) as Flujo), consumo: [] }
+    expect(cortado).toMatchObject({ estado: 'interrumpido', fin: 10_000, tiempos: { 5: 6_000 } })
+
+    // Dos horas después el orquestador retoma con `estado.mjs --base --sub 4 --paso 5`.
+    const T = 10_000 + 7_200_000
+    const vivo = avanzar(cortado, { tipo: 'estado', modo: 'base', paso: 5 }, T) as Flujo
+    expect(vivo).toMatchObject({ estado: 'en curso', fin: null, desde: T, pausa: 7_200_000, paso: 5, tiempos: { 5: 6_000 } })
+    expect(vivo.consumo).toBeUndefined()
+    // Un agente del flujo también lo retoma y mueve el paso.
+    expect(avanzar(cortado, agente('revisor'), T)).toMatchObject({ estado: 'en curso', paso: 5, pausa: 7_200_000 })
+
+    // Cierra de verdad 60 s después: el total (desde el inicio, 1 s) no cuenta las dos horas de pausa: 9 s antes del corte y 60 s después.
+    const cierre = avanzar(vivo, { tipo: 'estado', modo: 'cambios', paso: 7 }, T + 30_000)
+    const fin = terminarFlujo(cierre, 'answer', 'CIERRE · x — COMPLETO', T + 60_000) as Flujo
+    expect(fin).toMatchObject({ estado: 'completo', tiempos: { 5: 36_000, 7: 30_000 } })
+    const lista = nodos(fin, T + 60_000)
+    expect(lista[lista.length - 1]).toMatchObject({ etiqueta: 'Terminado', ms: 69_000 })
+    expect(resumenFlujo(fin, T + 60_000)).toBe('/implementador · Terminado · 1 min 9 s')
   })
 
   test('terminarFlujo: completo, detenido por CIERRE … DETENIDO, interrumpido; idempotente', async () => {
@@ -2190,7 +2226,9 @@ describe('flujo (puro)', () => {
     const cerrado = (estado: Flujo['estado']): Flujo => ({ ...f, estado, tiempos: { 6: 6_000 }, desde: T, fin: T })
 
     expect(terminarFlujo(f, 'answer', 'CIERRE · todo listo', T)).toEqual(cerrado('completo'))
-    expect(terminarFlujo(f, 'answer', undefined, T)).toEqual(cerrado('completo'))
+    // Sin `CIERRE ·` el turno se cortó (p. ej. el límite de uso): queda interrumpido y se puede retomar.
+    expect(terminarFlujo(f, 'answer', undefined, T)).toEqual(cerrado('interrumpido'))
+    expect(terminarFlujo(f, 'answer', 'Llegué al límite de uso', T)).toEqual(cerrado('interrumpido'))
     expect(terminarFlujo(f, 'answer', 'Resumen\nCIERRE · subtarea 2 — DETENIDO\nmás texto', T)).toEqual(cerrado('detenido'))
     // El DETENIDO debe ir en la misma línea que CIERRE.
     expect(terminarFlujo(f, 'answer', 'CIERRE · listo\nDETENIDO', T)).toEqual(cerrado('completo'))
@@ -6353,5 +6391,667 @@ describe('flujo en el panel', () => {
     abrir.C()
     await Promise.all(Object.values(vuelos))
     await ui.unmount()
+  })
+})
+
+describe('historial', () => {
+  const T = new Date(2026, 9, 18, 9, 30).toISOString()
+  const v2 = (extra: Record<string, unknown> = {}) => ({
+    v: 2,
+    t: T,
+    raiz: 'D:\\GitHub-Personal\\claude-config',
+    resultado: 'COMPLETO',
+    clasificacion: 'CRÍTICO (#1, #5) porque toca rutas',
+    costo: { usd: 0.98, veredictos: { final: ['APROBADO'] } },
+    tiempos: { activo: 720 },
+    subtareas: [{ n: 1, estado: 'HECHO' }, { n: 2, estado: 'HECHO' }],
+    ...extra,
+  })
+
+  test('lee v1 y v2, salta líneas rotas y filas defecto, y deja las 5 últimas con la más reciente primero', () => {
+    const v1 = { v: 1, t: T, raiz: '/home/x/proyecto', clasificacion: 'sin criterios', costo: { usd: 1.5, minutos: 20 }, subtareas: 3 }
+    const texto = [
+      JSON.stringify(v1),
+      '{ roto',
+      '',
+      JSON.stringify({ v: 2, tipo: 'defecto', flujo: T, texto: 'x', t: T }),
+      ...[1, 2, 3, 4, 5].map(n => JSON.stringify(v2({ raiz: `/r/repo${n}` }))),
+    ].join('\n')
+    const filas = leerHistorial(texto)
+
+    expect(filas.map(f => f.repo)).toEqual(['repo5', 'repo4', 'repo3', 'repo2', 'repo1'])
+    expect(leerHistorial(texto, 6).map(f => f.repo).at(-1)).toBe('proyecto')
+    expect(filaDeRegistro(v1)).toEqual({ t: T, repo: 'proyecto', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
+    expect(filaDeRegistro(v2())).toEqual({ t: T, repo: 'claude-config', usd: 0.98, minutos: 12, revision: '✓', clasificacion: 'CRÍTICO (#1, #5)', subtareas: 2, aviso: false })
+    expect(filaDeRegistro(null)).toBeNull()
+    expect(filaDeRegistro({ t: 5 })).toBeNull()
+    expect(filaDeRegistro({ v: 2, tipo: 'defecto', t: T })).toBeNull()
+    expect(filaDeRegistro({ t: T })?.repo).toBe('?')
+    expect(leerHistorial('')).toEqual([])
+  })
+
+  test('glifos de revisión, ⚠ por BLOQUEADO y por CANCELADO, y minutos v2 en segundos', () => {
+    const rev = (r: Record<string, unknown>) => filaDeRegistro(v2(r))
+    expect(rev({})?.revision).toBe('✓')
+    expect(rev({ costo: { veredictos: { final: ['RECHAZADO', 'APROBADO'] } } })?.revision).toBe('↻')
+    expect(rev({ costo: { usd: 1 } })?.revision).toBe('·')
+    expect(rev({ resultado: 'DETENIDO:3' })?.revision).toBe('✗')
+    expect(rev({ resultado: 'CANCELADO', subtareas: undefined })).toMatchObject({ revision: '✗', aviso: true })
+    expect(rev({})?.aviso).toBe(false)
+    expect(rev({ subtareas: [{ n: 1, estado: 'HECHO' }, { n: 2, estado: 'BLOQUEADO' }] })?.aviso).toBe(true)
+    expect(rev({ tiempos: { activo: 90 } })?.minutos).toBe(1.5)
+    expect(filaDeRegistro({ v: 1, t: T, costo: { minutos: 7 } })?.minutos).toBe(7)
+    expect(rev({ tiempos: undefined })?.minutos).toBeUndefined()
+    expect(clasificacionCorta('sin criterios: nada')).toBe('sin criterios')
+    expect(clasificacionCorta('otra cosa que es bastante larga de verdad')).toBe('otra cosa que es bastante larg')
+  })
+
+  test('promedio y cifras', () => {
+    const base = { t: T, repo: 'r', revision: '✓' as const, clasificacion: 'x', aviso: false }
+    expect(promedioHistorial([{ ...base, usd: 1, minutos: 10 }, { ...base, usd: 2 }, base])).toEqual({ usd: 1.5, minutos: 10 })
+    expect(promedioHistorial([base])).toEqual({})
+    expect(cifraUsd(0.984)).toBe('$0,98')
+    expect(cifraUsd()).toBe('$—')
+    expect(cifraMinutos(11.6)).toBe('12m')
+    expect(cifraMinutos()).toBe('—m')
+  })
+
+  test('línea completa y recortes a 49 y a 32 columnas', () => {
+    const fila = { t: T, repo: 'mi-repositorio-largo', usd: 0.98, minutos: 12, revision: '✓' as const, clasificacion: 'CRÍTICO (#1, #5)', subtareas: 3, aviso: true }
+    const largo = (s: string) => Array.from(s).length
+
+    expect(lineaHistorial(fila, 80)).toBe('18/10 09:30 mi-repositorio-largo $0,98 12m ✓ CRÍTICO (#1, #5) ×3 ⚠')
+    expect(lineaHistorial({ ...fila, subtareas: undefined, aviso: false }, 80)).toBe('18/10 09:30 mi-repositorio-largo $0,98 12m ✓ CRÍTICO (#1, #5)')
+    expect(lineaHistorial({ ...fila, t: 'nada' }, 80).startsWith('??/?? ??:?? ')).toBe(true)
+
+    const a49 = lineaHistorial(fila, 49)
+    expect(largo(a49)).toBeLessThanOrEqual(49)
+    expect(a49).toMatch(/^18\/10 09:30 \S*… \$0,98 12m ✓ CRÍTICO \(#1, #5\) ×3 ⚠$/)
+
+    const corta = { ...fila, clasificacion: 'sin criterios' }
+    const a32 = lineaHistorial(corta, 32)
+    expect(largo(a32)).toBeLessThanOrEqual(32)
+    expect(a32).not.toContain('mi-')
+    expect(a32.startsWith('18/10 09:30 $0,98 12m ✓')).toBe(true)
+    expect(a32.endsWith(' ×3 ⚠')).toBe(true)
+
+    for (const ancho of [60, 49, 40, 32, 28, 20, 10, 1]) expect(largo(lineaHistorial(fila, ancho))).toBeLessThanOrEqual(ancho)
+  })
+
+  test('rutaHistorial con Windows y con POSIX', () => {
+    expect(rutaHistorial('C:\\Users\\x')).toBe('C:\\Users\\x\\.claude\\flujos\\registros\\flujos.jsonl')
+    expect(rutaHistorial('/home/x/')).toBe('/home/x/.claude/flujos/registros/flujos.jsonl')
+    expect(rutaHistorial('  ')).toBeNull()
+    expect(rutaHistorial('')).toBeNull()
+  })
+})
+
+describe('historial en el panel', () => {
+  const T = new Date(2026, 9, 18, 9, 30).toISOString()
+  const fila = (n: number) =>
+    JSON.stringify({
+      v: 2,
+      t: T,
+      raiz: `D:\\GitHub-Personal\\repo${n}`,
+      resultado: 'COMPLETO',
+      clasificacion: 'CRÍTICO (#1, #5) porque toca rutas',
+      costo: { usd: 0.98, veredictos: { final: ['APROBADO'] } },
+      tiempos: { activo: 720 },
+      subtareas: [{ n: 1, estado: 'HECHO' }],
+    })
+  /** Seis flujos en el archivo: el panel muestra los 5 últimos, el más reciente primero. */
+  const SEIS = [1, 2, 3, 4, 5, 6].map(fila).join('\n')
+  const ES_FILA = /^\d\d\/\d\d \d\d:\d\d /
+  const respuesta = (answer: string) => ({ reason: 'answer' as const, answer, durationMs: 10, isAborted: false, turnId: 't' })
+
+  /**
+   * El motor bajo el panel: `node` responde la carpeta personal y `fs.stat` / `fs.read` leen `archivo`, que el test cambia a mano.
+   * `llamadas` cuenta lo que pidió el panel.
+   */
+  function motorHistorial(on: On, inicial: Record<string, unknown> = {}) {
+    on('clock.now', () => ({ value: AHORA }))
+    on('clock.every', () => ({ value: undefined }))
+    on('clock.after', () => ({ value: undefined }))
+    motorMide(on)
+    motorUsa(on)
+    on('session.id', () => ({ value: 's1' }))
+    on('skill.prompt', (_$, e) => ({ text: e.text }))
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+    const guardados = motorStore(on, inicial)
+    const archivo = { texto: SEIS, mtimeMs: 1_000, ilegible: false, home: 'C:\\Users\\x', nodeFalla: false, nodeEspera: null as Promise<void> | null }
+    const llamadas = { node: 0, stat: [] as string[], read: [] as string[] }
+    on('process.run', async () => {
+      llamadas.node++
+      if (archivo.nodeEspera !== null) await archivo.nodeEspera
+      if (archivo.nodeFalla) return { deny: 'sin node' }
+
+      return { value: { exitCode: 0, stdout: `${archivo.home}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    on('fs.stat', (_$, e) => {
+      llamadas.stat.push(e.path)
+
+      return { value: { kind: 'file' as const, size: archivo.texto.length, mtimeMs: archivo.mtimeMs, isLink: false } }
+    })
+    on('fs.read', (_$, e) => {
+      llamadas.read.push(e.path)
+
+      return archivo.ilegible ? { deny: 'ilegible' } : { value: archivo.texto }
+    })
+
+    return { guardados, archivo, llamadas }
+  }
+
+  const textosDe = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+  const filasDe = async (ui: Ui) => (await textosDe(ui)).filter(t => ES_FILA.test(t))
+  /** Abre la pestaña Flujo y espera la lectura: sin la carpeta personal conocida, la pulsación no espera a `node -p`. */
+  async function abrirFlujo(ui: Ui) {
+    await ui.press({ key: 'pestana-flujo' })
+    await esperar()
+  }
+
+  test('la primera pulsación no espera a `node -p`: la pestaña cambia y el historial llega después', async ($, on) => {
+    const { archivo, llamadas } = motorHistorial(on)
+    let soltar: () => void = () => undefined
+    archivo.nodeEspera = new Promise<void>(r => {
+      soltar = r
+    })
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await ui.press({ key: 'pestana-flujo' })
+    // `node` sigue sin responder y la pulsación ya volvió: la pestaña Flujo se ve, todavía sin historial.
+    expect(await textosDe(ui)).toContain('sin flujo en esta sesión')
+    expect(await ui.find({ type: 'Box', key: 'historial' })).toBeUndefined()
+
+    soltar()
+    await esperar()
+    expect(await filasDe(ui)).toHaveLength(5)
+    expect(llamadas.node).toBe(1)
+    await ui.unmount()
+  })
+
+  test('abrir la pestaña Flujo dibuja «Historial», el promedio y 5 filas; `node` se pide una sola vez', async ($, on) => {
+    const { llamadas } = motorHistorial(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await ui.find({ type: 'Box', key: 'historial' })).toBeUndefined()
+    await abrirFlujo(ui)
+
+    const textos = await textosDe(ui)
+    expect(textos).toContain('Historial')
+    expect(textos).toContain('promedio $0,98 · 12m')
+    const filas = await filasDe(ui)
+    expect(filas).toHaveLength(5)
+    expect(filas[0]).toContain('repo6')
+    expect(filas[4]).toContain('repo2')
+    expect(llamadas.node).toBe(1)
+    expect(llamadas.stat).toEqual(['C:\\Users\\x\\.claude\\flujos\\registros\\flujos.jsonl'])
+    expect(llamadas.read).toEqual(['C:\\Users\\x\\.claude\\flujos\\registros\\flujos.jsonl'])
+    expect((await ui.find({ type: 'Button', key: 'historial-plegar' }))?.props.label).toBe('Ocultar')
+    expect((await ui.find({ type: 'Button', key: 'historial-plegar' }))?.props.hotkey).toBe('h')
+
+    // En Inicio no se dibuja.
+    await ui.press({ key: 'pestana-inicio' })
+    expect(await ui.find({ type: 'Box', key: 'historial' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('con el mismo mtimeMs no vuelve a leer; con otro sí; `node` sigue en una sola vez', async ($, on) => {
+    const { archivo, llamadas } = motorHistorial(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await abrirFlujo(ui)
+    await abrirFlujo(ui)
+    expect(llamadas.stat).toHaveLength(2)
+    expect(llamadas.read).toHaveLength(1)
+
+    archivo.mtimeMs = 2_000
+    archivo.texto = [...[1, 2, 3, 4, 5, 6].map(fila), fila(7)].join('\n')
+    await abrirFlujo(ui)
+    expect(llamadas.read).toHaveLength(2)
+    expect((await filasDe(ui))[0]).toContain('repo7')
+    expect(llamadas.node).toBe(1)
+    await ui.unmount()
+  })
+
+  test('si `fs.read` rechaza, el bloque no se dibuja y el resto de la pestaña sigue', async ($, on) => {
+    const { archivo, llamadas } = motorHistorial(on)
+    archivo.ilegible = true
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await abrirFlujo(ui)
+    expect(llamadas.read).toHaveLength(1)
+    expect(await ui.find({ type: 'Box', key: 'historial' })).toBeUndefined()
+    expect(await textosDe(ui)).not.toContain('Historial')
+    expect(await textosDe(ui)).toContain('sin flujo en esta sesión')
+    await ui.unmount()
+  })
+
+  test('un archivo sin filas de flujo no dibuja el bloque', async ($, on) => {
+    const { archivo } = motorHistorial(on)
+    archivo.texto = '{ roto\n'
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await abrirFlujo(ui)
+    expect(await ui.find({ type: 'Box', key: 'historial' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('si `node` falla no se vuelve a pedir y no se lee el archivo', async ($, on) => {
+    const { archivo, llamadas } = motorHistorial(on)
+    archivo.nodeFalla = true
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await abrirFlujo(ui)
+    await abrirFlujo(ui)
+    expect(llamadas.node).toBe(1)
+    expect(llamadas.stat).toEqual([])
+    expect(llamadas.read).toEqual([])
+    expect(await ui.find({ type: 'Box', key: 'historial' })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test('`historial-plegar` oculta las filas y guarda prefs:historial', async ($, on) => {
+    const { guardados } = motorHistorial(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await abrirFlujo(ui)
+    expect(await filasDe(ui)).toHaveLength(5)
+
+    await ui.press({ key: 'historial-plegar' })
+    expect(await filasDe(ui)).toEqual([])
+    expect(await textosDe(ui)).toContain('Historial')
+    expect(await textosDe(ui)).not.toContain('promedio $0,98 · 12m')
+    expect((await ui.find({ type: 'Button', key: 'historial-plegar' }))?.props.label).toBe('Ver')
+    expect(guardados.get('prefs:historial')).toBe(false)
+
+    await ui.press({ key: 'historial-plegar' })
+    expect(await filasDe(ui)).toHaveLength(5)
+    expect((await ui.find({ type: 'Button', key: 'historial-plegar' }))?.props.label).toBe('Ocultar')
+    expect(guardados.get('prefs:historial')).toBe(true)
+    await ui.unmount()
+  })
+
+  /** Lo que el motor responde a `session.start` (ver «si command.register falla…»). */
+  function motorArranque(on: On) {
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+  }
+
+  test('session.start con prefs:historial en false arranca plegado, y la pestaña Flujo guardada relee', async ($, on) => {
+    const { llamadas } = motorHistorial(on, { 'prefs:flujo': true, 'prefs:historial': false })
+    motorArranque(on)
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
+    await esperar()
+    expect(llamadas.read).toHaveLength(1)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await textosDe(ui)).toContain('Historial')
+    expect(await filasDe(ui)).toEqual([])
+    expect((await ui.find({ type: 'Button', key: 'historial-plegar' }))?.props.label).toBe('Ver')
+    await ui.unmount()
+  })
+
+  test('session.start sin prefs:historial arranca desplegado', async ($, on) => {
+    const { llamadas } = motorHistorial(on, { 'prefs:flujo': true })
+    motorArranque(on)
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
+    // El motor corre el primer tick al registrarlo: se espera a que su lectura termine antes de seguir.
+    await esperar()
+    expect(llamadas.read).toHaveLength(1)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await filasDe(ui)).toHaveLength(5)
+    expect((await ui.find({ type: 'Button', key: 'historial-plegar' }))?.props.label).toBe('Ocultar')
+    await ui.unmount()
+  })
+
+  test('el fin del flujo por turn.complete relee el historial; un turno sin flujo en curso no', async ($, on) => {
+    const { archivo, llamadas } = motorHistorial(on)
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await abrirFlujo(ui)
+    expect(llamadas.read).toHaveLength(1)
+    expect((await filasDe(ui))[0]).toContain('repo6')
+
+    // El flujo anota su fila antes de dar la respuesta final.
+    archivo.mtimeMs = 2_000
+    archivo.texto = [...[1, 2, 3, 4, 5, 6].map(fila), fila(7)].join('\n')
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    expect(llamadas.read).toHaveLength(2)
+    expect((await filasDe(ui))[0]).toContain('repo7')
+
+    // Ya terminado: otro turno no vuelve a mirar el archivo.
+    const antes = llamadas.stat.length
+    await $.turn.complete(respuesta('otra cosa'))
+    expect(llamadas.stat).toHaveLength(antes)
+    await ui.unmount()
+  })
+
+  test('a 49 y a 32 columnas ninguna fila pasa del ancho del panel', async ($, on) => {
+    motorHistorial(on)
+    await $.session.measure(MEDIDA)
+
+    for (const pane of [PANE_ANCHO, PANE]) {
+      const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
+      await abrirFlujo(ui)
+
+      const filas = await filasDe(ui)
+      expect(filas).toHaveLength(5)
+      for (const f of filas) expect(Array.from(f).length).toBeLessThanOrEqual(pane.props.bodyColumns)
+      await ui.unmount()
+    }
+  })
+})
+
+describe('freno', () => {
+  const texto = { texto: 'sigue con lo otro' }
+  const cerrado = { estado: 'completo', fin: 1000 }
+  const MOTIVO_A = 'Contexto de 96k: haz /clear antes de /implementador; el primer pedido reescribe todo en Sonnet. Envíalo de nuevo para seguir igual.'
+  const MOTIVO_B =
+    'Flujo cerrado: seguir aquí reescribe 96k de caché con el modelo de la sesión. Para «Queda para ti» usa `! comando`, o /clear. Envíalo de nuevo para seguir igual.'
+
+  test('/implementador con contexto grande frena una sola vez', () => {
+    const a = decidirFreno({ texto: '/implementador x', comando: 'implementador' }, 96_200, null, null)
+    expect(a).toEqual({ motivo: MOTIVO_A, freno: { frenado: true } })
+
+    const reenvio = decidirFreno({ texto: '/implementador x', comando: 'implementador' }, 96_200, null, a.freno)
+    expect(reenvio).toEqual({ motivo: null, freno: null })
+  })
+
+  test('con 60.000 pasa, con 60.001 frena, y x:implementador frena', () => {
+    expect(UMBRAL_FRENO).toBe(60_000)
+    expect(decidirFreno({ texto: '/implementador', comando: 'implementador' }, 60_000, null, null)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno({ texto: '/implementador', comando: 'implementador' }, 60_001, null, null).motivo).toContain('Contexto de 60k')
+    expect(decidirFreno({ texto: '/x:implementador', comando: 'x:implementador' }, 96_200, null, null)).toEqual({ motivo: MOTIVO_A, freno: { frenado: true } })
+    expect(decidirFreno({ texto: '/otro', comando: 'otro' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno({ texto: '/implementadorx', comando: 'implementadorx' }, 96_200, null, null).motivo).toBeNull()
+  })
+
+  test('tras un flujo cerrado el primer mensaje frena, su reenvío pasa y un tercero pasa', () => {
+    const primero = decidirFreno(texto, 96_200, cerrado, null)
+    expect(primero).toEqual({ motivo: MOTIVO_B, freno: { frenado: true, cierreVisto: 1000 } })
+
+    const reenvio = decidirFreno(texto, 96_200, cerrado, primero.freno)
+    expect(reenvio).toEqual({ motivo: null, freno: { cierreVisto: 1000 } })
+
+    const tercero = decidirFreno(texto, 96_200, cerrado, reenvio.freno)
+    expect(tercero).toEqual({ motivo: null, freno: { cierreVisto: 1000 } })
+    expect(tercero.freno).toBe(reenvio.freno)
+  })
+
+  test('un flujo cerrado nuevo vuelve a frenar el primer mensaje', () => {
+    const visto: Freno = { cierreVisto: 1000 }
+    expect(decidirFreno(texto, 96_200, { estado: 'detenido', fin: 2000 }, visto)).toEqual({ motivo: MOTIVO_B, freno: { frenado: true, cierreVisto: 2000 } })
+  })
+
+  test('un flujo interrumpido no frena ni consume el cierre: el mensaje siguiente suele retomarlo', () => {
+    const visto: Freno = { cierreVisto: 1000 }
+    expect(decidirFreno(texto, 96_200, { estado: 'interrumpido', fin: 2000 }, visto)).toEqual({ motivo: null, freno: visto })
+    expect(decidirFreno(texto, 96_200, { estado: 'interrumpido', fin: 2000 }, null)).toEqual({ motivo: null, freno: null })
+  })
+
+  test('`! cmd` y `/otro` no consumen el primer mensaje', () => {
+    for (const envio of [{ texto: '! git status' }, { texto: '  !git status' }, { texto: '/otro', comando: 'otro' }, { texto: '/otro' }]) {
+      expect(decidirFreno(envio, 96_200, cerrado, null)).toEqual({ motivo: null, freno: null })
+    }
+
+    expect(decidirFreno(texto, 96_200, cerrado, null).motivo).toBe(MOTIVO_B)
+  })
+
+  test('con el flujo en curso, sin flujo o sin fin, pasa y no anota nada', () => {
+    expect(decidirFreno(texto, 96_200, { estado: 'en curso', fin: null }, null)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno(texto, 96_200, { estado: 'en curso', fin: 1000 }, null)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno(texto, 96_200, null, null)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno(texto, 96_200, { estado: 'completo', fin: null }, null)).toEqual({ motivo: null, freno: null })
+  })
+
+  test('con un contexto de hasta 60k el primer mensaje pasa y consume el cierre', () => {
+    const primero = decidirFreno(texto, 60_000, cerrado, null)
+    expect(primero).toEqual({ motivo: null, freno: { cierreVisto: 1000 } })
+    expect(decidirFreno(texto, 96_200, cerrado, primero.freno)).toEqual({ motivo: null, freno: { cierreVisto: 1000 } })
+  })
+
+  test('sin tokens nunca frena, pero el primer mensaje tras el cierre consume cierreVisto', () => {
+    expect(decidirFreno({ texto: '/implementador', comando: 'implementador' }, undefined, null, null)).toEqual({ motivo: null, freno: null })
+
+    const primero = decidirFreno(texto, undefined, cerrado, null)
+    expect(primero).toEqual({ motivo: null, freno: { cierreVisto: 1000 } })
+    expect(decidirFreno(texto, 96_200, cerrado, primero.freno)).toEqual({ motivo: null, freno: { cierreVisto: 1000 } })
+  })
+
+  test('con frenado activo, `! cmd` o `/otro` gastan el reenvío y el texto siguiente vuelve a frenar', () => {
+    const frenado = decidirFreno(texto, 96_200, cerrado, null).freno
+    const gastado = decidirFreno({ texto: '! ls' }, 96_200, cerrado, frenado)
+    expect(gastado).toEqual({ motivo: null, freno: { cierreVisto: 1000 } })
+
+    const frenadoA = decidirFreno({ texto: '/implementador', comando: 'implementador' }, 96_200, cerrado, null).freno
+    expect(decidirFreno({ texto: '/otro', comando: 'otro' }, 96_200, cerrado, frenadoA)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno(texto, 96_200, cerrado, frenadoA).motivo).toBeNull()
+    expect(decidirFreno(texto, 96_200, cerrado, frenadoA).freno).toEqual({ cierreVisto: 1000 })
+  })
+
+  test('nunca devuelve un freno vacío y conserva el que no cambia', () => {
+    expect(decidirFreno(texto, 96_200, null, {})).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno(texto, 96_200, null, { frenado: true }).freno).toBeNull()
+
+    const antes: Freno = { cierreVisto: 5 }
+    expect(decidirFreno(texto, 96_200, null, antes).freno).toBe(antes)
+    expect(decidirFreno({ texto: '/implementador', comando: 'implementador' }, 96_200, null, antes).freno).toEqual({ frenado: true, cierreVisto: 5 })
+  })
+})
+
+describe('freno y avisos en el panel', () => {
+  const MOTIVO_A = 'Contexto de 96k: haz /clear antes de /implementador; el primer pedido reescribe todo en Sonnet. Envíalo de nuevo para seguir igual.'
+  const MOTIVO_B =
+    'Flujo cerrado: seguir aquí reescribe 96k de caché con el modelo de la sesión. Para «Queda para ti» usa `! comando`, o /clear. Envíalo de nuevo para seguir igual.'
+  const MEDIDA_50K: SessionMeasureInput = { ...MEDIDA, context: { ...MEDIDA.context, tokens: 50_000 } }
+  type Origen = Parameters<Engine['prompt']['submit']>[0]['origin']
+
+  /** El motor bajo el panel: `entradas` son los envíos que llegaron hasta abajo (los que no frenó el panel) y `avisos` los toasts. */
+  function motor(on: On, toastFalla = false) {
+    const entradas: string[] = []
+    const avisos: string[] = []
+    on('clock.now', () => ({ value: AHORA }))
+    on('clock.every', () => ({ value: undefined }))
+    on('clock.after', () => ({ value: undefined }))
+    motorMide(on)
+    motorUsa(on)
+    on('session.id', () => ({ value: 's1' }))
+    motorStore(on)
+    on('skill.prompt', (_$, e) => ({ text: e.text }))
+    on('tool.call', () => ({ result: 'listo' }))
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+    on('prompt.submit', (_$, e) => {
+      entradas.push(e.text)
+
+      return { text: e.text }
+    })
+    on('ui.toast', (_$, e) => {
+      if (toastFalla) throw new Error('sin toast')
+      avisos.push(e.text)
+
+      return { value: undefined }
+    })
+
+    return { entradas, avisos }
+  }
+
+  /** Un envío como lo hace la persona al escribir (`comando` si es un `/comando`). */
+  const enviar = ($: Engine, text: string, comando?: string, origin: Origen = { kind: 'composer' }) =>
+    $.prompt.submit({ text, wait: false, origin, ...(comando === undefined ? {} : { command: { name: comando, args: '' } }) })
+
+  const respuesta = (answer: string) => ({ reason: 'answer' as const, answer, durationMs: 10, isAborted: false, turnId: 't' })
+
+  const preguntar = ($: Engine, header: string, agentId?: string) =>
+    $.tool.call({
+      tool: 'AskUserQuestion',
+      questions: [
+        {
+          question: '¿Seguimos?',
+          header,
+          options: [
+            { label: 'Sí', description: 'Seguir' },
+            { label: 'No', description: 'Parar' },
+          ],
+          multiSelect: false,
+        },
+      ],
+      ...(agentId === undefined ? {} : { agentId }),
+    })
+
+  /** Un flujo `/implementador` que ya terminó con la respuesta dada. */
+  async function flujoCerrado($: Engine, answer: string) {
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.turn.complete(respuesta(answer))
+  }
+
+  test('/implementador con contexto grande se frena y el reenvío pasa a next', async ($, on) => {
+    const { entradas } = motor(on)
+    await $.session.measure(MEDIDA)
+
+    expect(await enviar($, '/implementador x', 'implementador')).toEqual({ drop: MOTIVO_A })
+    expect(entradas).toEqual([])
+    expect(await enviar($, '/implementador x', 'implementador')).toEqual({ text: '/implementador x' })
+    expect(entradas).toEqual(['/implementador x'])
+  })
+
+  test('con 50.000 tokens /implementador pasa', async ($, on) => {
+    const { entradas } = motor(on)
+    await $.session.measure(MEDIDA_50K)
+
+    expect(await enviar($, '/implementador x', 'implementador')).toEqual({ text: '/implementador x' })
+    expect(entradas).toEqual(['/implementador x'])
+  })
+
+  test('tras cerrar un flujo, el primer mensaje libre se frena y el reenvío pasa', async ($, on) => {
+    const { entradas } = motor(on)
+    await $.session.measure(MEDIDA)
+    await flujoCerrado($, 'CIERRE · x — COMPLETO')
+
+    expect(await enviar($, 'hola')).toEqual({ drop: MOTIVO_B })
+    expect(await enviar($, 'hola')).toEqual({ text: 'hola' })
+    // El cierre ya se vio: otro mensaje no vuelve a frenar.
+    expect(await enviar($, 'otra vez')).toEqual({ text: 'otra vez' })
+    expect(entradas).toEqual(['hola', 'otra vez'])
+  })
+
+  test('`! git status` pasa sin consumir el cierre', async ($, on) => {
+    const { entradas } = motor(on)
+    await $.session.measure(MEDIDA)
+    await flujoCerrado($, 'CIERRE · x — COMPLETO')
+
+    expect(await enviar($, '! git status')).toEqual({ text: '! git status' })
+    expect(await enviar($, 'hola')).toEqual({ drop: MOTIVO_B })
+    expect(entradas).toEqual(['! git status'])
+  })
+
+  test('con poco contexto el primer mensaje tras el cierre pasa y consume el aviso', async ($, on) => {
+    const { entradas } = motor(on)
+    await $.session.measure(MEDIDA_50K)
+    await flujoCerrado($, 'CIERRE · x — COMPLETO')
+    expect(await enviar($, 'hola')).toEqual({ text: 'hola' })
+
+    await $.session.measure(MEDIDA)
+    expect(await enviar($, 'otra vez')).toEqual({ text: 'otra vez' })
+    expect(entradas).toEqual(['hola', 'otra vez'])
+  })
+
+  test('lo que no escribe la persona nunca se frena ni gasta el aviso', async ($, on) => {
+    const { entradas } = motor(on)
+    await $.session.measure(MEDIDA)
+    await flujoCerrado($, 'CIERRE · x — COMPLETO')
+
+    expect(await enviar($, 'aviso de tarea', undefined, { kind: 'task-notification' })).toEqual({ text: 'aviso de tarea' })
+    expect(await enviar($, '/implementador x', 'implementador', { kind: 'peer' })).toEqual({ text: '/implementador x' })
+    expect(await enviar($, 'hola')).toEqual({ drop: MOTIVO_B })
+    expect(entradas).toEqual(['aviso de tarea', '/implementador x'])
+  })
+
+  test('toast: «El plan espera tu aprobación» con el header Plan y «El flujo te hace una pregunta» con otro', async ($, on) => {
+    const { avisos } = motor(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    await preguntar($, 'Plan')
+    expect(avisos).toEqual(['El plan espera tu aprobación'])
+    await preguntar($, 'Dudas')
+    expect(avisos).toEqual(['El plan espera tu aprobación', 'El flujo te hace una pregunta'])
+  })
+
+  test('toast: sin flujo en curso, con el flujo terminado o desde un subagente no hay aviso', async ($, on) => {
+    const { avisos } = motor(on)
+
+    await preguntar($, 'Plan')
+    expect(avisos).toEqual([])
+
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await preguntar($, 'Plan', 'agente-1')
+    expect(avisos).toEqual([])
+
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    avisos.length = 0
+    await preguntar($, 'Plan')
+    expect(avisos).toEqual([])
+  })
+
+  test('toast: «Flujo terminado: completo» y «Flujo terminado: detenido»', async ($, on) => {
+    const { avisos } = motor(on)
+
+    await flujoCerrado($, 'CIERRE · x — COMPLETO')
+    expect(avisos).toEqual(['Flujo terminado: completo'])
+    // Un turno más con el flujo ya terminado no repite el aviso.
+    await $.turn.complete(respuesta('otra cosa'))
+    expect(avisos).toEqual(['Flujo terminado: completo'])
+
+    await flujoCerrado($, 'CIERRE · x — DETENIDO')
+    expect(avisos).toEqual(['Flujo terminado: completo', 'Flujo terminado: detenido'])
+  })
+
+  test('toast: un turno interrumpido avisa «Flujo terminado: interrumpido»', async ($, on) => {
+    const { avisos } = motor(on)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.turn.complete({ ...respuesta(''), reason: 'aborted', isAborted: true })
+
+    expect(avisos).toEqual(['Flujo terminado: interrumpido'])
+  })
+
+  test('un turno cortado sin CIERRE queda interrumpido, no frena el mensaje siguiente y estado.mjs lo retoma hasta el cierre', async ($, on) => {
+    const { entradas, avisos } = motor(on)
+    await $.session.measure(MEDIDA)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+
+    // El límite de uso corta el turno: la respuesta no trae CIERRE.
+    await $.turn.complete(respuesta('Llegué al límite de uso; falta S4 y S5.'))
+    expect(avisos).toEqual(['Flujo terminado: interrumpido'])
+
+    // El mensaje que retoma el flujo pasa: un flujo interrumpido no es un flujo cerrado.
+    expect(await enviar($, 'sigue')).toEqual({ text: 'sigue' })
+    expect(entradas).toEqual(['sigue'])
+
+    // `estado.mjs` lo vuelve a poner en curso: el cierre real avisa de nuevo (solo avisa un flujo que estaba en curso).
+    await $.tool.call({ tool: 'Bash', command: 'node ~/.claude/flujos/estado.mjs --base --sub 4 --paso 5' })
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+    expect(avisos).toEqual(['Flujo terminado: interrumpido', 'Flujo terminado: completo'])
+
+    // Ya cerrado de verdad, el primer mensaje libre sí se frena.
+    expect(await enviar($, 'hola')).toEqual({ drop: MOTIVO_B })
+  })
+
+  test('un toast que falla no rompe el fin del flujo ni la pregunta', async ($, on) => {
+    motor(on, true)
+    await $.skill.prompt({ skill: 'implementador', text: '' })
+    expect(await preguntar($, 'Plan')).toEqual({ result: 'listo' })
+    await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
   })
 })

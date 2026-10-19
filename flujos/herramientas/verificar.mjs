@@ -14,10 +14,17 @@
 // Caché: si el árbol de trabajo (versionados + nuevos no ignorados) y los pasos son los mismos de una
 // corrida VERDE de los últimos 30 min, la repite sin correr nada y lo dice. `--sin-cache` corre igual.
 //
+// Marca de corrida: al empezar a correr anota `{ clave, pid, inicio }` junto al registro del proyecto
+// (`-verificar-curso.json`) y al terminar la completa con `{ fin, resultado, salida }`. Otra corrida con
+// el mismo árbol y los mismos pasos mientras esa siga viva (la verificación inicial del preflight, por ejemplo)
+// no corre nada: la espera hasta 570 s, repite su salida y sale con su código. Una marca de un proceso muerto,
+// o de hace más de 30 min, se ignora.
+//
 //   node ~/.claude/flujos/verificar.mjs [--sin-cache]
 //
-// Termina en `RESULTADO: VERDE` (exit 0), `RESULTADO: ROJO (<pasos>)` (exit 1) o
-// `RESULTADO: SIN PASOS` (exit 3: el proyecto no tiene verificación conocida). Con ROJO la línea va
+// Termina en `RESULTADO: VERDE` (exit 0), `RESULTADO: ROJO (<pasos>)` (exit 1),
+// `RESULTADO: SIN PASOS` (exit 3: el proyecto no tiene verificación conocida) o
+// `RESULTADO: EN CURSO (…)` (exit 4: la corrida que esperaba sigue tras 570 s; se repite). Con ROJO la línea va
 // antes del detalle y se repite al final, para que una tubería (`| tail`) no la pierda.
 
 import crypto from 'node:crypto'
@@ -33,6 +40,8 @@ const TEST_POR_DEFECTO = /no test specified/i
 const TIMEOUT_SEG = 600
 const VIGENCIA_MIN = 30
 const TOPE_CACHE = 5
+const ESPERA_SEG = 570
+const SONDEO_MS = 500
 
 // ── Caché de corridas VERDE ─────────────────────────────────────────────────
 
@@ -40,7 +49,7 @@ const TOPE_CACHE = 5
 const cacheDe = (raiz) => registroDe(raiz).replace(/\.jsonl$/, '-verificar.json')
 
 /** Clave de una corrida: el árbol de trabajo y los pasos (nombre, comando y tope). */
-const claveDe = (arbol, pasos) => crypto.createHash('sha1').update(JSON.stringify([arbol, pasos.map((p) => [p.nombre, p.cmd, p.timeoutSeg ?? null])])).digest('hex')
+export const claveDe = (arbol, pasos) => crypto.createHash('sha1').update(JSON.stringify([arbol, pasos.map((p) => [p.nombre, p.cmd, p.timeoutSeg ?? null])])).digest('hex')
 
 function leerCache(raiz) {
   try {
@@ -69,6 +78,76 @@ function guardarVerde(raiz, entrada) {
   } catch {
     // Sin caché, la próxima corrida corre entera.
   }
+}
+
+// ── Marca de corrida en curso ───────────────────────────────────────────────
+
+/** Archivo de la marca de la corrida en curso del proyecto, junto a su registro. */
+export const marcaDe = (raiz) => registroDe(raiz).replace(/\.jsonl$/, '-verificar-curso.json')
+
+/** ¿Sigue vivo el proceso `pid`? `EPERM` cuenta como vivo: existe, aunque no sea nuestro. */
+export function vivo(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return e.code === 'EPERM'
+  }
+}
+
+const dormir = (ms) => new Promise((listo) => setTimeout(listo, ms))
+
+/** La marca del proyecto, o null si no hay o está a medio escribir. */
+function leerMarca(raiz) {
+  try {
+    const m = JSON.parse(fs.readFileSync(marcaDe(raiz), 'utf8'))
+    return m && typeof m === 'object' && !Array.isArray(m) ? m : null
+  } catch {
+    return null
+  }
+}
+
+/** ¿La marca es de una corrida con esta clave que sigue viva (y de hace menos de `VIGENCIA_MIN` min)? */
+const enCurso = (m, clave) => Boolean(m) && m.clave === clave && !m.fin && vivo(m.pid) && Date.now() - Date.parse(m.inicio) < VIGENCIA_MIN * 60_000
+
+/** Crea la marca solo si no existe (`wx`): de dos corridas simultáneas gana una. Un fallo distinto de «ya existe» no frena la corrida. */
+function reclamar(raiz, marca) {
+  try {
+    fs.mkdirSync(path.dirname(marcaDe(raiz)), { recursive: true })
+    fs.writeFileSync(marcaDe(raiz), JSON.stringify(marca) + '\n', { flag: 'wx' })
+    return true
+  } catch (e) {
+    return e.code !== 'EEXIST'
+  }
+}
+
+/** Completa la marca propia con `datos`, solo si sigue siendo de este proceso. Se escribe aparte y se renombra: nadie lee a medias. */
+function completarMarca(raiz, propia, datos) {
+  const tmp = `${marcaDe(raiz)}.${process.pid}.tmp`
+  try {
+    const m = leerMarca(raiz)
+    if (!m || m.pid !== propia.pid || m.inicio !== propia.inicio) return
+    fs.writeFileSync(tmp, JSON.stringify({ ...m, ...datos }) + '\n')
+    fs.renameSync(tmp, marcaDe(raiz))
+  } catch {
+    fs.rmSync(tmp, { force: true })
+  }
+}
+
+/**
+ * Espera a que termine la corrida de `previa`, hasta `ESPERA_SEG` s desde `t0`. Devuelve su marca ya completa,
+ * `'vencido'` si se acabó el tiempo, o null si el proceso murió sin completarla (o otra corrida tomó su lugar).
+ */
+async function esperarCorrida(raiz, previa, t0) {
+  while (Date.now() - t0 < ESPERA_SEG * 1000) {
+    await dormir(SONDEO_MS)
+    const vive = vivo(previa.pid)
+    const m = leerMarca(raiz)
+    if (m && m.pid === previa.pid && m.inicio === previa.inicio && m.fin) return m
+    if (!vive) return null
+  }
+  return 'vencido'
 }
 
 const cola = (texto, n) => texto.trimEnd().split('\n').slice(-n).join('\n')
@@ -152,7 +231,7 @@ export function pasosDe(raiz) {
 /** Mata `pid` con todos sus descendientes: en Windows con `taskkill /T`; en el resto, su grupo de procesos. */
 function matarArbol(pid) {
   try {
-    if (WIN) spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    if (WIN) spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
     else process.kill(-pid, 'SIGKILL')
   } catch {
     // Ya terminó.
@@ -170,6 +249,7 @@ function correr(cmd, segundos) {
       cwd: RAIZ,
       shell: true,
       detached: !WIN,
+      windowsHide: true,
       env: { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0' },
     })
     hijo.stdout.setEncoding('utf8').on('data', (d) => (stdout += d))
@@ -215,6 +295,46 @@ async function main() {
     process.exitCode = 0
     return
   }
+
+  // ¿Hay otra corrida viva con esta clave? Se espera y se repite su salida. Si no, se reclama la marca y se corre.
+  let propia = null
+  if (clave) {
+    const t0 = Date.now()
+    for (let intento = 0; intento < 20; intento++) {
+      const previa = leerMarca(RAIZ)
+      if (enCurso(previa, clave)) {
+        const fin = await esperarCorrida(RAIZ, previa, t0)
+        if (fin === 'vencido') {
+          console.log(`RESULTADO: EN CURSO (otra corrida con este árbol sigue tras ${ESPERA_SEG} s; repite verificar.mjs)`)
+          process.exitCode = 4
+          return
+        }
+        if (fin) {
+          const hora = new Date(fin.inicio).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+          console.log(`(esperó la corrida en curso de las ${hora})`)
+          for (const l of Array.isArray(fin.salida) ? fin.salida : []) console.log(l)
+          process.exitCode = fin.resultado === 'RESULTADO: VERDE' ? 0 : 1
+          return
+        }
+        continue
+      }
+      // Una marca vieja (de un proceso muerto, ya terminada o de otro árbol) se quita antes de reclamar la propia.
+      if (previa) fs.rmSync(marcaDe(RAIZ), { force: true })
+      const marca = { clave, pid: process.pid, inicio: new Date().toISOString() }
+      if (reclamar(RAIZ, marca)) {
+        propia = marca
+        break
+      }
+      await dormir(100)
+    }
+  }
+
+  // Todo lo que se imprime desde aquí queda también en la marca, para quien espere esta corrida.
+  const salida = []
+  const imprimir = (linea) => {
+    salida.push(linea)
+    console.log(linea)
+  }
   const resultados = []
   for (const paso of pasos) {
     const t0 = Date.now()
@@ -228,16 +348,17 @@ async function main() {
     const extra = r.resumen ? r.resumen(r.salida) : ''
     return `${r.nombre.padEnd(10)} ${r.ok ? 'OK   ' : 'FALLÓ'} ${tiempo}${extra ? `   ${extra}` : ''}`
   })
-  for (const l of tabla) console.log(l)
+  for (const l of tabla) imprimir(l)
   const rojos = resultados.filter((r) => !r.ok)
   if (!rojos.length && clave) guardarVerde(RAIZ, { clave, arbol, t: new Date().toISOString(), tabla })
   const resultado = rojos.length ? `RESULTADO: ROJO (${rojos.map((r) => r.nombre).join(', ')})` : 'RESULTADO: VERDE'
-  console.log(resultado)
+  imprimir(resultado)
   for (const r of rojos) {
-    console.log(`\n── ${r.nombre}: ${r.vencido ? `superó ${r.tope} s (timeoutSeg) y se cortó` : `falló (exit ${r.codigo})`} ──`)
-    console.log(r.detalle(r.salida))
+    imprimir(`\n── ${r.nombre}: ${r.vencido ? `superó ${r.tope} s (timeoutSeg) y se cortó` : `falló (exit ${r.codigo})`} ──`)
+    imprimir(r.detalle(r.salida))
   }
-  if (rojos.length) console.log(`\n${resultado}`)
+  if (rojos.length) imprimir(`\n${resultado}`)
+  if (propia) completarMarca(RAIZ, propia, { fin: new Date().toISOString(), resultado, salida })
   process.exitCode = rojos.length ? 1 : 0
 }
 

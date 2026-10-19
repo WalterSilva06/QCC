@@ -111,7 +111,7 @@ function argumentosDeScript(comandos: string[][], nombre: string): string[] | nu
   return null
 }
 
-const MODOS_ESTADO = { '--base': 'base', '--cambios': 'cambios', '--diff': 'diff', '--guardar': 'otro', '--estado': 'otro', '--reglas': 'otro' } as const
+const MODOS_ESTADO = { '--base': 'base', '--cambios': 'cambios', '--diff': 'diff', '--guardar': 'otro', '--estado': 'otro', '--cancelar': 'otro', '--reglas': 'otro' } as const
 
 /**
  * El `--paso <n>` de los argumentos de `estado.mjs`: el entero no negativo que sigue a la marca, mirando solo lo anterior a `--`
@@ -307,13 +307,38 @@ function esperaTotal(f: Flujo, t?: number): number {
   return cerrada + abierta
 }
 
+/** Agentes propios del flujo: lanzar uno desde el hilo principal es seguir el flujo. */
+const AGENTES_DEL_FLUJO: readonly string[] = ['explorador', 'planificador', 'revisor-plan', 'ejecutor', 'revisor']
+
+/**
+ * Si la señal `s` sigue un flujo interrumpido (un turno cortado sin `CIERRE`, p. ej. por el límite de uso), lo vuelve a poner en curso a la hora `t`.
+ * Solo lo reanudan `estado.mjs` (salvo el preflight, que es de un flujo nuevo) y el lanzamiento de un agente del flujo; nunca la vuelta de un agente,
+ * que puede llegar tarde. El tiempo interrumpido va a `pausa` (no es trabajo ni espera) y el consumo fijado se suelta, para fijarlo en el cierre real.
+ * Un flujo completo o detenido no se reanuda. Si no corresponde, devuelve `actual`.
+ */
+function reanudar(actual: Flujo | null, s: Senal, t?: number): Flujo | null {
+  if (!actual || actual.estado !== 'interrumpido' || actual.fin === null) return actual
+
+  const sigue = (s.tipo === 'estado' && s.modo !== 'preflight') || (s.tipo === 'agente' && AGENTES_DEL_FLUJO.includes(s.nombre))
+  if (!sigue) return actual
+
+  const ahora = Math.max(t ?? actual.fin, actual.fin)
+  const vivo: Flujo = { ...actual, estado: 'en curso', fin: null, desde: ahora, pausa: (actual.pausa ?? 0) + (ahora - actual.fin) }
+  delete vivo.consumo
+
+  return vivo
+}
+
 /**
  * El flujo después de la señal `s`, a la hora `t` (ms; sin ella, la del tramo abierto: no suma tiempo).
  * Si el paso cambia, suma el tramo de trabajo al paso que deja y abre otro; volver a un paso ya visitado acumula.
  * Con una pregunta abierta (`abrirEspera`) el cambio de paso no suma trabajo: la espera va al paso en que cierra.
- * Devuelve un flujo nuevo; si no hay flujo o ya terminó, lo devuelve tal cual (una señal tardía no lo revive).
+ * Devuelve un flujo nuevo; si no hay flujo o ya terminó, lo devuelve tal cual (una señal tardía no lo revive),
+ * salvo un flujo interrumpido que el orquestador retoma (ver `reanudar`).
  */
-export function avanzar(actual: Flujo | null, s: Senal, t?: number): Flujo | null {
+export function avanzar(sinReanudar: Flujo | null, s: Senal, t?: number): Flujo | null {
+  const actual = reanudar(sinReanudar, s, t)
+
   if (!actual || actual.estado !== 'en curso') return actual
 
   const f = completar(actual, t)
@@ -352,8 +377,9 @@ export function cerrarEspera(actual: Flujo | null, t: number): Flujo | null {
 /**
  * Cierra el flujo a la hora `t` (ms; sin ella, la del tramo abierto) y cierra también el tramo del paso actual
  * y la espera del usuario si seguía abierta.
- * Con `answer`, `detenido` si la respuesta trae `CIERRE · … — DETENIDO` y `completo` si no;
- * cualquier otra razón lo deja `interrumpido`. El paso no cambia. Un flujo ya terminado queda igual.
+ * Con `answer` y la respuesta con `CIERRE ·`, `detenido` si trae `CIERRE · … — DETENIDO` y `completo` si no.
+ * Una respuesta sin `CIERRE ·` (un turno cortado, p. ej. por el límite de uso) o cualquier otra razón lo deja `interrumpido`,
+ * que el orquestador puede retomar (ver `reanudar`). El paso no cambia. Un flujo ya terminado queda igual.
  */
 export function terminarFlujo(actual: Flujo | null, razon: string, respuesta?: string, t?: number): Flujo | null {
   if (!actual || actual.estado !== 'en curso') return actual
@@ -363,7 +389,7 @@ export function terminarFlujo(actual: Flujo | null, razon: string, respuesta?: s
   const espera = typeof f.preguntaDesde === 'number' ? cierreDeEspera(f, ahora) : {}
   const cierre = { tiempos: tiemposHasta(f, ahora), desde: ahora, fin: ahora, ...espera }
 
-  if (razon !== 'answer') return { ...f, ...cierre, estado: 'interrumpido' }
+  if (razon !== 'answer' || !(respuesta ?? '').includes('CIERRE ·')) return { ...f, ...cierre, estado: 'interrumpido' }
 
   return { ...f, ...cierre, estado: /CIERRE · [^\n]*— DETENIDO/.test(respuesta ?? '') ? 'detenido' : 'completo' }
 }
@@ -704,7 +730,7 @@ function configsDelPaso(f: Flujo, i: number): Record<string, string[]> | undefin
 /**
  * Los pasos del flujo más un último nodo «Terminado», cada uno pasado, actual o pendiente.
  * Con la hora `t` (ms) cada nodo trae su `ms` (trabajo, sin la espera al usuario) y, si esperó, su `esperaUsuario`;
- * sin ella, ninguno. «Terminado» lleva el trabajo total y la espera total del flujo.
+ * sin ella, ninguno. «Terminado» lleva el trabajo total (sin la espera ni la `pausa`) y la espera total del flujo.
  */
 export function nodos(actual: Flujo, t?: number): Nodo[] {
   const f = completar(actual, t)
@@ -753,7 +779,7 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
   if (t !== undefined && f.fin !== null) {
     const espera = esperaTotal(f)
 
-    terminado.ms = Math.max(f.fin - f.inicio - espera, 0)
+    terminado.ms = Math.max(f.fin - f.inicio - espera - (f.pausa ?? 0), 0)
     if (espera > 0) terminado.esperaUsuario = espera
   }
 
@@ -921,7 +947,7 @@ export function resumenFlujo(sinCompletar: Flujo | null, t?: number): string {
 
   const f = completar(sinCompletar, t)
   const actual = nodos(f, t).find(n => n.estado === 'actual')
-  const total = t === undefined ? '' : ` · ${duracion(Math.max((f.fin ?? t) - f.inicio - esperaTotal(f, f.fin === null ? t : undefined), 0))}`
+  const total = t === undefined ? '' : ` · ${duracion(Math.max((f.fin ?? t) - f.inicio - esperaTotal(f, f.fin === null ? t : undefined) - (f.pausa ?? 0), 0))}`
 
   return `/${f.nombre}${actual ? ` · ${actual.etiqueta}` : ''}${total}`
 }

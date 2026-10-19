@@ -5,11 +5,12 @@
 //   node ~/.claude/flujos/estado.mjs [--paso <n>] [--forzar]  preflight + foto global; abre la carpeta del flujo
 //   node ~/.claude/flujos/estado.mjs --base [--paso <n>]   foto nueva: BASE=<sha> DESDE=<iso>
 //   node ~/.claude/flujos/estado.mjs --base --sub <n> [--paso <n>]   foto de la subtarea n, guardada en la carpeta del flujo (si ya hay, conserva la primera)
-//   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"]
-//   node ~/.claude/flujos/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens "…"]   BASE, DESDE y permitidos salen de la carpeta del flujo
+//   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"] [--resultado COMPLETO|DETENIDO:<0-7>]
+//   node ~/.claude/flujos/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo
 //   node ~/.claude/flujos/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
-//   node ~/.claude/flujos/estado.mjs --guardar <agentId> plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (revisor del plan, ciclos, CRÍTICO, ASPECTOS)
-//   node ~/.claude/flujos/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan)
+//   node ~/.claude/flujos/estado.mjs --guardar <agentId> plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (revisor del plan, ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s)
+//   node ~/.claude/flujos/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan y la VERIFICACIÓN INICIAL)
+//   node ~/.claude/flujos/estado.mjs --cancelar [--paso <n>]  cierra un flujo abierto sin subtareas ejecutadas (resultado CANCELADO) y libera el candado
 //   node ~/.claude/flujos/estado.mjs --reglas                reglas del proyecto para el orquestador
 //
 // `--paso <n>` (0 a 7) anota en qué paso del flujo se llama; la salida no cambia. Otro valor
@@ -21,23 +22,30 @@
 // Los archivos permitidos que viven en rutas ignoradas se fuerzan dentro de la foto; lo que
 // el ejecutor escribió en otras rutas ignoradas aparece por el registro de la guardia.
 //
+// La verificación inicial: el preflight lanza `verificar.mjs` en segundo plano (desacoplado, con su salida en
+// `verificacion-inicial.log` de la carpeta del flujo; `FLUJOS_INICIAL=0` la desactiva) y anota su pid en
+// `estado.json`. `--guardar … exploracion` y `--estado` esperan a que termine y dan su resultado.
+//
 // La carpeta del flujo (`registros/<proyecto>-<hash>-flujo/`) guarda `estado.json` (fotos, plan,
 // cierre), `mapa.md` (los archivos del repo por carpeta, que el preflight deja para el explorador), el informe
 // del explorador, el plan y un `S<n>.md` por subtarea; el preflight la vacía, salvo
 // que otro flujo del repo siga abierto (sin cierre y con actividad en los últimos 20 min, o 6 h si ya tiene
 // plan): entonces avisa con el título del plan y pide `--forzar`.
-// El cierre (`--cambios … --paso 7`) anota en `registros/flujos.jsonl` el costo real y los veredictos (costos.mjs).
+// El cierre (`--cambios … --paso 7`) anota en `registros/flujos.jsonl` una fila v2 (costo real, veredictos, tiempos,
+// subtareas y calidad: costos.mjs), imprime el CONTEXTO del hilo principal y archiva el flujo en `registros/historial/`
+// (las 30 carpetas más recientes).
 // `--guardar` toma el informe de un agente de su transcript, en `projects/*/*/subagents/agent-<id>.jsonl`
 // dentro de `CLAUDE_CONFIG_DIR` (o `~/.claude`).
 
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, registroDe, flujoDe, arbolDe, configDe, coincide, relativaAlRepo, rutaNativa, RAIZ } from './guardia.mjs'
-import { pasosDe, ultimaVerde } from './verificar.mjs'
-import { costoDelFlujo, resumenDeCosto, resumenDeVeredictos } from './costos.mjs'
+import { pasosDe, ultimaVerde, vivo } from './verificar.mjs'
+import { metricasDelFlujo, precioDe, resumenDeCosto, resumenDeVeredictos } from './costos.mjs'
 
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const AGENTES = path.join(CLAUDE, 'agents')
@@ -52,6 +60,9 @@ const TOPE_REVERSION = 10
 const ABIERTO_MIN = 20
 // Con el plan ya guardado, el flujo puede pasar horas esperando la aprobación sin actividad.
 const ABIERTO_CON_PLAN_MIN = 6 * 60
+// Tope de la espera a la verificación inicial en segundo plano (verificar.mjs espera igual).
+const ESPERA_INICIAL_SEG = 570
+const VERIFICAR = fileURLToPath(new URL('./verificar.mjs', import.meta.url))
 const EDICIONES = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
 
 // ── Permitidos ──────────────────────────────────────────────────────────────
@@ -86,6 +97,7 @@ function git(args, { env, opcional = false } = {}) {
       env: env ?? process.env,
       maxBuffer: 256 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
     })
   } catch (e) {
     if (opcional) return null
@@ -209,6 +221,76 @@ function nuevoFlujo(estado) {
   }
   fs.mkdirSync(FLUJO, { recursive: true })
   fs.writeFileSync(ESTADO, JSON.stringify(estado, null, 2) + '\n')
+}
+
+// ── Verificación inicial en segundo plano ───────────────────────────────────
+
+/**
+ * Lanza `verificar.mjs` desacoplado (el preflight termina sin esperarlo) con su salida en `verificacion-inicial.log`
+ * de la carpeta del flujo, anota `verificacion_inicial` en el estado y devuelve la línea para el preflight.
+ * Sin pasos no hay nada que correr; `FLUJOS_INICIAL=0` la desactiva (los tests, que no pueden dejar procesos sueltos).
+ */
+function lanzarInicial(hayPasos) {
+  const sinLanzar = (motivo) => {
+    anotarEstado({ verificacion_inicial: { motivo } })
+    return `no se lanzó (${motivo})`
+  }
+  if (!hayPasos) {
+    anotarEstado({ verificacion_inicial: { resultado: 'SIN PASOS' } })
+    return 'SIN PASOS'
+  }
+  if (process.env.FLUJOS_INICIAL === '0') return sinLanzar('desactivada con FLUJOS_INICIAL=0')
+  let fd
+  try {
+    const log = path.join(FLUJO, 'verificacion-inicial.log')
+    fd = fs.openSync(log, 'w')
+    const hijo = spawn(process.execPath, [VERIFICAR], { cwd: RAIZ, detached: true, windowsHide: true, stdio: ['ignore', fd, fd] })
+    hijo.on('error', () => {})
+    hijo.unref()
+    if (!hijo.pid) return sinLanzar('el proceso no arrancó')
+    anotarEstado({ verificacion_inicial: { pid: hijo.pid, log, inicio: new Date().toISOString() } })
+    return `en segundo plano (pid ${hijo.pid}); la espera --guardar … exploracion`
+  } catch (e) {
+    return sinLanzar(e.message)
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd)
+  }
+}
+
+const dormirSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+
+/** `VERIFICACIÓN INICIAL: …` a partir de la línea `RESULTADO:` (con o sin ese prefijo) de la corrida. */
+function lineaInicial(resultado, log) {
+  const r = resultado.replace(/^RESULTADO: /, '')
+  const rojo = /^ROJO \((.*)\)$/.exec(r)
+  if (r === 'VERDE' || r === 'SIN PASOS') return `VERIFICACIÓN INICIAL: ${r}`
+  if (rojo) return `VERIFICACIÓN INICIAL: ROJA (${rojo[1]}) · detalle: ${log}`
+  return `VERIFICACIÓN INICIAL: SIN RESULTADO (${r}): corre verificar.mjs, que espera esa corrida`
+}
+
+/**
+ * Espera (hasta `ESPERA_INICIAL_SEG` s) a la verificación inicial del preflight y devuelve su línea `VERIFICACIÓN INICIAL: …`;
+ * null si el flujo no la tiene. El resultado se guarda en el estado: la siguiente llamada no espera. Un fallo
+ * sin resultado (murió, o sigue tras el tope) no se guarda y se remite a `verificar.mjs`, que espera la corrida viva.
+ */
+function esperarInicial() {
+  const v = leerEstado().verificacion_inicial
+  if (!v || typeof v !== 'object') return null
+  if (typeof v.resultado === 'string') return lineaInicial(v.resultado, v.log)
+  const sinResultado = (motivo) => `VERIFICACIÓN INICIAL: SIN RESULTADO (${motivo}): corre verificar.mjs, que espera esa corrida`
+  if (typeof v.motivo === 'string') return sinResultado(v.motivo)
+  const t0 = Date.now()
+  for (;;) {
+    const vive = vivo(v.pid)
+    const linea = (leerTexto(v.log) ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('RESULTADO:')).at(-1)
+    if (linea && !linea.startsWith('RESULTADO: EN CURSO')) {
+      anotarEstado({ verificacion_inicial: { ...v, resultado: linea } })
+      return lineaInicial(linea, v.log)
+    }
+    if (!vive) return sinResultado(linea ? 'otra corrida seguía en curso' : 'terminó sin RESULTADO')
+    if (Date.now() - t0 >= ESPERA_INICIAL_SEG * 1000) return sinResultado(`sigue tras ${ESPERA_INICIAL_SEG} s`)
+    dormirSync(500)
+  }
 }
 
 // ── Informes de los agentes ─────────────────────────────────────────────────
@@ -389,7 +471,6 @@ export function decisionesDelPlan({ clasificacion = null, subtareas = [], pedido
     ...(permitidos.some((p) => RE_PRUEBAS.test(p)) ? ['tests'] : []),
     ...((textoClasificacion === null || citados.some((n) => [1, 2, 3, 6, 9].includes(n))) && !soloTexto ? ['casos borde y seguridad'] : []),
   ].join(', ')
-
   return { revisorPlan, ciclos, critico: `CRÍTICO: ${linea}`, aspectos: `ASPECTOS: ${aspectos}` }
 }
 
@@ -479,8 +560,18 @@ function criticasDeExploracion(texto) {
   return [...porCriterio.keys()].sort((a, b) => a - b).map((n) => `#${n} (${porCriterio.get(n)})`).join(', ')
 }
 
-/** Guarda en la carpeta del flujo el informe del agente `id`: `plan` (con su resumen) o `exploracion`. */
+/**
+ * Guarda en la carpeta del flujo el informe del agente `id`: `plan` (con su resumen) o `exploracion`.
+ * La exploración cierra con el resultado de la verificación inicial, aunque no se haya encontrado el informe.
+ */
 function guardar(id, tipo, ajuste) {
+  guardarInforme(id, tipo, ajuste)
+  if (tipo !== 'exploracion') return
+  const inicial = esperarInicial()
+  if (inicial) console.log(inicial)
+}
+
+function guardarInforme(id, tipo, ajuste) {
   if (tipo !== 'plan' && tipo !== 'exploracion') {
     console.log(`AVISO: --guardar <agentId> plan|exploracion: tipo desconocido «${tipo ?? ''}»; no se guardó nada`)
     return
@@ -531,6 +622,8 @@ function mostrarEstado() {
   for (const n of Object.keys(bases).sort((a, b) => Number(a) - Number(b))) {
     console.log(`FOTO S${n} (--base --sub): BASE=${bases[n].base} DESDE=${bases[n].desde}`)
   }
+  const inicial = esperarInicial()
+  if (inicial) console.log(inicial)
   const verde = ultimaVerde(RAIZ)
   if (verde) console.log(`ÚLTIMO VERDE: árbol ${corto(verde.arbol)} · ${verde.t}`)
 }
@@ -586,6 +679,7 @@ function preflight(forzar) {
   const { pasos, origen } = pasosDe(RAIZ)
   let flujo = FLUJO
   let mapa = 'MAPA: ninguno (la carpeta del flujo no se preparó)'
+  let preparada = false
   const abierto = forzar ? null : flujoAbierto()
   if (abierto) {
     const hora = new Date(abierto.inicio).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
@@ -597,6 +691,7 @@ function preflight(forzar) {
     try {
       nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [] })
       mapa = escribirMapa()
+      preparada = true
     } catch (e) {
       flujo = `(no se pudo preparar: ${e.message}; despacha copiando el plan)`
     }
@@ -615,6 +710,7 @@ function preflight(forzar) {
   console.log(`REGLAS DEL PROYECTO: ${reglas ?? 'ninguna (no hay .claude/implementador/ ni .claude/implementador.md; rigen CLAUDE.md y las reglas comunes)'}`)
   console.log(`CONFIG: ${config.archivo ? '.claude/implementador.json' : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
   console.log(`VERIFICACIÓN (${origen}): ${pasos.length ? pasos.map((p) => p.cmd).join(' → ') : 'SIN PASOS'}`)
+  if (preparada) console.log(`VERIFICACIÓN INICIAL: ${lanzarInicial(pasos.length > 0)}`)
   console.log(`GUARDIA: ${autoprueba()}`)
 }
 
@@ -737,7 +833,7 @@ function reversion(base, restaurar, borrar, aMano) {
  * Qué cambió desde `base` y qué cae fuera de `permitidos`. Con muchos archivos dentro del alcance, van agrupados
  * por carpeta; lo de fuera y lo que solo está en el registro, siempre uno por uno. En el cierre (`paso` 7) agrega `REVERSIÓN`.
  */
-function cambios(base, desde, permitidos, paso, tokens) {
+function cambios(base, desde, permitidos, paso, tokens, resultado) {
   const ahora = foto(permitidos)
   const mapa = new Map()
   const clave = (r) => (WIN ? r.toLowerCase() : r)
@@ -795,46 +891,232 @@ function cambios(base, desde, permitidos, paso, tokens) {
     const { base_global: global } = leerEstado()
     if (global && global !== base) console.log(`AVISO: el cierre va con BASE_GLOBAL=${global} y DESDE_GLOBAL; esta foto (${corto(base)}) no cubre todo el flujo`)
     reversion(base, restaurar, borrar, aMano)
-    cerrarFlujo(base, desde, tokens)
+    cerrarFlujo(base, desde, tokens, resultado)
   }
   if (!permitidos.length) console.log('ALCANCE: (sin lista de permitidos)')
   else console.log(fuera ? `ALCANCE: FUERA (${fuera})` : 'ALCANCE: OK')
 }
 
-/**
- * Cierre: imprime el costo real del flujo y sus veredictos (de los transcripts) y lo anota en `registros/flujos.jsonl`,
- * con la Clasificación, las subtareas y, si vinieron, los `--tokens`. Nunca rompe el cierre.
- */
-function cerrarFlujo(base, desde, tokens) {
-  const e = leerEstado()
-  let costo = null
+const RE_RESULTADO = /^(COMPLETO|DETENIDO:[0-7])$/
+const HISTORIAL_MAX = 30
+const RE_CARPETA_HISTORIAL = /^\d{8}T\d{6}-/
+
+/** Los primeros 10 caracteres del sha1 de `.instalado.json` (junto a este archivo); null si no está. */
+function versionInstalada() {
   try {
-    costo = costoDelFlujo(RAIZ, e.inicio ?? desde ?? new Date().toISOString(), { base: e.base_global ?? null })
+    const manifiesto = path.join(path.dirname(fileURLToPath(import.meta.url)), '.instalado.json')
+    return crypto.createHash('sha1').update(fs.readFileSync(manifiesto)).digest('hex').slice(0, 10)
   } catch {
-    // Sin costo, el cierre sigue.
+    return null
   }
+}
+
+/** `git diff --numstat` entre dos fotos: `{ archivos, mas, menos }` (un binario cuenta como archivo, sin líneas). */
+function numstat(desdeFoto, hastaFoto) {
+  let archivos = 0
+  let mas = 0
+  let menos = 0
+  for (const linea of git(['diff', '--numstat', '--no-renames', desdeFoto, hastaFoto]).split('\n')) {
+    const m = /^(\d+|-)\t(\d+|-)\t/.exec(linea)
+    if (!m) continue
+    archivos++
+    mas += Number(m[1]) || 0
+    menos += Number(m[2]) || 0
+  }
+  return { archivos, mas, menos }
+}
+
+/**
+ * Lo que cambió cada subtarea: la diferencia entre su foto (`--base --sub`) y la de la siguiente; la última, contra el árbol
+ * de ahora. `{ "<n>": { archivos, mas, menos } }`; una subtarea cuya diferencia falla queda fuera.
+ */
+function cambiosPorSubtarea(estado) {
+  const bases = basesDe(estado)
+  const numeros = Object.keys(bases).map(Number).sort((a, b) => a - b)
+  const porSubtarea = {}
+  let ahora = null
+  numeros.forEach((n, i) => {
+    try {
+      const siguiente = bases[String(numeros[i + 1])]?.base ?? (ahora ??= foto())
+      porSubtarea[n] = numstat(bases[String(n)].base, siguiente)
+    } catch {
+      // Sin esta diferencia, el cierre sigue.
+    }
+  })
+  return porSubtarea
+}
+
+/** El objeto sin las claves nulas o sin definir; undefined si no queda ninguna. */
+const sinNulos = (obj) => {
+  const entradas = Object.entries(obj).filter(([, v]) => v !== null && v !== undefined)
+  return entradas.length ? Object.fromEntries(entradas) : undefined
+}
+
+/**
+ * La fila v2 de `registros/flujos.jsonl`. `datos`: `t` (hora del cierre), `raiz`, `base`, `version`, `resultado`, `tokens`
+ * (de `--tokens`), `estado` (el estado del flujo), `metricas` (de `metricasDelFlujo`), `cambios` (de `cambiosPorSubtarea`)
+ * y `negados` (cuántas negaciones de la guardia hubo). Omite lo que falte; `uso` suma pedidos y tokens de todos los roles.
+ */
+export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado = {}, metricas = null, cambios = {}, negados } = {}) {
+  const m = metricas ?? {}
+  const roles = Object.values(m.costo?.roles ?? {})
+  const suma = (clave) => roles.reduce((s, r) => s + (r.tokens?.[clave] ?? 0), 0)
+  const uso = m.costo ? { pedidos: roles.reduce((s, r) => s + (r.pedidos ?? 0), 0), tokens: { entrada: suma('entrada'), leidos: suma('leidos'), escritos: suma('escritos'), salida: suma('salida'), thinking: suma('thinking') } } : undefined
+  const redondeo = (n) => (typeof n === 'number' ? Math.round(n * 10_000) / 10_000 : undefined)
+  const subtareas = Array.isArray(estado.subtareas)
+    ? estado.subtareas.map((s) => {
+      const ejecutor = m.ejecutores?.[s.n] ?? {}
+      const c = cambios[s.n] ?? {}
+      return sinNulos({
+        n: s.n,
+        critica: s.critica === null || s.critica === undefined || !/^no\b/i.test(String(s.critica).trim()),
+        esfuerzo: ejecutor.esfuerzo,
+        archivos: c.archivos,
+        mas: c.mas,
+        menos: c.menos,
+        usd: redondeo(ejecutor.usd),
+        segundos: ejecutor.segundos,
+        correcciones: ejecutor.correcciones,
+        estado: ejecutor.estado,
+      })
+    })
+    : undefined
+  return sinNulos({
+    v: 2,
+    t,
+    raiz,
+    base,
+    version,
+    sesion: m.sesion,
+    pedido: m.pedido,
+    titulo: estado.titulo,
+    resultado,
+    clasificacion: estado.clasificacion,
+    costo: m.costo,
+    uso,
+    contexto: sinNulos({ primero: m.contexto?.primero }),
+    tiempos: m.tiempos,
+    subtareas,
+    calidad: sinNulos({
+      revisorPlan: m.problemas?.revisorPlan,
+      final: m.problemas?.final,
+      negados,
+      alcanceFuera: m.alcanceFuera,
+      inicial: estado.verificacion_inicial?.resultado,
+    }),
+    explorador: m.explorador,
+    tokens,
+  })
+}
+
+/** `CONTEXTO: …` del cierre: tokens del último pedido del hilo principal y lo que costaría reescribirlos en Opus con caché de 1 h. */
+function lineaDeContexto(metricas) {
+  if (!metricas) return 'CONTEXTO: sin datos (no encontré la sesión del flujo en los transcripts)'
+  const n = metricas.contexto?.ultimo
+  const precio = precioDe('claude-opus-5-5')
+  if (typeof n !== 'number' || !precio) return 'CONTEXTO: sin datos (el hilo principal no tiene pedidos en el tramo del flujo)'
+  return `CONTEXTO: ${n} tokens en el último pedido del hilo principal · reescribirlo en Opus con caché de 1 h: $${((n * precio.escritura1h) / 1e6).toFixed(2).replace('.', ',')}`
+}
+
+/**
+ * Copia plan.md, exploracion.md, los S<n>.md y estado.json del flujo a `<registros>/historial/<AAAAMMDDTHHMMSS>-<proyecto>-<hash>/`
+ * y deja las `HISTORIAL_MAX` carpetas más recientes: solo borra subcarpetas directas de `historial/` con nombre `AAAAMMDDTHHMMSS-…`,
+ * nunca la recién creada. Nunca rompe el cierre.
+ */
+function archivarFlujo(t) {
+  try {
+    const historial = path.join(path.dirname(FLUJO), 'historial')
+    const destino = path.join(historial, `${t.replace(/[-:]/g, '').slice(0, 15)}-${path.basename(FLUJO).replace(/-flujo$/, '')}`)
+    fs.mkdirSync(destino, { recursive: true })
+    for (const nombre of fs.readdirSync(FLUJO)) {
+      if (/^(plan|exploracion|S\d+)\.md$/.test(nombre) || nombre === 'estado.json') fs.copyFileSync(path.join(FLUJO, nombre), path.join(destino, nombre))
+    }
+    console.log(`HISTORIAL: ${destino}`)
+    const carpetas = fs.readdirSync(historial, { withFileTypes: true }).filter((d) => d.isDirectory() && RE_CARPETA_HISTORIAL.test(d.name)).map((d) => d.name).sort().reverse()
+    for (const nombre of carpetas.slice(HISTORIAL_MAX)) {
+      const vieja = path.join(historial, nombre)
+      if (path.dirname(vieja) === historial && vieja !== destino) fs.rmSync(vieja, { recursive: true, force: true })
+    }
+  } catch (err) {
+    console.log(`AVISO: no se pudo archivar el flujo en el historial: ${err.message}`)
+  }
+}
+
+/**
+ * Cierre: imprime el costo real del flujo, sus veredictos y el CONTEXTO del hilo principal (de los transcripts), fija
+ * `cierre` y `resultado` en el estado, anota la fila v2 en `registros/flujos.jsonl` (`filaDelFlujo`, con los `--tokens` si
+ * vinieron) y archiva el flujo en el historial. Cada parte falla sola: nunca rompe el cierre. `cancelado` (solo `--cancelar`)
+ * fija el resultado `CANCELADO`, que `--resultado` no acepta.
+ */
+function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
+  const e = leerEstado()
+  const t = new Date().toISOString()
+  let metricas = null
+  try {
+    metricas = metricasDelFlujo(RAIZ, e.inicio ?? desde ?? t, { hasta: t, base: e.base_global ?? null })
+  } catch {
+    // Sin métricas, el cierre sigue.
+  }
+  const costo = metricas?.costo ?? null
   if (costo) {
     console.log(`COSTO: ${resumenDeCosto(costo)} (sin el mensaje de cierre)`)
     console.log(`VEREDICTOS: ${resumenDeVeredictos(costo)}`)
   } else console.log('COSTO: no encontré la sesión del flujo en los transcripts; el gasto está en «Flujo» del panel')
+  console.log(lineaDeContexto(metricas))
   let porRol = null
   if (tokens !== undefined) {
     porRol = tokensDe(tokens)
     if (!porRol) console.log(`AVISO: --tokens ${tokens} no es rol=n,…; el flujo se anota sin ellos`)
   }
+  let valido
+  if (cancelado) valido = 'CANCELADO'
+  else if (resultado !== undefined) {
+    if (RE_RESULTADO.test(resultado)) valido = resultado
+    else console.log(`AVISO: --resultado ${resultado || '(vacío)'} no es COMPLETO ni DETENIDO:<0-7>; el flujo se anota sin él`)
+  }
+  anotarEstado({ cierre: t, resultado: valido })
+  let cambiosDeSubtareas = {}
   try {
-    anotarFlujo(path.join(path.dirname(registroDe(RAIZ)), 'flujos.jsonl'), {
-      t: new Date().toISOString(),
-      raiz: RAIZ,
-      base,
-      ...(porRol ? { tokens: porRol } : {}),
-      ...(costo ? { costo } : {}),
-      ...(e.clasificacion ? { clasificacion: e.clasificacion } : {}),
-      ...(Array.isArray(e.subtareas) ? { subtareas: e.subtareas.length } : {}),
-    })
+    cambiosDeSubtareas = cambiosPorSubtarea(e)
+  } catch {
+    // Sin las diferencias por subtarea, la fila sigue.
+  }
+  let negados
+  try {
+    negados = leerRegistro(e.desde_global ?? desde ?? e.inicio ?? t).filter((f) => f.decision === 'negado').length
+  } catch {
+    // Sin el registro, la fila sigue.
+  }
+  try {
+    anotarFlujo(path.join(path.dirname(registroDe(RAIZ)), 'flujos.jsonl'), filaDelFlujo({ t, raiz: RAIZ, base, version: versionInstalada(), resultado: valido, tokens: porRol ?? undefined, estado: e, metricas, cambios: cambiosDeSubtareas, negados }))
   } catch (err) {
     console.log(`AVISO: no se pudo anotar el flujo: ${err.message}`)
   }
+  archivarFlujo(t)
+}
+
+/**
+ * `--cancelar`: cierra el flujo abierto que no llegó a ejecutar nada (candado libre para el siguiente preflight).
+ * No hace nada si no hay flujo, si ya está cerrado o si tiene fotos de subtareas (hay trabajo hecho: se cierra con `--cambios`).
+ * Cierra con `cerrarFlujo` (fila v2 con `resultado: 'CANCELADO'` e historial); no necesita git.
+ */
+function cancelar() {
+  const e = leerEstado()
+  if (!e.base_global) {
+    console.log('CANCELAR: no hay un flujo en curso')
+    return
+  }
+  if (e.cierre) {
+    console.log(`CANCELAR: el flujo ya estaba cerrado (${e.cierre})`)
+    return
+  }
+  const numeros = Object.keys(basesDe(e)).sort((a, b) => Number(a) - Number(b))
+  if (numeros.length) {
+    console.log(`AVISO: el flujo ya empezó a ejecutar subtareas (${numeros.map((n) => `S${n}`).join(', ')}): --cancelar no lo cierra para no perder su rastro; ciérralo con --cambios --global --resultado DETENIDO:<paso> --paso 7`)
+    return
+  }
+  cerrarFlujo(e.base_global, e.desde_global, undefined, undefined, true)
+  console.log('CANCELADO: flujo cerrado sin plan aprobado; el candado queda libre')
 }
 
 /**
@@ -907,10 +1189,10 @@ function diff(base, permitidos, rutas) {
 }
 
 /**
- * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, agente, tipo, ajuste, forzar }`. Las opciones
- * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --estado > --guardar > --base > --cambios > --diff > preflight.
+ * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar }`. Las opciones
+ * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --estado > --cancelar > --guardar > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
- * `agente` y `tipo`, los dos valores que siguen a `--guardar`.
+ * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar`.
  * `--sub <n>` agrega `sub` (el entero ≥ 1, o null si no lo es) y `--global` agrega `global: true`; sin el flag no aparece la clave.
  * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
@@ -926,6 +1208,7 @@ export function opcionesDe(args) {
   let base
   if (opciones.includes('--reglas')) modo = 'reglas'
   else if (opciones.includes('--estado')) modo = 'estado'
+  else if (opciones.includes('--cancelar')) modo = 'cancelar'
   else if (opciones.includes('--guardar')) modo = 'guardar'
   else if (opciones.includes('--base')) modo = 'base'
   else if (opciones.includes('--cambios')) {
@@ -954,6 +1237,7 @@ export function opcionesDe(args) {
     paso,
     aviso,
     tokens: valor('--tokens'),
+    resultado: opciones.includes('--resultado') ? (valor('--resultado') ?? '') : undefined,
     agente: modo === 'guardar' ? valor('--guardar') : undefined,
     tipo: modo === 'guardar' ? valor('--guardar', 2) : undefined,
     ajuste: opciones.includes('--ajuste'),
@@ -988,7 +1272,7 @@ export function anotarFlujo(archivo, fila) {
 }
 
 function main() {
-  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, agente, tipo, ajuste, forzar, sub, global } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   // Ni las reglas ni el estado necesitan git: las reglas se inyectan antes del preflight.
   if (modo === 'reglas') {
@@ -997,6 +1281,10 @@ function main() {
   }
   if (modo === 'estado') {
     mostrarEstado()
+    return
+  }
+  if (modo === 'cancelar') {
+    cancelar()
     return
   }
   if (modo === 'guardar') {
@@ -1021,8 +1309,8 @@ function main() {
       const del = sub !== undefined || global ? contextoDelFlujo({ base, desde, permitidos, sub, global }) : { base, desde, permitidos }
       exigirBase(del.base)
       if (tokens !== undefined && paso !== 7) console.log('AVISO: --tokens solo vale en el cierre (--cambios … --paso 7); se ignora')
-      cambios(del.base, del.desde, del.permitidos, paso, tokens)
-      if (paso === 7) anotarEstado({ cierre: new Date().toISOString() })
+      if (resultado !== undefined && paso !== 7) console.log('AVISO: --resultado solo vale en el cierre (--cambios … --paso 7); se ignora')
+      cambios(del.base, del.desde, del.permitidos, paso, tokens, resultado)
     } else if (modo === 'diff') diff(exigirBase(base), permitidos, rutas)
     else preflight(forzar)
   } catch (e) {

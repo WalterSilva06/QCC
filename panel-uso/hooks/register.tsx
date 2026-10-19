@@ -4,6 +4,7 @@ import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, 
 import type { Actividad, Esfuerzo, Flujo, Medida, Semana } from '../types'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
+import { decidirFreno } from './freno'
 import {
   AGENTE_DE_PASO,
   abreTanda,
@@ -33,6 +34,7 @@ import {
   terminarFlujo,
 } from './flujo'
 import type { Senal } from './flujo'
+import { cifraMinutos, cifraUsd, leerHistorial, lineaHistorial, promedioHistorial, rutaHistorial } from './historial'
 import {
   aDesglose,
   barra,
@@ -94,6 +96,10 @@ const actividad = atom({ plugin: 'panel-uso', key: 'actividad' } as const, {})
 const flujo = atom({ plugin: 'panel-uso', key: 'flujo' } as const, null)
 const flujoAbierto = atom({ plugin: 'panel-uso', key: 'flujoAbierto' } as const, false)
 const filasExploradores = atom({ plugin: 'panel-uso', key: 'filasExploradores' } as const, [])
+const historial = atom({ plugin: 'panel-uso', key: 'historial' } as const, null)
+const historialAbierto = atom({ plugin: 'panel-uso', key: 'historialAbierto' } as const, true)
+const home = atom({ plugin: 'panel-uso', key: 'home' } as const, null)
+const freno = atom({ plugin: 'panel-uso', key: 'freno' } as const, null)
 
 /** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
@@ -103,6 +109,9 @@ const PREF_SEMANA = 'prefs:semana'
 
 /** Igual que `PREF_SEMANA`: la pestaña «Flujo» abierta o cerrada. */
 const PREF_FLUJO = 'prefs:flujo'
+
+/** Igual que `PREF_SEMANA`: el historial de la pestaña «Flujo» desplegado o plegado. */
+const PREF_HISTORIAL = 'prefs:historial'
 
 /** Color del glifo de «Terminado» según cómo terminó el flujo. */
 const COLOR_FIN = { completo: 'success', detenido: 'warning', interrumpido: 'error' } as const
@@ -259,6 +268,70 @@ async function alternarSemana($: EngineInterface) {
   }
 }
 
+/** La lectura del historial en vuelo, compartida: otra petición mientras tanto espera a esta en vez de abrir una segunda. */
+let lecturaHistorial: Promise<void> | null = null
+
+/**
+ * Lee `flujos.jsonl` si cambió desde la última vez: pide la carpeta personal una vez (`''` si falla y no se repite),
+ * mira la fecha del archivo y solo lo lee si es otra. Un fallo deja el historial como estaba.
+ */
+async function leerArchivoHistorial($: EngineInterface) {
+  try {
+    let casa = (await read($, home)) ?? null
+    if (casa === null) {
+      let pedida = ''
+      try {
+        const r = await $.process.run(['node', '-p', 'require("os").homedir()'], { timeoutMs: 5_000 })
+        if (r.exitCode === 0) pedida = r.stdout.trim()
+      } catch {
+        // Sin la carpeta personal no hay historial.
+      }
+      casa = pedida
+      await update($, home, () => pedida)
+    }
+
+    const ruta = rutaHistorial(casa)
+    if (ruta === null) return
+
+    const { mtimeMs } = await $.fs.stat(ruta)
+    const actual = (await read($, historial)) ?? null
+    if (actual !== null && actual.mtimeMs === mtimeMs) return
+
+    const texto = await $.fs.read(ruta)
+    if (typeof texto !== 'string') return
+
+    await update($, historial, () => ({ mtimeMs, filas: leerHistorial(texto) }))
+  } catch {
+    // Sin archivo o sin lectura el historial queda como estaba.
+  }
+}
+
+/** Relee el historial. Nunca rechaza: un fallo del panel no puede frenar una pulsación, un turno ni el arranque. */
+function releerHistorial($: EngineInterface): Promise<void> {
+  if (lecturaHistorial === null) {
+    lecturaHistorial = leerArchivoHistorial($).finally(() => {
+      lecturaHistorial = null
+    })
+  }
+
+  return lecturaHistorial
+}
+
+/** Pliega o despliega el historial de la pestaña «Flujo» y lo recuerda entre sesiones. */
+async function alternarHistorial($: EngineInterface) {
+  let abierto = true
+  await update($, historialAbierto, antes => {
+    abierto = !(antes ?? true)
+
+    return abierto
+  })
+  try {
+    await $.store.set(PREF_HISTORIAL, abierto)
+  } catch {
+    // Sin store vale solo para esta sesión.
+  }
+}
+
 /**
  * Cambia el flujo en curso con la hora actual (para el tiempo de cada paso). Nunca rechaza:
  * un fallo del panel no puede frenar una skill, una herramienta ni el fin de un turno.
@@ -323,6 +396,18 @@ async function elegirPestana($: EngineInterface, flujo: boolean) {
   } catch {
     // Sin store vale solo para esta sesión.
   }
+  if (!flujo) return
+
+  // Al abrir la pestaña se mira si el archivo cambió; la pestaña ya cambió, esto solo añade el historial.
+  // Con la carpeta personal ya conocida solo se mira el archivo y se espera; sin ella, `node -p` puede tardar y la pulsación no lo espera.
+  let conocida = false
+  try {
+    conocida = ((await read($, home)) ?? null) !== null
+  } catch {
+    // Sin saberlo, no se espera.
+  }
+  const lectura = releerHistorial($)
+  if (conocida) await lectura
 }
 
 async function precisar($: EngineInterface) {
@@ -344,7 +429,9 @@ async function precisar($: EngineInterface) {
 /** Un aviso que nunca rompe: si el toast falla, no pasa nada. */
 function avisar($: EngineInterface, texto: string) {
   try {
-    $.ui.toast(texto)
+    // El tipo dice `void`, pero un motor puede devolver una promesa: si rechaza, no queda sin capturar.
+    const r: unknown = $.ui.toast(texto)
+    if (r instanceof Promise) r.catch(() => undefined)
   } catch {
     // Sin aviso el botón sigue sin romper nada.
   }
@@ -469,12 +556,20 @@ export const register: Register = on => {
     } catch {
       // Sin store arranca plegada.
     }
+    let pestanaFlujo = false
     try {
       // `flujo` y `filasExploradores` no se vacían aquí: un `/reload-plugins` a mitad de flujo no los pierde.
       const guardada = await $.store.get(PREF_FLUJO)
-      await update($, flujoAbierto, () => guardada === true)
+      pestanaFlujo = guardada === true
+      await update($, flujoAbierto, () => pestanaFlujo)
     } catch {
       // Sin store arranca con la pestaña cerrada.
+    }
+    try {
+      const guardada = await $.store.get(PREF_HISTORIAL)
+      await update($, historialAbierto, () => guardada !== false)
+    } catch {
+      // Sin store arranca desplegado.
     }
     await medirDesglose($, 'summary')
     try {
@@ -483,11 +578,15 @@ export const register: Register = on => {
       // Podar es limpieza: si falla, se intenta en la próxima sesión.
     }
     await releerSemana($)
+    // En segundo plano: pide la carpeta personal (y lee el historial) sin frenar el arranque, para que abrir la pestaña «Flujo»
+    // no espere a `node -p`; con la pestaña abierta desde antes, el historial se ve sin esperar al tick.
+    void releerHistorial($)
 
     // Mueve la cuenta regresiva y suma lo que otras sesiones anotaron; no llama a ningún modelo.
     $.clock.every(TICK_MS, () => {
       void $.clock.now().then(t => update($, ahora, () => t))
       void releerSemana($)
+      void releerHistorial($)
     })
 
     try {
@@ -516,6 +615,30 @@ export const register: Register = on => {
     if (e.changed.includes('context')) await medirDesglose($, 'summary')
     // El reinicio del límite semanal decide dónde empieza la semana.
     if (e.changed.includes('rateLimits')) await releerSemana($)
+
+    return next(e)
+  })
+
+  // Frena un envío una sola vez con un aviso (el siguiente, igual, pasa). Todo el cálculo va en el try: si algo falla, el envío pasa.
+  on('prompt.submit', async ($, e, next) => {
+    const decision: { motivo: string | null } = { motivo: null }
+    try {
+      // Solo lo que escribe la persona; una notificación, un mensaje de otra sesión o un prompt de plugin nunca se frena.
+      if (!e.isMeta && (e.origin.kind === 'composer' || e.origin.kind === 'bridge')) {
+        const m = await read($, medida)
+        const f = await read($, flujo)
+        const cierre = f === null ? null : { estado: f.estado, fin: f.fin }
+        await update($, freno, antes => {
+          const d = decidirFreno({ texto: e.text, comando: e.command?.name }, m?.tokens, cierre, antes ?? null)
+          decision.motivo = d.motivo
+
+          return d.freno
+        })
+      }
+    } catch {
+      decision.motivo = null
+    }
+    if (decision.motivo !== null) return { drop: decision.motivo }
 
     return next(e)
   })
@@ -613,11 +736,19 @@ export const register: Register = on => {
       }
       // Lo gastado hasta aquí queda fijo en el flujo que acaba de terminar; el trabajo que siga en la sesión no lo mueve.
       const ses = await readSesion($)
+      // Si el flujo estaba en curso y este turno lo cierra; se decide dentro del callback, con el estado que `update` leyó.
+      let terminoAhora = false
+      let estadoFin = ''
       await marcarFlujo($, (f, t) => {
         const fin = terminarFlujo(f, e.reason, e.answer, t)
+        terminoAhora = f !== null && f.estado === 'en curso'
+        estadoFin = fin === null ? '' : fin.estado
 
-        return f !== null && f.estado === 'en curso' ? congelarConsumo(fin, ses) : fin
+        return terminoAhora ? congelarConsumo(fin, ses) : fin
       })
+      if (terminoAhora) avisar($, `Flujo terminado: ${estadoFin}`)
+      // El flujo ya anotó su fila en `flujos.jsonl`; `releerHistorial` nunca rechaza.
+      if (terminoAhora) await releerHistorial($)
     }
 
     return next(e)
@@ -645,11 +776,15 @@ export const register: Register = on => {
 
     if (s.tipo === 'agente') await vaciarAlAbrirTanda($, s)
 
+    // Una pregunta del hilo principal con el flujo en curso espera a la persona: se decide antes de que `marcarFlujo` la anote.
+    const avisarPregunta = s.tipo === 'pregunta' && e.agentId === undefined && (await enFlujo($))
+
     await marcarFlujo($, (f, t) => {
       if (s.tipo === 'pregunta') return abrirEspera(avanzar(f, s, t), t)
 
       return s.tipo === 'agente' ? marcarAgente(avanzar(f, s, t), s.nombre) : avanzar(f, s, t)
     })
+    if (s.tipo === 'pregunta' && avisarPregunta) avisar($, s.plan ? 'El plan espera tu aprobación' : 'El flujo te hace una pregunta')
 
     // Mientras la pregunta espera al usuario, ese tiempo es espera y no trabajo; se cierra siempre, también si falla o se interrumpe.
     if (s.tipo === 'pregunta') {
@@ -725,6 +860,9 @@ export const register: Register = on => {
     const fl = await read($, flujo)
     const filasExp = await read($, filasExploradores)
     const flAbierto = await read($, flujoAbierto)
+    // Atoms nuevos: tras un `/reload-plugins` el estado anterior puede no traerlos.
+    const his = (await read($, historial)) ?? null
+    const hisAbierto = (await read($, historialAbierto)) ?? true
     await read($, ahora)
     const t = await $.clock.now()
 
@@ -1010,12 +1148,44 @@ export const register: Register = on => {
       </Box>
     )
 
+    /** Los últimos flujos del historial con su promedio; no se dibuja sin historial o sin filas. */
+    const promedio = his === null ? {} : promedioHistorial(his.filas)
+    const bloqueHistorial =
+      his === null || his.filas.length === 0 ? null : (
+        <Box key="historial" flexDirection="column">
+          <Box>
+            <Box flexGrow={1}>
+              <Text bold>Historial</Text>
+            </Box>
+            <Button
+              key="historial-plegar"
+              hotkey="h"
+              label={hisAbierto ? 'Ocultar' : 'Ver'}
+              onPress={() => alternarHistorial($)}
+            />
+          </Box>
+          {hisAbierto && (
+            <Box flexDirection="column">
+              <Text dimColor wrap="truncate-end">
+                {`promedio ${cifraUsd(promedio.usd)} · ${cifraMinutos(promedio.minutos)}`}
+              </Text>
+              {his.filas.map((f, i) => (
+                <Text key={`historial-${i}`} wrap="truncate-end">
+                  {lineaHistorial(f, e.props.bodyColumns)}
+                </Text>
+              ))}
+            </Box>
+          )}
+        </Box>
+      )
+
     // Con la pestaña «Flujo» abierta se dibuja solo la fila de pestañas y ese bloque; `pestana-inicio` vuelve.
     if (flAbierto) {
       return (
         <Box flexDirection="column">
           {filaPestanas}
           {bloqueFlujo}
+          {bloqueHistorial}
         </Box>
       )
     }

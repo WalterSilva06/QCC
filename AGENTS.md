@@ -30,6 +30,8 @@ panel-uso/
   hooks/formato.ts                puro: barras, cifras, tiempos, desglose del contexto
   hooks/carpeta.ts                puro: validar la ruta y elegir el comando que abre la carpeta
   hooks/flujo.ts                  puro: qué flujo corre y en qué paso, a partir de los eventos
+  hooks/historial.ts              puro: leer flujos.jsonl y armar las líneas del historial
+  hooks/freno.ts                  puro: decidir si un envío se frena una vez con un aviso
   types/index.d.ts                tipos y contrato de $.state (PluginState['panel-uso'])
   tests/panel.test.tsx            único archivo de tests
 ```
