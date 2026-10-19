@@ -1,6 +1,9 @@
-# claude-config
+# QCC
 
-Herramientas personales para Claude Code, en dos partes separadas.
+**Q**uorum **C**laude **C**ode: flujos multi-agente y panel de uso para Claude Code.
+Un cambio no se da por hecho hasta que varios agentes lo aprueban: el quórum.
+
+Son herramientas personales, en dos partes separadas.
 
 | Parte | Carpeta | Qué es | Documentación |
 |---|---|---|---|

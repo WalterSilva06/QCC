@@ -1,4 +1,4 @@
-# claude-config
+# QCC (Quorum Claude Code)
 
 Herramientas personales para Claude Code, en dos partes separadas:
 
