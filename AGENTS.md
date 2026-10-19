@@ -21,7 +21,7 @@ flujos/
   skills/<nombre>/SKILL.md        → ~/.claude/skills/<nombre>/SKILL.md
   agents/<nombre>.md              → ~/.claude/agents/<nombre>.md
   skills/generar-commit/SKILL.md  → ~/.claude/skills/generar-commit/SKILL.md (/generar-commit)
-  agents/generador-commit.md      → ~/.claude/agents/generador-commit.md (agente Haiku de /generar-commit)
+  agents/generador-commit.md      → ~/.claude/agents/generador-commit.md (agente Haiku high de /generar-commit)
   herramientas/                   → ~/.claude/flujos/ (estado, verificar, guardia, costos, guardia.test, comun.md, plan.md, pasos.md, config.ejemplo.md)
   herramientas/generar-commit/    → ~/.claude/flujos/generar-commit/ (solo-git.mjs y su test)
 panel-uso/
