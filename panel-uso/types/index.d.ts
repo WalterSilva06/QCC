@@ -167,7 +167,7 @@ export type Flujo = {
   configs?: Record<number, Record<string, string[]>>
 }
 
-/** Una fila del historial de flujos (`~/.claude/flujos/registros/flujos.jsonl`), ya reducida a lo que muestra la pestaña «Flujo». */
+/** Una fila del historial de flujos (`~/.claude/flujos/registros/flujos.jsonl`), ya reducida a lo que muestra la pestaña «Historial». */
 export type FilaHistorial = {
   /** Hora de cierre del flujo, ISO. */
   t: string
@@ -185,13 +185,28 @@ export type FilaHistorial = {
   subtareas?: number
   /** El flujo se canceló o alguna subtarea quedó BLOQUEADA. */
   aviso: boolean
+  /** Título del flujo (o la primera línea del pedido); falta si no hay. */
+  titulo?: string
+  /** Costo por rol (`orquestador`, `ejecutor`…) en dólares, del mayor al menor y solo con `usd` mayor que 0; falta si no hay. */
+  roles?: { rol: string; usd: number }[]
+  /** Minutos de espera (v2), solo si son más de 0. */
+  espera?: number
+  /** Líneas añadidas en total por las subtareas; falta si ninguna lo anotó. */
+  mas?: number
+  /** Líneas quitadas en total por las subtareas; falta si ninguna lo anotó. */
+  menos?: number
 }
 
 /** El historial leído del archivo: su fecha de modificación (ms) y las últimas filas, la más reciente primero. */
 export type Historial = {
+  /** Forma de las filas: `2` trae los campos de la fila v2 (título, roles, espera, líneas). Una caché sin `v` se vuelve a leer. */
+  v?: 2
   mtimeMs: number
   filas: FilaHistorial[]
 }
+
+/** Las pestañas del panel: «Inicio», «Flujo», «Gasto semanal» e «Historial». «Carpeta» es un botón, no una pestaña. */
+export type Pestana = 'inicio' | 'flujo' | 'semana' | 'historial'
 
 /**
  * Estado del freno de contexto de `prompt.submit`. Solo se escribe lo que tiene valor; sin campos el freno es `null`, nunca `{}`.
@@ -214,20 +229,16 @@ declare module 'claude-code' {
       semana: Semana | null
       /** Lo mismo que `semana`, solo con lo anotado por la sesión actual (desde su inicio). */
       sesion: Semana | null
-      /** «Esta semana» desplegada; se recuerda en el store con la clave `prefs:semana`. */
-      semanaAbierta: boolean
+      /** La pestaña abierta; se recuerda en el store con la clave `prefs:pestana`. Si falta, `'inicio'`. */
+      pestana?: Pestana
       /** Qué filas de «Esta sesión» tienen una petición en curso o esperan a otra; solo de esta terminal. */
       actividad: Actividad
       /** El flujo `/implementador` en curso o ya terminado; `null` si la sesión no inició ninguno. */
       flujo: Flujo | null
-      /** La pestaña «Flujo» abierta (el resto del panel se oculta); se recuerda en el store con la clave `prefs:flujo`. */
-      flujoAbierto: boolean
       /** Ids de fila de subagente vistas mientras había exploradores o revisores en vuelo; solo de esta terminal; se vacía al iniciar un flujo, al abrir una tanda de exploradores o revisores y al cerrar la sesión. */
       filasExploradores: string[]
       /** Las últimas filas de `flujos.jsonl` con la fecha de modificación con que se leyeron; `null` hasta la primera lectura o si falló. Si falta (estado de una versión anterior), `null`. */
       historial?: Historial | null
-      /** El historial desplegado en la pestaña «Flujo»; se recuerda en el store con la clave `prefs:historial`. Si falta, `true`. */
-      historialAbierto?: boolean
       /** La carpeta personal, pedida a `node` una vez por sesión: `null` si aún no se pidió, `''` si falló (y no se vuelve a pedir). Si falta, `null`. */
       home?: string | null
       /** El freno de contexto de `prompt.submit`; `null` si no hay nada que recordar. Solo de esta terminal. Si falta (estado de una versión anterior), `null`. */

@@ -61,7 +61,51 @@ export function filaDeRegistro(r: unknown): FilaHistorial | null {
   if (minutos !== undefined) fila.minutos = minutos
   if (subtareas !== undefined) fila.subtareas = subtareas
 
+  const titulo = tituloDe(r)
+  const roles = rolesDe(costo.roles)
+  const espera = r.v === 2 ? numero(tiempos.espera) : undefined
+  const lineas = Array.isArray(r.subtareas) ? r.subtareas.filter(esObjeto) : []
+  const suma = (clave: 'mas' | 'menos'): number | undefined => {
+    const valores = lineas.flatMap(s => numero(s[clave]) ?? [])
+
+    return valores.length === 0 ? undefined : valores.reduce((a, b) => a + b, 0)
+  }
+  const mas = suma('mas')
+  const menos = suma('menos')
+
+  if (titulo !== undefined) fila.titulo = titulo
+  if (roles.length > 0) fila.roles = roles
+  if (espera !== undefined && espera > 0) fila.espera = espera / 60
+  if (mas !== undefined) fila.mas = mas
+  if (menos !== undefined) fila.menos = menos
+
   return fila
+}
+
+/** El título del flujo: `titulo` si es texto no vacío; si no, la primera línea no vacía de `pedido` (hasta 120 caracteres). */
+function tituloDe(r: Record<string, unknown>): string | undefined {
+  if (typeof r.titulo === 'string' && r.titulo.trim() !== '') return r.titulo.trim()
+  if (typeof r.pedido !== 'string') return undefined
+
+  const primera = r.pedido.split('\n').map(l => l.trim()).find(l => l !== '')
+  if (primera === undefined) return undefined
+
+  const letras = Array.from(primera)
+
+  return letras.length > 120 ? `${letras.slice(0, 119).join('').trimEnd()}…` : primera
+}
+
+/** Los roles de `costo.roles` con `usd` numérico mayor que 0, del que más gastó al que menos. */
+function rolesDe(roles: unknown): { rol: string; usd: number }[] {
+  if (!esObjeto(roles)) return []
+
+  return Object.entries(roles)
+    .flatMap(([rol, v]) => {
+      const usd = esObjeto(v) ? numero(v.usd) : undefined
+
+      return usd !== undefined && usd > 0 ? [{ rol, usd }] : []
+    })
+    .sort((a, b) => b.usd - a.usd)
 }
 
 /**
@@ -153,4 +197,40 @@ export function lineaHistorial(f: FilaHistorial, ancho: number): string {
   const sin = armar([], [])
 
   return medir(sin) <= ancho ? sin : Array.from(sin).slice(0, Math.max(ancho, 0)).join('')
+}
+
+const ROLES_CORTOS: Record<string, string> = {
+  orquestador: 'orq',
+  planificador: 'plan',
+  'revisor-plan': 'rplan',
+  ejecutor: 'ejec',
+  revisor: 'rev',
+  explorador: 'expl',
+}
+
+/** `texto` cortado a `ancho` caracteres (no unidades de código) con «…» al final si no cabe. */
+function cortar(texto: string, ancho: number): string {
+  const letras = Array.from(texto)
+  if (letras.length <= ancho) return texto
+  if (ancho <= 0) return ''
+
+  return `${letras.slice(0, ancho - 1).join('').trimEnd()}…`
+}
+
+/**
+ * Las líneas de un flujo, de 1 a 3, ninguna más larga que `ancho` caracteres: la de `lineaHistorial`; con `titulo`, `  <título>`; y con algún dato,
+ * `  ` y las partes unidas con ` · `: cada rol como `<corto> $x,xx`, `espera <n>m` y `+<mas> −<menos>`. Las líneas 2 y 3 terminan en «…» si no caben.
+ */
+export function lineasHistorial(f: FilaHistorial, ancho: number): string[] {
+  const lineas = [lineaHistorial(f, ancho)]
+  const partes = [
+    ...(f.roles ?? []).map(r => `${ROLES_CORTOS[r.rol] ?? r.rol} ${cifraUsd(r.usd)}`),
+    ...(f.espera === undefined ? [] : [`espera ${cifraMinutos(f.espera)}`]),
+    ...(f.mas === undefined && f.menos === undefined ? [] : [`+${f.mas ?? 0} −${f.menos ?? 0}`]),
+  ]
+
+  if (f.titulo !== undefined) lineas.push(cortar(`  ${f.titulo}`, ancho))
+  if (partes.length > 0) lineas.push(cortar(`  ${partes.join(' · ')}`, ancho))
+
+  return lineas
 }

@@ -2,7 +2,7 @@
 
 import type { SessionContextBreakdown } from 'claude-code'
 
-import type { Desglose, FilaSemana, Parte, Pesado } from '../types'
+import type { Desglose, FilaSemana, Historial, Parte, Pesado, Pestana } from '../types'
 
 const MINUTO = 60_000
 const HORA = 60 * MINUTO
@@ -37,7 +37,7 @@ export function barraTramos(parte: number, flujo: number, sub: number, ancho: nu
 }
 
 /**
- * El desglose de una fila por tramos: «normal 6,4M · flujo 3,5M · sub 3M», sin los tramos en 0.
+ * El desglose de una fila por tramos: «directo 6,4M · orquestador 3,5M · sub 3M», sin los tramos en 0.
  * Sin flujo ni sub, vacío. Si no cabe en `ancho` (mínimo 1) quita los espacios y, si aún no cabe, recorta con «…».
  */
 export function desgloseTramos(f: Pick<FilaSemana, 'total' | 'flujo' | 'sub'>, ancho: number): string {
@@ -46,8 +46,8 @@ export function desgloseTramos(f: Pick<FilaSemana, 'total' | 'flujo' | 'sub'>, a
   if (flujo <= 0 && sub <= 0) return ''
 
   const partes = [
-    { nombre: 'normal', n: Math.max(0, f.total - flujo - sub) },
-    { nombre: 'flujo', n: flujo },
+    { nombre: 'directo', n: Math.max(0, f.total - flujo - sub) },
+    { nombre: 'orquestador', n: flujo },
     { nombre: 'sub', n: sub },
   ]
     .filter(p => p.n > 0)
@@ -194,6 +194,56 @@ export function nombreCorto(kind: string): string {
   if (kind === 'seven_day') return 'sem'
 
   return kind
+}
+
+/**
+ * Las partes de la línea de un límite: etiqueta (5 columnas), barra, cifra («  5%») y cola («2 h 10 min»
+ * con un espacio delante, sin el «en»). La barra mide entre 3 y 12; si con 3 no cabe, la cola se suelta.
+ */
+export function lineaLimite(kind: string, porcentaje: number, reinicio: number | undefined, ahora: number, ancho: number): { etiqueta: string, barra: string, cifra: string, cola: string } {
+  const etiqueta = (kind === 'spend_limit' ? 'gasto' : nombreCorto(kind)).padEnd(5)
+  const cifra = `${porcentaje}%`.padStart(4)
+  let cola = reinicio === undefined || Number.isNaN(reinicio) ? '' : ` ${falta(ahora, reinicio).replace(/^en /, '')}`
+  if (ancho - etiqueta.length - 1 - cifra.length - cola.length < 3) cola = ''
+
+  const w = Math.min(12, Math.max(3, ancho - etiqueta.length - 1 - cifra.length - cola.length))
+
+  return { etiqueta, barra: barra(porcentaje, w), cifra, cola }
+}
+
+/**
+ * Reparte índices en filas de forma voraz: cada fila suma las medidas más `separacion` entre elementos
+ * y no pasa de `ancho`. Un elemento más ancho que `ancho` va solo en su fila.
+ */
+export function repartir(medidas: readonly number[], ancho: number, separacion = 0): number[][] {
+  const filas: number[][] = []
+  let uso = 0
+
+  medidas.forEach((m, i) => {
+    const fila = filas[filas.length - 1]
+    if (fila !== undefined && uso + separacion + m <= ancho) {
+      fila.push(i)
+      uso += separacion + m
+    } else {
+      filas.push([i])
+      uso = m
+    }
+  })
+
+  return filas
+}
+
+/**
+ * Si lo leído antes de `flujos.jsonl` sirve todavía: solo con `v: 2` (una caché de una versión anterior no trae los campos de la fila v2,
+ * y sigue viva tras `/reload-plugins`) y con la misma fecha de modificación.
+ */
+export function historialVigente(actual: Pick<Historial, 'v' | 'mtimeMs'> | null | undefined, mtimeMs: number): boolean {
+  return actual != null && actual.v === 2 && actual.mtimeMs === mtimeMs
+}
+
+/** La pestaña guardada si es una de las cuatro; con cualquier otro valor, `'inicio'`. */
+export function pestanaValida(x: unknown): Pestana {
+  return x === 'flujo' || x === 'semana' || x === 'historial' ? x : 'inicio'
 }
 
 /** Las ventanas conocidas primero (5 h, semana), el resto detrás en su orden. */

@@ -293,3 +293,14 @@ export function estadoActividad(a: Actividad, id: string, ahora: number): 'activ
 
   return f.pendiente && ahora - f.desde <= ESPERA_MAX_MS ? 'espera' : 'inactivo'
 }
+
+/**
+ * El estado de cada uno de los `n` ■ de una fila: los primeros `enVuelo` (peticiones en curso) van `activo`;
+ * el resto, `espera` si la fila está activa, y si no el estado de la fila. Con `n = 1` es `[estadoActividad]`.
+ */
+export function estadosDeCuadros(a: Actividad, id: string, n: number, ahora: number): ('activo' | 'espera' | 'inactivo')[] {
+  const base = estadoActividad(a, id, ahora)
+  const enVuelo = a[id]?.enVuelo ?? 0
+
+  return Array.from({ length: n }, (_, i) => (i < enVuelo ? 'activo' : base === 'activo' ? 'espera' : base))
+}

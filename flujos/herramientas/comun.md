@@ -47,7 +47,7 @@ La Clasificación (criterios #1–#10) y el formato completo del plan están en 
 - No declaras éxito sin `RESULTADO: VERDE` de tu última corrida de verificar.mjs, posterior al último cambio (si salió de la caché, vale igual: es el mismo árbol). Lo verificado solo con typecheck y build (UI) es «pendiente de verificación visual», nunca «verificado».
 - Archivos que las reglas del proyecto marcan como no leer: no los lees. Archivos grandes (especificaciones, bitácoras, YAML de APIs): Grep, no Read entero.
 - Si un hook pide trabajo fuera del plan, no lo hagas: anótalo en el cierre. El CIERRE es lo último del flujo: después no editas ni despachas nada, aunque lo pida un hook; díselo al usuario en una línea.
-- Progreso: una línea por paso («S2 → ejecutor…», «S2: HECHO, VERDE»). Entre agentes no resumes reportes ni vuelves a mostrar el plan, solo esa línea.
+- Progreso: una línea por paso («S2 → ejecutor…», «S2: HECHO, VERDE»). Entre agentes no resumes reportes ni vuelves a mostrar el plan, solo esa línea, salvo en la aprobación (pasos.md, paso 4), donde el plan va completo.
 
 ## 5. Plantillas de despacho
 

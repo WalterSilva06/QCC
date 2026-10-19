@@ -421,11 +421,25 @@ export function abreTanda(f: Flujo | null, s: Senal): boolean {
 /** Tope de ■ de una fila anotada: el máximo de exploradores en paralelo de `/implementador`. */
 export const TOPE_EN_VUELO = 5
 
-/** Cuántos ■ lleva una fila: uno por explorador o revisor en vuelo (de 1 a `TOPE_EN_VUELO`) si es una fila anotada del flujo en curso; si no, 1. */
+/**
+ * Cuántos ■ lleva una fila: uno por explorador en vuelo con la config de la fila (de 1 a `TOPE_EN_VUELO`) más uno por revisor en vuelo,
+ * si es una fila anotada del flujo en curso; si no, 1. La config es «<modelo> <esfuerzo>» (la del id de la fila) y se busca en los
+ * registros de `detalleExploradores` sin `ms`, con tope en `exploradores`; uno en vuelo sin config anotada todavía (sin registro
+ * o sin su primera petición) cuenta en todas las filas anotadas. Sin lista, o sin config observada en ningún explorador
+ * en vuelo, cuenta todos los `exploradores`. Los revisores entran en todas las filas anotadas.
+ */
 export function cuadradosDeFila(f: Flujo | null, filas: readonly string[], id: string): number {
   if (f === null || f.estado !== 'en curso' || !filas.includes(id)) return 1
 
-  return Math.min(TOPE_EN_VUELO, Math.max(1, (f.exploradores ?? 0) + (f.revisores ?? 0)))
+  const total = f.exploradores ?? 0
+  const [modelo = '', esfuerzo = ''] = id.split('|')
+  const cfg = `${modelo} ${esfuerzo}`
+  const enVuelo = detalleDe(f).filter(e => !(finito(e.ms) && e.ms >= 0))
+  const conocidos = enVuelo.filter(e => textosValidos(e.config).length > 0)
+  const sinConocer = Math.max(0, total - conocidos.length)
+  const propios = conocidos.length === 0 ? total : Math.min(total, conocidos.filter(e => textosValidos(e.config).includes(cfg)).length + sinConocer)
+
+  return Math.min(TOPE_EN_VUELO, Math.max(1, propios + (f.revisores ?? 0)))
 }
 
 /**

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
 
-import type { Actividad, Esfuerzo, Flujo, Medida, Semana } from '../types'
+import type { Actividad, Esfuerzo, Flujo, Medida, Pestana, Semana } from '../types'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
 import { decidirFreno } from './freno'
@@ -34,7 +34,7 @@ import {
   terminarFlujo,
 } from './flujo'
 import type { Senal } from './flujo'
-import { cifraMinutos, cifraUsd, leerHistorial, lineaHistorial, promedioHistorial, rutaHistorial } from './historial'
+import { cifraMinutos, cifraUsd, leerHistorial, lineasHistorial, promedioHistorial, rutaHistorial } from './historial'
 import {
   aDesglose,
   barra,
@@ -44,12 +44,15 @@ import {
   duracion,
   etiquetasAlineadas,
   falta,
+  historialVigente,
+  lineaLimite,
   marcador,
   nombreCorto,
-  nombreVentana,
   ordenar,
   pct,
+  pestanaValida,
   relleno,
+  repartir,
   tokens,
   tono,
   totalConSalida,
@@ -61,7 +64,7 @@ import {
   anotar,
   clave,
   comoRegistro,
-  estadoActividad,
+  estadosDeCuadros,
   etiquetaDia,
   idDeFila,
   idFila,
@@ -81,8 +84,8 @@ const COLUMNAS = 36
 const TICK_MS = 30_000
 const SCROLL_MS = 150
 
-/** `key` de la sección plegable «Esta semana», para apuntarle con `$.ui.scroll`. */
-const CLAVE_SEMANA = 'semana'
+/** `key` de la fila de pestañas, para apuntarle con `$.ui.scroll` al cambiar de pestaña. */
+const CLAVE_PESTANAS = 'pestanas'
 
 const medida = atom({ plugin: 'panel-uso', key: 'medida' } as const, null)
 const esfuerzo = atom({ plugin: 'panel-uso', key: 'esfuerzo' } as const, null)
@@ -91,27 +94,19 @@ const desglose = atom({ plugin: 'panel-uso', key: 'desglose' } as const, null)
 const precisando = atom({ plugin: 'panel-uso', key: 'precisando' } as const, false)
 const semana = atom({ plugin: 'panel-uso', key: 'semana' } as const, null)
 const sesion = atom({ plugin: 'panel-uso', key: 'sesion' } as const, null)
-const semanaAbierta = atom({ plugin: 'panel-uso', key: 'semanaAbierta' } as const, false)
+const pestana = atom({ plugin: 'panel-uso', key: 'pestana' } as const, 'inicio')
 const actividad = atom({ plugin: 'panel-uso', key: 'actividad' } as const, {})
 const flujo = atom({ plugin: 'panel-uso', key: 'flujo' } as const, null)
-const flujoAbierto = atom({ plugin: 'panel-uso', key: 'flujoAbierto' } as const, false)
 const filasExploradores = atom({ plugin: 'panel-uso', key: 'filasExploradores' } as const, [])
 const historial = atom({ plugin: 'panel-uso', key: 'historial' } as const, null)
-const historialAbierto = atom({ plugin: 'panel-uso', key: 'historialAbierto' } as const, true)
 const home = atom({ plugin: 'panel-uso', key: 'home' } as const, null)
 const freno = atom({ plugin: 'panel-uso', key: 'freno' } as const, null)
 
 /** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
 
-/** Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. */
-const PREF_SEMANA = 'prefs:semana'
-
-/** Igual que `PREF_SEMANA`: la pestaña «Flujo» abierta o cerrada. */
-const PREF_FLUJO = 'prefs:flujo'
-
-/** Igual que `PREF_SEMANA`: el historial de la pestaña «Flujo» desplegado o plegado. */
-const PREF_HISTORIAL = 'prefs:historial'
+/** La pestaña abierta. Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. Las claves viejas (`prefs:semana`, `prefs:flujo`, `prefs:historial`) se ignoran. */
+const PREF_PESTANA = 'prefs:pestana'
 
 /** Color del glifo de «Terminado» según cómo terminó el flujo. */
 const COLOR_FIN = { completo: 'success', detenido: 'warning', interrumpido: 'error' } as const
@@ -232,39 +227,14 @@ async function medirDesglose($: EngineInterface, detalle: 'summary' | 'full') {
 }
 
 /**
- * Lleva «Esta semana» al borde de arriba de la ventana del panel, para que sus filas
- * queden a la vista. Un fallo o un `{ deny }` no importan: el panel sigue como estaba.
+ * Lleva la fila de pestañas al borde de arriba de la ventana del panel, para que el contenido
+ * de la pestaña nueva se vea desde su principio. Un fallo o un `{ deny }` no importan: el panel sigue como estaba.
  */
-async function mostrarSemana($: EngineInterface) {
+async function mostrarPestanas($: EngineInterface) {
   try {
-    await $.ui.scroll({ in: PANEL, to: { key: CLAVE_SEMANA }, block: 'start' })
+    await $.ui.scroll({ in: PANEL, to: { key: CLAVE_PESTANAS }, block: 'start' })
   } catch {
-    // Sin desplazamiento el usuario baja con la rueda.
-  }
-}
-
-/** Pliega o despliega «Esta semana» y lo recuerda entre sesiones. */
-async function alternarSemana($: EngineInterface) {
-  let abierta = false
-  await update($, semanaAbierta, antes => {
-    abierta = !antes
-
-    return abierta
-  })
-  try {
-    await $.store.set(PREF_SEMANA, abierta)
-  } catch {
-    // Sin store vale solo para esta sesión.
-  }
-  if (!abierta) return
-
-  // Las filas nuevas aún no se dibujaron: se espera un momento antes de desplazar.
-  try {
-    $.clock.after(SCROLL_MS, () => {
-      void mostrarSemana($)
-    })
-  } catch {
-    // Sin reloj no hay desplazamiento.
+    // Sin desplazamiento el usuario sube con la rueda.
   }
 }
 
@@ -295,12 +265,13 @@ async function leerArchivoHistorial($: EngineInterface) {
 
     const { mtimeMs } = await $.fs.stat(ruta)
     const actual = (await read($, historial)) ?? null
-    if (actual !== null && actual.mtimeMs === mtimeMs) return
+    // Una caché sin `v: 2` viene de una versión anterior (sin los campos de la fila v2): se vuelve a leer.
+    if (historialVigente(actual, mtimeMs)) return
 
     const texto = await $.fs.read(ruta)
     if (typeof texto !== 'string') return
 
-    await update($, historial, () => ({ mtimeMs, filas: leerHistorial(texto) }))
+    await update($, historial, () => ({ v: 2, mtimeMs, filas: leerHistorial(texto, 10) }))
   } catch {
     // Sin archivo o sin lectura el historial queda como estaba.
   }
@@ -315,21 +286,6 @@ function releerHistorial($: EngineInterface): Promise<void> {
   }
 
   return lecturaHistorial
-}
-
-/** Pliega o despliega el historial de la pestaña «Flujo» y lo recuerda entre sesiones. */
-async function alternarHistorial($: EngineInterface) {
-  let abierto = true
-  await update($, historialAbierto, antes => {
-    abierto = !(antes ?? true)
-
-    return abierto
-  })
-  try {
-    await $.store.set(PREF_HISTORIAL, abierto)
-  } catch {
-    // Sin store vale solo para esta sesión.
-  }
 }
 
 /**
@@ -388,15 +344,26 @@ async function vaciarAlAbrirTanda($: EngineInterface, s: Senal) {
   }
 }
 
-/** Elige la pestaña «Flujo» (`true`) o «Inicio» (`false`) y lo recuerda entre sesiones. Pulsarla de nuevo no cambia nada. */
-async function elegirPestana($: EngineInterface, flujo: boolean) {
-  await update($, flujoAbierto, () => flujo)
+/**
+ * Elige la pestaña, la recuerda entre sesiones y lleva la fila de pestañas al borde de la ventana. Pulsarla de nuevo no cambia nada.
+ * Con «Historial» mira además si `flujos.jsonl` cambió.
+ */
+async function elegirPestana($: EngineInterface, p: Pestana) {
+  await update($, pestana, () => p)
   try {
-    await $.store.set(PREF_FLUJO, flujo)
+    await $.store.set(PREF_PESTANA, p)
   } catch {
     // Sin store vale solo para esta sesión.
   }
-  if (!flujo) return
+  // Las filas nuevas aún no se dibujaron: se espera un momento antes de desplazar.
+  try {
+    $.clock.after(SCROLL_MS, () => {
+      void mostrarPestanas($)
+    })
+  } catch {
+    // Sin reloj no hay desplazamiento.
+  }
+  if (p !== 'historial') return
 
   // Al abrir la pestaña se mira si el archivo cambió; la pestaña ya cambió, esto solo añade el historial.
   // Con la carpeta personal ya conocida solo se mira el archivo y se espera; sin ella, `node -p` puede tardar y la pulsación no lo espera.
@@ -551,25 +518,11 @@ export const register: Register = on => {
       // Sin limpiar, la caducidad de la espera lo corrige.
     }
     try {
-      const guardada = await $.store.get(PREF_SEMANA)
-      await update($, semanaAbierta, () => guardada === true)
-    } catch {
-      // Sin store arranca plegada.
-    }
-    let pestanaFlujo = false
-    try {
       // `flujo` y `filasExploradores` no se vacían aquí: un `/reload-plugins` a mitad de flujo no los pierde.
-      const guardada = await $.store.get(PREF_FLUJO)
-      pestanaFlujo = guardada === true
-      await update($, flujoAbierto, () => pestanaFlujo)
+      const guardada = pestanaValida(await $.store.get(PREF_PESTANA))
+      await update($, pestana, () => guardada)
     } catch {
-      // Sin store arranca con la pestaña cerrada.
-    }
-    try {
-      const guardada = await $.store.get(PREF_HISTORIAL)
-      await update($, historialAbierto, () => guardada !== false)
-    } catch {
-      // Sin store arranca desplegado.
+      // Sin store arranca en «Inicio».
     }
     await medirDesglose($, 'summary')
     try {
@@ -578,7 +531,7 @@ export const register: Register = on => {
       // Podar es limpieza: si falla, se intenta en la próxima sesión.
     }
     await releerSemana($)
-    // En segundo plano: pide la carpeta personal (y lee el historial) sin frenar el arranque, para que abrir la pestaña «Flujo»
+    // En segundo plano: pide la carpeta personal (y lee el historial) sin frenar el arranque, para que abrir la pestaña «Historial»
     // no espere a `node -p`; con la pestaña abierta desde antes, el historial se ve sin esperar al tick.
     void releerHistorial($)
 
@@ -855,14 +808,12 @@ export const register: Register = on => {
     const ocupado = await read($, precisando)
     const sem = await read($, semana)
     const ses = await read($, sesion)
-    const abierta = await read($, semanaAbierta)
     const act = await read($, actividad)
     const fl = await read($, flujo)
     const filasExp = await read($, filasExploradores)
-    const flAbierto = await read($, flujoAbierto)
     // Atoms nuevos: tras un `/reload-plugins` el estado anterior puede no traerlos.
+    const pest = (await read($, pestana)) ?? 'inicio'
     const his = (await read($, historial)) ?? null
-    const hisAbierto = (await read($, historialAbierto)) ?? true
     await read($, ahora)
     const t = await $.clock.now()
 
@@ -904,30 +855,24 @@ export const register: Register = on => {
      * Tokens por modelo y esfuerzo: la misma tabla para la sesión y la semana.
      * Cada tabla alinea en columnas las etiquetas de sus propias filas (familia · versión · esfuerzo).
      * Bajo cada fila va su barra con el % de la sección (barra + % = ancho).
-     * Con `plegable`, plegada muestra solo el título, el total y el botón.
-     * Con `conActividad`, una fila unida lleva un ■ del principal y otro del subagente (verde: en curso;
-     * amarillo: espera; gris: inactiva), cada uno con el estado de su origen; el del subagente son
+     * Con `conActividad`, una fila unida lleva un ■ del principal y otro del subagente; el del subagente son
      * 1 a 5 (uno por explorador o revisor en vuelo, separados) si es la fila anotada del flujo.
+     * Cada ■ lleva su propio color (`estadosDeCuadros`): verde si su petición está en vuelo, amarillo si
+     * espera con la actividad abierta, gris si la fila está inactiva.
      * Con `conDesglose`, bajo la barra de cada fila con flujo o subagentes va su desglose (`desgloseTramos`).
-     * El encabezado lleva el total y la salida; si con el botón no caben en `ancho`,
-     * queda solo el total y la salida pasa al pie.
+     * Con `conDias`, tras las filas va el total de cada día («por día»).
+     * El encabezado lleva el total y la salida.
      */
     const tabla = (
       titulo: string,
       prefijo: string,
       s: Semana | null,
       desde: string | null,
-      plegable?: { abierta: boolean },
       conActividad = false,
       conDesglose = false,
+      conDias = false,
     ) => {
-      const visible = plegable === undefined || plegable.abierta
-      const label = plegable?.abierta ? 'Ocultar' : 'Ver'
       const conSalida = s === null ? '' : totalConSalida(s.total, s.salida)
-      // Título + total con salida + espacio + botón `[ label ]` tienen que entrar en `ancho`.
-      const cabe =
-        plegable === undefined || titulo.length + conSalida.length + 1 + `[ ${label} ]`.length <= ancho
-      const salidaAlPie = !cabe && s !== null && s.salida > 0 ? `sal ${tokens(s.salida)}` : null
       // Las etiquetas van en columnas y dejan sitio a las cifras y, con `conActividad`, a los ■ (2 celdas cada uno).
       const maxCuadros =
         conActividad && s !== null
@@ -937,23 +882,14 @@ export const register: Register = on => {
         s !== null ? etiquetasAlineadas(s.filas, Math.max(1, e.props.bodyColumns - COLUMNAS_CIFRAS - 2 * maxCuadros)) : []
 
       return (
-        <Box key={plegable === undefined ? undefined : CLAVE_SEMANA} flexDirection="column" marginTop={1}>
+        <Box key={`tabla-${prefijo}`} flexDirection="column" marginTop={1}>
           <Box>
             <Box flexGrow={1}>
               <Text bold>{titulo}</Text>
             </Box>
-            {s !== null && s.total > 0 && <Text>{cabe ? conSalida : tokens(s.total)}</Text>}
-            {plegable !== undefined && <Text> </Text>}
-            {plegable !== undefined && (
-              <Button
-                key={`${prefijo}-plegar`}
-                hotkey="s"
-                label={label}
-                onPress={() => alternarSemana($)}
-              />
-            )}
+            {s !== null && s.total > 0 && <Text>{conSalida}</Text>}
           </Box>
-          {!visible ? null : s === null || s.filas.length === 0 ? (
+          {s === null || s.filas.length === 0 ? (
             <Text dimColor>sin respuestas anotadas todavía</Text>
           ) : (
             <Box flexDirection="column">
@@ -974,8 +910,8 @@ export const register: Register = on => {
                         <Text wrap="truncate-end">{etiquetas[indice] ?? ''}</Text>
                         {conActividad &&
                           idsDeActividad(f).flatMap(id =>
-                            Array.from({ length: cuadradosDeFila(fl, filasExp, id) }, (_, i) => (
-                              <Text key={`cuadrado-${id}-${i}`} color={COLOR_ACTIVIDAD[estadoActividad(act, id, t)]}>
+                            estadosDeCuadros(act, id, cuadradosDeFila(fl, filasExp, id), t).map((estado, i) => (
+                              <Text key={`cuadrado-${id}-${i}`} color={COLOR_ACTIVIDAD[estado]}>
                                 {' ■'}
                               </Text>
                             )),
@@ -1007,7 +943,7 @@ export const register: Register = on => {
               })}
             </Box>
           )}
-          {plegable !== undefined && visible && s !== null && s.dias.length > 0 && (
+          {conDias && s !== null && s.dias.length > 0 && (
             <Box flexDirection="column" marginTop={1}>
               <Text dimColor>por día</Text>
               {s.dias.map(dia => (
@@ -1019,9 +955,9 @@ export const register: Register = on => {
               ))}
             </Box>
           )}
-          {visible && s !== null && (desde !== null || s.total > 0) && (
+          {s !== null && (desde !== null || s.total > 0) && (
             <Text dimColor>
-              {[salidaAlPie, desde, s.total > 0 ? 'total incluye caché' : null].filter(Boolean).join(' · ')}
+              {[desde, s.total > 0 ? 'total incluye caché' : null].filter(Boolean).join(' · ')}
             </Text>
           )}
         </Box>
@@ -1049,12 +985,59 @@ export const register: Register = on => {
       return <Text wrap="truncate-end">{partes.join(' · ')}</Text>
     }
 
-    /** La fila de pestañas, arriba en las dos vistas; «Carpeta» abre la carpeta sin cambiar de pestaña. */
+    /**
+     * Los botones de las pestañas, arriba en todas las vistas, repartidos en filas según el ancho (cada uno mide `[ label ]`);
+     * debajo, en su propia fila, «Carpeta», que abre la carpeta sin cambiar de pestaña.
+     */
+    const botones = [
+      { clave: 'pestana-inicio', hotkey: 'i', label: 'Inicio', alPulsar: () => elegirPestana($, 'inicio') },
+      { clave: 'pestana-flujo', hotkey: 'f', label: 'Flujo', alPulsar: () => elegirPestana($, 'flujo') },
+      { clave: 'pestana-semana', hotkey: 's', label: 'Gasto semanal', alPulsar: () => elegirPestana($, 'semana') },
+      { clave: 'pestana-historial', hotkey: 'h', label: 'Historial', alPulsar: () => elegirPestana($, 'historial') },
+    ]
     const filaPestanas = (
-      <Box key="pestanas" marginBottom={1}>
-        <Button key="pestana-inicio" hotkey="i" label="Inicio" onPress={() => elegirPestana($, false)} />
-        <Button key="pestana-flujo" hotkey="f" label="Flujo" onPress={() => elegirPestana($, true)} />
-        <Button key="carpeta" hotkey="c" label="Carpeta" onPress={() => abrirCarpeta($)} />
+      <Box key="pestanas" flexDirection="column" marginBottom={1}>
+        {repartir(
+          botones.map(b => `[ ${b.label} ]`.length),
+          e.props.bodyColumns,
+        ).map(fila => (
+          <Box key={`pestanas-${fila[0]}`}>
+            {fila.flatMap(i => {
+              const b = botones[i]
+
+              return b === undefined ? [] : [<Button key={b.clave} hotkey={b.hotkey} label={b.label} onPress={b.alPulsar} />]
+            })}
+          </Box>
+        ))}
+        <Box key="pestanas-carpeta">
+          <Button key="carpeta" hotkey="c" label="Carpeta" onPress={() => abrirCarpeta($)} />
+        </Box>
+      </Box>
+    )
+
+    /**
+     * Los límites, arriba de la fila de pestañas y en todas las vistas: una línea por límite
+     * (etiqueta, mini barra, % y cuánto falta; barra y % con el tono del %). Sin límites, un aviso dim.
+     */
+    const bloqueLimites = (
+      <Box key="limites" flexDirection="column" marginBottom={1}>
+        {limites.length === 0 ? (
+          <Text dimColor>límites tras la 1.ª respuesta</Text>
+        ) : (
+          limites.map(l => {
+            const reinicio = l.resetsAt === undefined ? undefined : Date.parse(l.resetsAt)
+            const linea = lineaLimite(l.kind, l.percentUsed, reinicio, t, e.props.bodyColumns)
+
+            return (
+              <Box key={`limite-${l.kind}`}>
+                <Text>{`${linea.etiqueta} `}</Text>
+                <Text color={tono(l.percentUsed)}>{linea.barra}</Text>
+                <Text color={tono(l.percentUsed)}>{linea.cifra}</Text>
+                {linea.cola !== '' && <Text dimColor>{linea.cola}</Text>}
+              </Box>
+            )
+          })
+        )}
       </Box>
     )
 
@@ -1148,50 +1131,117 @@ export const register: Register = on => {
       </Box>
     )
 
-    /** Los últimos flujos del historial con su promedio; no se dibuja sin historial o sin filas. */
+    /** La pestaña «Historial»: el promedio y, por flujo, sus 1 a 3 líneas (la primera normal, el resto dim). Sin filas, un aviso. */
     const promedio = his === null ? {} : promedioHistorial(his.filas)
-    const bloqueHistorial =
-      his === null || his.filas.length === 0 ? null : (
-        <Box key="historial" flexDirection="column">
-          <Box>
-            <Box flexGrow={1}>
-              <Text bold>Historial</Text>
-            </Box>
-            <Button
-              key="historial-plegar"
-              hotkey="h"
-              label={hisAbierto ? 'Ocultar' : 'Ver'}
-              onPress={() => alternarHistorial($)}
-            />
+    const bloqueHistorial = (
+      <Box key="historial" flexDirection="column">
+        <Text bold>Historial</Text>
+        {his === null || his.filas.length === 0 ? (
+          <Text dimColor>sin flujos anotados todavía</Text>
+        ) : (
+          <Box flexDirection="column">
+            <Text dimColor wrap="truncate-end">
+              {`promedio ${cifraUsd(promedio.usd)} · ${cifraMinutos(promedio.minutos)} · ${his.filas.length} flujos`}
+            </Text>
+            {his.filas.map((f, i) => (
+              <Box key={`historial-${i}`} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
+                {lineasHistorial(f, e.props.bodyColumns).map((linea, j) => (
+                  <Text key={`historial-${i}-${j}`} dimColor={j > 0} wrap="truncate-end">
+                    {linea}
+                  </Text>
+                ))}
+              </Box>
+            ))}
           </Box>
-          {hisAbierto && (
-            <Box flexDirection="column">
-              <Text dimColor wrap="truncate-end">
-                {`promedio ${cifraUsd(promedio.usd)} · ${cifraMinutos(promedio.minutos)}`}
-              </Text>
-              {his.filas.map((f, i) => (
-                <Text key={`historial-${i}`} wrap="truncate-end">
-                  {lineaHistorial(f, e.props.bodyColumns)}
-                </Text>
-              ))}
-            </Box>
-          )}
-        </Box>
-      )
+        )}
+      </Box>
+    )
 
-    // Con la pestaña «Flujo» abierta se dibuja solo la fila de pestañas y ese bloque; `pestana-inicio` vuelve.
-    if (flAbierto) {
+    /**
+     * Leyenda de los tramos de las barras de las dos tablas; se dibuja en «Inicio» y en «Gasto semanal».
+     * Va en filas (`repartir`) y ninguna pasa de 32 columnas.
+     */
+    const entradasLeyenda = [
+      { color: 'claude', nombre: 'directo' },
+      { color: COLOR_FLUJO, nombre: 'orquestador' },
+      { color: COLOR_SUB, nombre: 'subagentes' },
+    ]
+    const leyenda = (
+      <Box key="leyenda" flexDirection="column" marginTop={1}>
+        {repartir(
+          entradasLeyenda.map(entrada => 2 + entrada.nombre.length),
+          Math.min(e.props.bodyColumns, 32),
+          2,
+        ).map(fila => (
+          <Box key={`leyenda-${fila[0]}`}>
+            {fila.flatMap((indice, i) => {
+              const entrada = entradasLeyenda[indice]
+
+              return entrada === undefined
+                ? []
+                : [
+                    ...(i === 0 ? [] : [<Text key={`separador-${entrada.nombre}`}>{'  '}</Text>]),
+                    <Text key={`color-${entrada.nombre}`} color={entrada.color}>
+                      ■
+                    </Text>,
+                    <Text key={`nombre-${entrada.nombre}`} dimColor wrap="truncate-end">
+                      {' ' + entrada.nombre}
+                    </Text>,
+                  ]
+            })}
+          </Box>
+        ))}
+      </Box>
+    )
+
+    // Cada pestaña dibuja la fila de pestañas y solo su contenido; `pestana-inicio` vuelve a «Inicio».
+    if (pest === 'flujo') {
       return (
         <Box flexDirection="column">
+          {bloqueLimites}
           {filaPestanas}
           {bloqueFlujo}
+        </Box>
+      )
+    }
+
+    if (pest === 'historial') {
+      return (
+        <Box flexDirection="column">
+          {bloqueLimites}
+          {filaPestanas}
           {bloqueHistorial}
+        </Box>
+      )
+    }
+
+    if (pest === 'semana') {
+      return (
+        <Box flexDirection="column">
+          {bloqueLimites}
+          {filaPestanas}
+          {leyenda}
+
+          {tabla(
+            'Esta semana',
+            's',
+            sem,
+            sem === null
+              ? null
+              : sem.registroDesde !== null && sem.registroDesde > sem.desde
+                ? `anotado desde ${cuando(t, sem.registroDesde)}`
+                : `desde ${cuando(t, sem.desde)}`,
+            false,
+            false,
+            true,
+          )}
         </Box>
       )
     }
 
     return (
       <Box flexDirection="column">
+        {bloqueLimites}
         {filaPestanas}
         <Box>
           <Box flexGrow={1}>
@@ -1264,36 +1314,6 @@ export const register: Register = on => {
           </Box>
         )}
 
-        {limites.length === 0 ? (
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold>Límites de uso</Text>
-            <Text dimColor>aparecen tras la 1.ª respuesta</Text>
-          </Box>
-        ) : (
-          limites.map(l => {
-            const reinicio = l.resetsAt === undefined ? undefined : Date.parse(l.resetsAt)
-
-            return (
-              <Box key={l.kind} flexDirection="column" marginTop={1}>
-                <Box>
-                  <Box flexGrow={1}>
-                    <Text bold>{nombreVentana(l.kind)}</Text>
-                  </Box>
-                  <Text color={tono(l.percentUsed)}>{l.percentUsed}%</Text>
-                </Box>
-                <Text color={tono(l.percentUsed)}>{barra(l.percentUsed, ancho)}</Text>
-                {reinicio === undefined || Number.isNaN(reinicio) ? (
-                  <Text dimColor>sin hora de reinicio</Text>
-                ) : (
-                  <Text dimColor>
-                    reinicia {cuando(t, reinicio)} · {falta(t, reinicio)}
-                  </Text>
-                )}
-              </Box>
-            )
-          })
-        )}
-
         {/* Una sola fila; el modelo se trunca para no saltar de línea en 36 columnas. */}
         <Box marginTop={1}>
           <Text bold>Esfuerzo</Text>
@@ -1310,37 +1330,10 @@ export const register: Register = on => {
           </Text>
         </Box>
 
-        {/* Leyenda de los tramos de las barras de las dos tablas. */}
-        <Box marginTop={1}>
-          {[
-            { color: 'claude', nombre: 'normal' },
-            { color: COLOR_FLUJO, nombre: 'flujo' },
-            { color: COLOR_SUB, nombre: 'subagentes' },
-          ].flatMap((entrada, i) => [
-            ...(i === 0 ? [] : [<Text key={`separador-${entrada.nombre}`}>{'  '}</Text>]),
-            <Text key={`color-${entrada.nombre}`} color={entrada.color}>
-              ■
-            </Text>,
-            <Text key={`nombre-${entrada.nombre}`} dimColor wrap="truncate-end">
-              {' ' + entrada.nombre}
-            </Text>,
-          ])}
-        </Box>
+        {leyenda}
 
         {/* La hora anotada se redondea a la hora entera: «desde» mentiría en la sesión. */}
-        {tabla('Esta sesión', 'n', ses === null ? null : unirOrigenes(ses), null, undefined, true, true)}
-
-        {tabla(
-          'Esta semana',
-          's',
-          sem,
-          sem === null
-            ? null
-            : sem.registroDesde !== null && sem.registroDesde > sem.desde
-              ? `anotado desde ${cuando(t, sem.registroDesde)}`
-              : `desde ${cuando(t, sem.desde)}`,
-          { abierta },
-        )}
+        {tabla('Esta sesión', 'n', ses === null ? null : unirOrigenes(ses), null, true, true)}
       </Box>
     )
   })
