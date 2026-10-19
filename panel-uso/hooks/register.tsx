@@ -80,7 +80,7 @@ import {
 import type { NivelEsfuerzo, Registro, Uso } from './semana'
 
 const PANEL = 'panel-uso'
-const COLUMNAS = 36
+const COLUMNAS = 40
 const TICK_MS = 30_000
 const SCROLL_MS = 150
 
@@ -1170,7 +1170,7 @@ export const register: Register = on => {
       <Box key="leyenda" flexDirection="column" marginTop={1}>
         {repartir(
           entradasLeyenda.map(entrada => 2 + entrada.nombre.length),
-          Math.min(e.props.bodyColumns, 32),
+          Math.min(e.props.bodyColumns, COLUMNAS),
           2,
         ).map(fila => (
           <Box key={`leyenda-${fila[0]}`}>
@@ -1314,7 +1314,7 @@ export const register: Register = on => {
           </Box>
         )}
 
-        {/* Una sola fila; el modelo se trunca para no saltar de línea en 36 columnas. */}
+        {/* Una sola fila; el modelo se trunca para no saltar de línea en 40 columnas. */}
         <Box marginTop={1}>
           <Text bold>Esfuerzo</Text>
           <Text color="claude">{` ${nivel}`}</Text>

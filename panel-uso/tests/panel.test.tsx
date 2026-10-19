@@ -79,6 +79,9 @@ const PANE = {
 /** El panel con el ancho real del usuario (49 columnas): ahí caben varios ■ en la fila. */
 const PANE_ANCHO = { ...PANE, props: { ...PANE.props, bodyColumns: 49 } } as const
 
+/** El panel con el ancho que pide al abrirse (40 columnas). */
+const PANE_40 = { ...PANE, props: { ...PANE.props, bodyColumns: 40 } } as const
+
 const MEDIDA: SessionMeasureInput = {
   context: { tokens: 96_200, window: 200_000, percent: 48 },
   rateLimits: [
@@ -232,11 +235,11 @@ describe('formato', () => {
     expect(desgloseTramos(f, 0)).toBe('…')
   })
 
-  test('lineaLimite: cabe en 32 y 49 y suelta la cola si no cabe', async () => {
+  test('lineaLimite: cabe en 32, 40 y 49 y suelta la cola si no cabe', async () => {
     const ahora = 0
     const reinicio = 130 * 60_000
 
-    for (const ancho of [32, 49]) {
+    for (const ancho of [32, 40, 49]) {
       const l = lineaLimite('five_hour', 42, reinicio, ahora, ancho)
 
       expect(l.etiqueta).toBe('5h   ')
@@ -4051,12 +4054,12 @@ describe('leyenda de colores en el panel', () => {
     await ui.unmount()
   })
 
-  test('leyenda: directo, orquestador y subagentes, ninguna fila de más de 32 columnas', async ($, on) => {
+  test('leyenda: directo, orquestador y subagentes, en una fila desde 40 columnas y ninguna de más de 40', async ($, on) => {
     preparar(on)
     await $.session.measure(MEDIDA)
     await paso($, 'claude-opus-5-5', 'high')
 
-    for (const pane of [PANE, PANE_ANCHO]) {
+    for (const pane of [PANE, PANE_40, PANE_ANCHO]) {
       const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
       const arbol = await ui.findAll({})
       const leyenda = arbol.findIndex(n => n.type === 'Box' && n.key === 'leyenda')
@@ -4070,9 +4073,9 @@ describe('leyenda de colores en el panel', () => {
 
       expect(leyenda).toBeGreaterThanOrEqual(0)
       expect(filas.flat().filter(t => t !== '■' && t.trim() !== '').map(t => t.trim())).toEqual(['directo', 'orquestador', 'subagentes'])
-      // 32 columnas no admiten las tres entradas juntas; el tope de 32 por fila rige también con 49.
-      expect(filas.length).toBeGreaterThanOrEqual(2)
-      for (const fila of filas) expect(fila.join('').length).toBeLessThanOrEqual(32)
+      // 32 columnas no admiten las tres entradas juntas; 40 sí (miden 38), y el tope de 40 por fila rige también con 49.
+      expect(filas.length).toBe(pane.props.bodyColumns < 40 ? 2 : 1)
+      for (const fila of filas) expect(fila.join('').length).toBeLessThanOrEqual(Math.min(40, pane.props.bodyColumns))
       await ui.unmount()
     }
   })
@@ -7210,12 +7213,12 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  test('a 49 y a 32 columnas ninguna línea de un flujo pasa del ancho, ni la del título ni la de los roles', async ($, on) => {
+  test('a 49, 40 y 32 columnas ninguna línea de un flujo pasa del ancho, ni la del título ni la de los roles', async ($, on) => {
     const { archivo } = motorHistorial(on)
     archivo.texto = [fila(1), FLUJO_COMPLETO, fila(3)].join('\n')
     await $.session.measure(MEDIDA)
 
-    for (const pane of [PANE_ANCHO, PANE]) {
+    for (const pane of [PANE_ANCHO, PANE_40, PANE]) {
       const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
       await abrirHistorial(ui)
 
@@ -7227,11 +7230,11 @@ describe('historial en el panel', () => {
     }
   })
 
-  test('a 49 y a 32 columnas ninguna fila pasa del ancho del panel', async ($, on) => {
+  test('a 49, 40 y 32 columnas ninguna fila pasa del ancho del panel', async ($, on) => {
     motorHistorial(on)
     await $.session.measure(MEDIDA)
 
-    for (const pane of [PANE_ANCHO, PANE]) {
+    for (const pane of [PANE_ANCHO, PANE_40, PANE]) {
       const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
       await abrirHistorial(ui)
 

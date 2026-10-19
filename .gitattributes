@@ -1,0 +1,2 @@
+# Claude Code no parsea el frontmatter con CRLF: todo en LF, también con core.autocrlf=true.
+* text=auto eol=lf
