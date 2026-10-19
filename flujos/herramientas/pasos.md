@@ -25,4 +25,4 @@
 
 **6. Verificación final** — tu último `verificar.mjs` (el del último ejecutor o corrección) ya es la verificación final: no lo repites. En un mismo mensaje: con 2 o más subtareas, `estado.mjs --cambios --global [--permitidos "<ampliados>"] --paso 6` (el alcance de todo el flujo; con una sola ya lo hiciste en el paso 5), y la revisión final (comun.md §5; siempre Opus high). Si ese `--cambios` da `ALCANCE: FUERA`, resuélvelo (comun.md §6) antes de tomar su veredicto. Sus correcciones y ciclos, en comun.md §6.
 
-**7. Cierre** — comun.md §7 (`estado.mjs --cambios --global [--permitidos "<ampliados>"] --paso 7 --resultado COMPLETO|DETENIDO:<paso>`, sin repetir `verificar.mjs`).
+**7. Cierre** — comun.md §7 (`estado.mjs --cambios --global [--permitidos "<ampliados>"] --paso 7 --resultado COMPLETO|DETENIDO:<paso>`, sin repetir `verificar.mjs`). Si es COMPLETO y «Queda para ti» trae comandos, preguntas si los ejecutas (comun.md §7).
