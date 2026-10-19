@@ -48,6 +48,12 @@ La guardia lo bloquea; si te bloquea, no lo rodees: anótalo en BLOQUEOS.
 - Tipos: nunca silencies el sistema de tipos (`as any`, `@ts-ignore`, `# type: ignore`, `unsafe` sin necesidad). Si cambia el schema, actualizas los tipos a mano; regenerarlos contra un servicio queda para el usuario.
 - Mientras trabajas, corre solo el test puntual, sin watch, con la salida acotada a resumen y fallos por una tubería que oculte los tests que pasan (sin redirigirla a un archivo). Si el proyecto da un patrón, úsalo tal cual. Si las reglas del proyecto indican que la suite no se puede filtrar, no la corras aparte antes de `verificar.mjs`: ve directo a `verificar.mjs`, que ya la incluye. Con la tubería el código de salida no es el de los tests: lee el resumen. Si un fallo no se entiende, repite solo ese test o archivo, nunca todo sin filtro.
 
+## Edición
+
+- Un Edit por bloque contiguo, no uno por línea; Write para los archivos nuevos.
+- No releas un archivo después de editarlo: si un Edit falla, la herramienta lo dice.
+- Mientras iteras, solo el test puntual; `verificar.mjs` una sola vez al final (ver «Verificación obligatoria»).
+
 ## Verificación obligatoria
 
 - `node ~/.claude/flujos/verificar.mjs` tiene que terminar en `RESULTADO: VERDE`. Si sale ROJO, corriges y repites. Si no logras verde, `ESTADO: FALLA` con la salida. Córrelo sin tubería (su salida ya es corta) y con `timeout: 600000` en la llamada a Bash, también si tu cambio no toca código (imágenes, textos): el orquestador lo vuelve a correr sobre el mismo árbol, y tu VERDE le sale de la caché sin esperar. Si la suite no se puede filtrar (reglas del proyecto), este es tu primer y único comando de pruebas: no corras la suite aparte antes.
@@ -60,7 +66,7 @@ Antes de reportar, repasa tu diff contra Alcance, Calidad y Verificación de arr
 
 ## Reporte
 
-Solo esto, ≤ 10 líneas:
+Solo esto, compacto: una línea por archivo en ARCHIVOS, una línea por ítem en CRITERIO y sin narrar lo que hiciste. Tope de ~25 líneas, salvo en FALLA o BLOQUEADO, donde puedes extenderte lo necesario:
 
 ```
 ESTADO: HECHO | BLOQUEADO | FALLA

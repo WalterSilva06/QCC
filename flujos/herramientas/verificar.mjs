@@ -13,6 +13,15 @@
 //
 // Caché: si el árbol de trabajo (versionados + nuevos no ignorados) y los pasos son los mismos de una
 // corrida VERDE de los últimos 30 min, la repite sin correr nada y lo dice. `--sin-cache` corre igual.
+// Con git se toma el árbol tras cada paso. Si la corrida VERDE cambió el árbol y todo cambio lo hicieron
+// pasos de build (nombre o comando con build/compile/codegen/generate/gen/bundle y sin lint/format/fmt/fix/
+// prettier/eslint/--fix/--write), se guarda además la clave del árbol posterior: la siguiente corrida, ya sobre
+// la salida generada, sale de la caché. Si un paso que no es de build cambió algo, o el árbol no se pudo
+// tomar a mitad de la corrida, no se guarda ninguna clave de esa corrida.
+//
+// Salidas: si la corrida (VERDE o ROJO) cambió archivos, anota en `<registro>-verificar-salidas.json`
+// `{ t, ruta, blob, paso, generado }` por archivo (blob 0…0 si lo borró; `generado` si solo pasos de build lo
+// cambiaron), sin lo de más de 24 h y con un tope de 500. `salidasDe(raiz)` lo lee.
 //
 // Marca de corrida: al empezar a correr anota `{ clave, pid, inicio }` junto al registro del proyecto
 // (`-verificar-curso.json`) y al terminar la completa con `{ fin, resultado, salida }`. Otra corrida con
@@ -26,11 +35,14 @@
 // `RESULTADO: SIN PASOS` (exit 3: el proyecto no tiene verificación conocida) o
 // `RESULTADO: EN CURSO (…)` (exit 4: la corrida que esperaba sigue tras 570 s; se repite). Con ROJO la línea va
 // antes del detalle y se repite al final, para que una tubería (`| tail`) no la pierda.
+// Salida compacta: con VERDE solo la tabla (una línea por paso) y `RESULTADO: VERDE`; desde la caché, la tabla
+// guardada, la línea de la caché y el resultado. La cabecera `verificar (<origen>): …` se imprime solo con ROJO,
+// antes de la tabla.
 
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawn, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { RAIZ, configDe, registroDe, arbolDe } from './guardia.mjs'
 
@@ -42,6 +54,35 @@ const VIGENCIA_MIN = 30
 const TOPE_CACHE = 5
 const ESPERA_SEG = 570
 const SONDEO_MS = 500
+const VIGENCIA_SALIDAS_H = 24
+const TOPE_SALIDAS = 500
+const BUILD = /\b(build|compile|codegen|generate|gen|bundle)\b/i
+const NO_BUILD = /lint|format|fmt|fix|prettier|eslint|--fix|--write/i
+
+/** ¿Es un paso de build (su salida es código generado)? Por nombre y comando; lint, format y fix no cuentan. */
+export const esBuild = (paso) => {
+  const n = `${paso.nombre} ${paso.cmd}`
+  return BUILD.test(n) && !NO_BUILD.test(n)
+}
+
+/**
+ * Archivos que difieren entre dos árboles de `arbolDe`: `[{ ruta, blob }]` con el blob que quedó en `b`
+ * (40 ceros si lo borró). Lanza si git falla o la salida no tiene la forma esperada.
+ */
+export function cambiosDe(raiz, a, b) {
+  const partes = execFileSync('git', ['diff-tree', '-r', '-z', '--no-renames', '--no-abbrev', a, b], {
+    cwd: raiz, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+  }).split('\0')
+  if (partes.at(-1) === '') partes.pop()
+  if (partes.length % 2) throw new Error('git diff-tree: salida inesperada')
+  const lista = []
+  for (let i = 0; i < partes.length; i += 2) {
+    const blob = partes[i].split(' ')[3]
+    if (!/^[0-9a-f]{40,64}$/.test(blob ?? '') || !partes[i + 1]) throw new Error('git diff-tree: salida inesperada')
+    lista.push({ ruta: partes[i + 1], blob })
+  }
+  return lista
+}
 
 // ── Caché de corridas VERDE ─────────────────────────────────────────────────
 
@@ -77,6 +118,59 @@ function guardarVerde(raiz, entrada) {
     fs.writeFileSync(cacheDe(raiz), JSON.stringify(lista, null, 2) + '\n')
   } catch {
     // Sin caché, la próxima corrida corre entera.
+  }
+}
+
+// ── Salidas: lo que cambió la corrida ───────────────────────────────────────
+
+/** Archivo de las salidas del proyecto, junto a su registro. */
+const salidasArchivo = (raiz) => registroDe(raiz).replace(/\.jsonl$/, '-verificar-salidas.json')
+
+/** Lo que cambiaron las corridas de las últimas 24 h, `[{ t, ruta, blob, paso, generado }]` (la más antigua primero). */
+export function salidasDe(raiz) {
+  try {
+    const lista = JSON.parse(fs.readFileSync(salidasArchivo(raiz), 'utf8'))
+    if (!Array.isArray(lista)) return []
+    return lista.filter((s) => s && typeof s.ruta === 'string' && typeof s.blob === 'string' && Date.now() - Date.parse(s.t) < VIGENCIA_SALIDAS_H * 3_600_000)
+  } catch {
+    return []
+  }
+}
+
+function anotarSalidas(raiz, nuevas) {
+  try {
+    const lista = [...salidasDe(raiz), ...nuevas].slice(-TOPE_SALIDAS)
+    fs.mkdirSync(path.dirname(salidasArchivo(raiz)), { recursive: true })
+    fs.writeFileSync(salidasArchivo(raiz), JSON.stringify(lista, null, 2) + '\n')
+  } catch {
+    // Sin registro de salidas, la revisión de alcance se queda sin esa ayuda.
+  }
+}
+
+/**
+ * Seguimiento del árbol durante la corrida: después de cada paso anota qué archivos cambió. `final` es el
+ * último árbol; `archivos` guarda por ruta los pasos que la cambiaron y si todos eran de build.
+ */
+function seguimientoDe(raiz, arbol) {
+  const archivos = new Map()
+  let final = arbol
+  return {
+    archivos,
+    get final() {
+      return final
+    },
+    /** Toma el árbol tras `paso`. Lanza si no se puede: quien llama descarta el seguimiento entero. */
+    despuesDe(paso) {
+      const despues = arbolDe(raiz)
+      if (despues === final) return
+      for (const { ruta } of cambiosDe(raiz, final, despues)) {
+        const a = archivos.get(ruta) ?? { pasos: [], build: true }
+        if (!a.pasos.includes(paso.nombre)) a.pasos.push(paso.nombre)
+        a.build &&= esBuild(paso)
+        archivos.set(ruta, a)
+      }
+      final = despues
+    },
   }
 }
 
@@ -278,7 +372,7 @@ async function main() {
     return
   }
 
-  console.log(`verificar (${origen}): ${pasos.map((p) => p.cmd).join(' → ')}`)
+  const cabecera = `verificar (${origen}): ${pasos.map((p) => p.cmd).join(' → ')}`
   let arbol = null
   try {
     arbol = arbolDe(RAIZ)
@@ -336,11 +430,20 @@ async function main() {
     console.log(linea)
   }
   const resultados = []
+  let seg = clave ? seguimientoDe(RAIZ, arbol) : null
   for (const paso of pasos) {
     const t0 = Date.now()
     const tope = paso.timeoutSeg ?? TIMEOUT_SEG
     const r = await correr(paso.cmd, tope)
     resultados.push({ ...paso, ok: r.codigo === 0 && !r.vencido, codigo: r.codigo, vencido: r.vencido, tope, segundos: (Date.now() - t0) / 1000, salida: r.salida })
+    if (seg) {
+      try {
+        seg.despuesDe(paso)
+      } catch {
+        // Sin el árbol de este paso no se sabe qué cambió: ni claves nuevas ni registro de salidas.
+        seg = null
+      }
+    }
   }
 
   const tabla = resultados.map((r) => {
@@ -348,9 +451,33 @@ async function main() {
     const extra = r.resumen ? r.resumen(r.salida) : ''
     return `${r.nombre.padEnd(10)} ${r.ok ? 'OK   ' : 'FALLÓ'} ${tiempo}${extra ? `   ${extra}` : ''}`
   })
-  for (const l of tabla) imprimir(l)
   const rojos = resultados.filter((r) => !r.ok)
-  if (!rojos.length && clave) guardarVerde(RAIZ, { clave, arbol, t: new Date().toISOString(), tabla })
+  if (rojos.length) imprimir(cabecera)
+  for (const l of tabla) imprimir(l)
+  if (seg) {
+    try {
+      if (seg.final !== arbol) {
+        const cambiados = cambiosDe(RAIZ, arbol, seg.final)
+        const t = new Date().toISOString()
+        anotarSalidas(RAIZ, cambiados.map(({ ruta, blob }) => {
+          const a = seg.archivos.get(ruta)
+          return { t, ruta, blob, paso: a ? a.pasos.join(', ') : '', generado: Boolean(a?.build) }
+        }))
+      }
+    } catch {
+      seg = null
+    }
+  }
+  if (!rojos.length && clave) {
+    const entrada = (k, a) => ({ clave: k, arbol: a, t: new Date().toISOString(), tabla })
+    if (seg && seg.final === arbol) {
+      guardarVerde(RAIZ, entrada(clave, arbol))
+    } else if (seg && [...seg.archivos.values()].every((a) => a.build)) {
+      // Solo pasos de build cambiaron el árbol: la próxima corrida ya parte de su salida y puede salir de la caché.
+      guardarVerde(RAIZ, entrada(clave, arbol))
+      guardarVerde(RAIZ, entrada(claveDe(seg.final, todos), seg.final))
+    }
+  }
   const resultado = rojos.length ? `RESULTADO: ROJO (${rojos.map((r) => r.nombre).join(', ')})` : 'RESULTADO: VERDE'
   imprimir(resultado)
   for (const r of rojos) {

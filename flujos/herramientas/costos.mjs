@@ -255,11 +255,18 @@ const bloquesDe = (f, tipo) => (Array.isArray(f?.message?.content) ? f.message.c
 /** Texto del último mensaje del asistente de esas filas (su informe); '' si no hay. */
 const ultimoTexto = (filas) => filas.filter((f) => f?.type === 'assistant').flatMap((f) => bloquesDe(f, 'text').map((c) => c.text)).at(-1) ?? ''
 
-/** Los ítems numerados entre `PROBLEMAS:` y `OBSERVACIONES:` (o el final) de un informe, de a ≤ 200 caracteres. */
-function problemasDe(texto) {
+/**
+ * Los ítems entre `PROBLEMAS:` y `OBSERVACIONES:` (o el final) de un informe, de a ≤ 200 caracteres. Cuentan los numerados
+ * (`1.` o `1)`); si no hay ninguno, las viñetas (`-`, `*`, `•`) y las líneas `ruta:línea — texto` (con `-`, `–` o `—`).
+ * Con numerados presentes solo cuentan esos, para no contar dos veces sus sub-viñetas.
+ */
+export function problemasDe(texto) {
   const desdeProblemas = /PROBLEMAS:([\s\S]*)/.exec(texto)?.[1] ?? ''
   const cuerpo = desdeProblemas.split(/^[\s*_>`-]*OBSERVACIONES:/m)[0]
-  return [...cuerpo.matchAll(/^\s*\d+[.)]\s*(.+)$/gm)].map((m) => m[1].trim().slice(0, 200))
+  const items = (patron) => [...cuerpo.matchAll(patron)].map((m) => m[1].trim().slice(0, 200)).filter(Boolean)
+  const numerados = items(/^\s*\d+[.)]\s*(.+)$/gm)
+  if (numerados.length) return numerados
+  return items(/^\s*(?:[-*•]\s+|(?=\S+:\d+\S*\s+[-–—]\s))(.+)$/gm).filter((t) => !/^ninguno\.?$/i.test(t))
 }
 
 /** Prompt de las llamadas al `Agent` (o `Task`) del hilo principal: `[{ prompt, tipo, effort, t }]`. */

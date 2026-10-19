@@ -14,9 +14,9 @@ import path from 'node:path'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, analizar, raizDe, registroDe, flujoDe, arbolDe, configDe, coincide } from './guardia.mjs'
-import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo, filaDelFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta, mapaDelRepo, decisionesDelPlan } from './estado.mjs'
-import { pasosDe, detalleTipos, resumenTest, detalleTest, conDetalle, claveDe, marcaDe } from './verificar.mjs'
-import { costoDelFlujo, costoDePedido, metricasDelFlujo, precioDe } from './costos.mjs'
+import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo, filaDelFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta, mapaDelRepo, decisionesDelPlan, contextoDelProyecto } from './estado.mjs'
+import { pasosDe, detalleTipos, resumenTest, detalleTest, conDetalle, claveDe, marcaDe, esBuild, salidasDe } from './verificar.mjs'
+import { costoDelFlujo, costoDePedido, metricasDelFlujo, precioDe, problemasDe } from './costos.mjs'
 
 const WIN = process.platform === 'win32'
 
@@ -1507,15 +1507,190 @@ test('verificar: repite un VERDE desde la caché mientras el árbol no cambie', 
   temporales.push(raiz)
   const correr = (...args) => spawnSync(process.execPath, [VERIFICAR, ...args], { cwd: raiz, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: raiz } }).stdout
 
-  assert.doesNotMatch(correr(), /caché/)
+  const primera = correr()
+  assert.doesNotMatch(primera, /caché/)
+  assert.match(primera, /^bien {7}OK/m)
   const repetida = correr()
   assert.match(repetida, /^\(caché: el árbol \w{9} ya salió VERDE con estos pasos a las .*\)$/m)
+  // Desde la caché se repite la tabla guardada (va al cierre como evidencia), sin la cabecera.
   assert.match(repetida, /^bien {7}OK/m)
+  assert.doesNotMatch(repetida, /^verificar \(/m)
+  assert.equal(repetida.trimEnd().split('\n').length, 3)
   assert.equal(repetida.trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
   assert.doesNotMatch(correr('--sin-cache'), /caché/)
   // Un archivo nuevo (no ignorado) cambia el árbol.
   fs.writeFileSync(path.join(raiz, 'src/b.ts'), 'b\n')
   assert.doesNotMatch(correr(), /caché/)
+})
+
+/** Comando de un paso que escribe `contenido` en `rel` (relativo a la raíz del repo de prueba). */
+const escribirCmd = (rel, contenido) => `node -e "require('fs').writeFileSync('${rel}', '${contenido}')"`
+
+/** Repo de prueba con dist/x.js y src/a.js versionados y estos pasos; `correr()` devuelve la salida de verificar.mjs. */
+function repoDeSalidas(pasos) {
+  const raiz = repo('salidas', { '.claude/implementador.json': { verificar: pasos }, 'dist/x.js': 'viejo', 'src/a.js': 'a' })
+  temporales.push(raiz)
+  const correr = (...args) => spawnSync(process.execPath, [VERIFICAR, ...args], { cwd: raiz, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: raiz } }).stdout
+  return { raiz, correr }
+}
+
+test('verificar: esBuild distingue los pasos de build de lint, format y fix', () => {
+  for (const [nombre, cmd] of [['build', 'npm run build'], ['x', 'go build ./...'], ['codegen', 'node gen.mjs'], ['bundle', 'rollup -c']]) {
+    assert.equal(esBuild({ nombre, cmd }), true, `${nombre} ${cmd}`)
+  }
+  for (const [nombre, cmd] of [['lint', 'eslint .'], ['build', 'eslint --fix . && tsc'], ['format', 'prettier -w .'], ['test', 'vitest run'], ['typecheck', 'tsc --noEmit']]) {
+    assert.equal(esBuild({ nombre, cmd }), false, `${nombre} ${cmd}`)
+  }
+})
+
+test('verificar: caché con el árbol posterior acierta si solo cambió la salida del build', () => {
+  const { correr } = repoDeSalidas([{ nombre: 'build', cmd: escribirCmd('dist/x.js', 'nuevo') }])
+  const primera = correr()
+  assert.doesNotMatch(primera, /caché/)
+  assert.equal(primera.trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
+  // El árbol ya trae la salida generada: la segunda corrida sale de la caché, sin correr el build.
+  const segunda = correr()
+  assert.match(segunda, /^\(caché: el árbol \w{9} ya salió VERDE/m)
+  // Repite la tabla guardada de la primera, tal cual: no hay una corrida nueva con otro tiempo.
+  assert.equal(segunda.split('\n')[0], primera.split('\n')[0])
+  assert.equal(segunda.trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
+})
+
+test('verificar: un paso que cambia código fuente no deja caché', () => {
+  const { correr } = repoDeSalidas([{ nombre: 'lint', cmd: escribirCmd('src/a.js', 'arreglado') }])
+  assert.equal(correr().trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
+  // Ni la clave del árbol previo ni la posterior: la segunda corrida vuelve a correr (y esta vez no cambia nada).
+  const segunda = correr()
+  assert.doesNotMatch(segunda, /caché/)
+  assert.match(segunda, /^lint {7}OK/m)
+  // Con el árbol ya estable (el lint no cambia nada) la tercera sí sale de la caché.
+  assert.match(correr(), /^\(caché: /m)
+})
+
+test('verificar: VERDE compacto, y con ROJO sigue la cabecera y el detalle', () => {
+  const verde = verificarCon([{ nombre: 'uno', cmd: 'node -e "console.log(1)"' }, { nombre: 'dos', cmd: 'node -e "console.log(2)"' }])
+  assert.equal(verde.codigo, 0)
+  assert.ok(verde.lineas.length <= 3, verde.salida)
+  assert.doesNotMatch(verde.salida, /verificar \(/)
+  assert.match(verde.lineas[0], /^uno {8}OK/)
+  assert.equal(verde.lineas.at(-1), 'RESULTADO: VERDE')
+
+  const rojo = verificarCon([{ nombre: 'uno', cmd: 'node -e "console.log(1)"' }, { nombre: 'dos', cmd: 'node -e "console.log(\'detalle-del-fallo\'); process.exit(2)"' }])
+  assert.equal(rojo.codigo, 1)
+  assert.match(rojo.lineas[0], /^verificar \(\.claude\/implementador\.json\): /)
+  assert.match(rojo.lineas[1], /^uno {8}OK/)
+  assert.match(rojo.salida, /^dos {8}FALLÓ/m)
+  assert.match(rojo.salida, /detalle-del-fallo/)
+  assert.equal(rojo.lineas.at(-1), 'RESULTADO: ROJO (dos)')
+})
+
+test('verificar: anota en salidas lo que cambió la corrida', () => {
+  const { raiz, correr } = repoDeSalidas([
+    { nombre: 'build', cmd: `${escribirCmd('dist/x.js', 'nuevo')} && ${escribirCmd('dist/y.js', 'otro')}` },
+    { nombre: 'lint', cmd: escribirCmd('src/a.js', 'arreglado') },
+  ])
+  assert.deepEqual(salidasDe(raiz), [])
+  correr()
+  const hash = (rel) => execFileSync('git', ['hash-object', rel], { cwd: raiz, encoding: 'utf8' }).trim()
+  const salidas = Object.fromEntries(salidasDe(raiz).map((s) => [s.ruta, s]))
+  assert.deepEqual(Object.keys(salidas).sort(), ['dist/x.js', 'dist/y.js', 'src/a.js'])
+  assert.equal(salidas['dist/x.js'].blob, hash('dist/x.js'))
+  assert.equal(salidas['dist/y.js'].blob, hash('dist/y.js'))
+  assert.equal(salidas['src/a.js'].blob, hash('src/a.js'))
+  assert.deepEqual([salidas['dist/x.js'].paso, salidas['dist/x.js'].generado], ['build', true])
+  assert.deepEqual([salidas['src/a.js'].paso, salidas['src/a.js'].generado], ['lint', false])
+  assert.ok(Number.isFinite(Date.parse(salidas['dist/x.js'].t)))
+
+  // Un archivo borrado queda con el blob de ceros; una corrida que no cambia nada no anota nada más.
+  const previas = salidasDe(raiz).length
+  fs.writeFileSync(path.join(raiz, '.claude/implementador.json'), JSON.stringify({ verificar: [{ nombre: 'build', cmd: 'node -e "require(\'fs\').rmSync(\'dist/y.js\', { force: true })"' }] }))
+  correr()
+  const borrado = salidasDe(raiz).filter((s) => s.ruta === 'dist/y.js').at(-1)
+  assert.equal(borrado.blob, '0'.repeat(40))
+  assert.equal(salidasDe(raiz).length, previas + 1)
+  correr('--sin-cache')
+  assert.equal(salidasDe(raiz).length, previas + 1)
+})
+
+/** Repo con `src/a.ts` y `dist/x.js` versionados; corre un paso build que reescribe `dist/x.js`. `{ raiz, sha, cambios }`. */
+function repoConBuild(nombre = 'build') {
+  const raiz = repo(`estado-${nombre}`, {
+    '.claude/implementador.json': { verificar: [{ nombre: 'build', cmd: escribirCmd('dist/x.js', 'nuevo') }] },
+    'src/a.ts': 'a\n',
+    'dist/x.js': 'viejo\n',
+  })
+  temporales.push(raiz)
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
+  const v = spawnSync(process.execPath, [VERIFICAR], { cwd: raiz, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: raiz } })
+  assert.match(v.stdout, /RESULTADO: VERDE/)
+  return { raiz, sha, cambios: (...extra) => estadoEn(raiz, ['--cambios', sha, '--permitidos', 'src/a.ts', ...extra]) }
+}
+
+test('estado: --cambios no marca FUERA la salida de verificar', () => {
+  const { sha, cambios } = repoConBuild()
+  // Que se reconozca prueba que el blob de la foto es el mismo que anota verificar para el mismo contenido.
+  const c = cambios()
+  assert.match(c.salida, /^ {2}~ M dist\/x\.js {3}← \(salida de verificar: build\)$/m)
+  assert.doesNotMatch(c.salida, /FUERA DE ALCANCE/)
+  assert.match(c.salida, /^CAMBIOS desde \w+ \(2\): src\/ 1 · salida de verificar 1$/m)
+  assert.match(c.salida, /^ALCANCE: OK$/m)
+
+  // Un desde posterior a la corrida descarta esa salida: ya no se perdona.
+  const futuro = cambios('--desde', new Date(Date.now() + 3_600_000).toISOString())
+  assert.match(futuro.salida, /^ {2}✗ M dist\/x\.js {3}← FUERA DE ALCANCE$/m)
+  assert.match(futuro.salida, /^ALCANCE: FUERA \(1\)$/m)
+
+  // En el cierre entra en la reversión, como lo de dentro, y el detalle sigue completo.
+  const cierre = cambios('--paso', '7').salida
+  assert.match(cierre, /^ {2}✓ M src\/a\.ts$/m)
+  assert.match(cierre, /^ {2}~ M dist\/x\.js {3}← \(salida de verificar: build\)$/m)
+  assert.match(cierre, new RegExp(`^REVERSIÓN: git restore --source=${sha} --worktree -- 'dist/x\\.js' 'src/a\\.ts'$`, 'm'))
+})
+
+test('estado: --cambios marca FUERA un cambio a mano sobre la salida de verificar', () => {
+  const { raiz, cambios } = repoConBuild('mano')
+  assert.match(cambios().salida, /^ALCANCE: OK$/m)
+  fs.writeFileSync(path.join(raiz, 'dist/x.js'), 'a mano\n')
+  const c = cambios()
+  assert.match(c.salida, /^ {2}✗ M dist\/x\.js {3}← FUERA DE ALCANCE$/m)
+  assert.doesNotMatch(c.salida, /salida de verificar/)
+  assert.match(c.salida, /^ALCANCE: FUERA \(1\)$/m)
+})
+
+test('estado: --cambios compacto con ALCANCE OK', () => {
+  const raiz = repo('compacto', { 'src/a.ts': 'a\n', 'src/b.ts': 'b\n', 'docs/x.md': 'x\n' })
+  temporales.push(raiz)
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
+  fs.writeFileSync(path.join(raiz, 'src/b.ts'), 'b2\n')
+  fs.writeFileSync(path.join(raiz, 'docs/x.md'), 'x2\n')
+  const c = estadoEn(raiz, ['--cambios', sha, '--permitidos', 'src/**,docs/x.md']).salida
+  assert.match(c, /^CAMBIOS desde \w+ \(3\): (docs\/ 1 · src\/ 2|src\/ 2 · docs\/ 1)$/m)
+  assert.match(c, /^ALCANCE: OK$/m)
+  assert.doesNotMatch(c, /^ {2}[✓✗~]/m)
+  assert.equal(c.trimEnd().split('\n').filter((l) => /^(CAMBIOS|ALCANCE)/.test(l)).length, 2)
+})
+
+test('estado: --cambios compacto nombra lo que solo está en el registro', () => {
+  const raiz = repo('compacto-registro', { 'src/a.ts': 'a\n' })
+  temporales.push(raiz)
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  const desde = new Date(Date.now() - 60_000).toISOString()
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
+  // Un Edit del ejecutor que no dejó cambio en git (sin efecto o ruta ignorada).
+  const fila = { t: new Date().toISOString(), rol: 'ejecutor', herramienta: 'Edit', objetivo: 'src/b.ts', decision: 'permitido' }
+  fs.mkdirSync(path.dirname(registroDe(raiz)), { recursive: true })
+  fs.appendFileSync(registroDe(raiz), JSON.stringify(fila) + '\n')
+  try {
+    const c = estadoEn(raiz, ['--cambios', sha, '--desde', desde, '--permitidos', 'src/**']).salida
+    assert.match(c, /^CAMBIOS desde \w+ \(2\): src\/ 1 · solo en el registro 1$/m)
+    assert.match(c, /^ {2}✓ · src\/b\.ts {3}← solo en el registro: /m)
+    assert.doesNotMatch(c, /src\/a\.ts/)
+    assert.match(c, /^ALCANCE: OK$/m)
+  } finally {
+    borrarRegistro(raiz)
+  }
 })
 
 /** Corre verificar.mjs en `raiz` sin bloquear: `{ salida, codigo }` al terminar. */
@@ -1734,7 +1909,7 @@ test('estado: --cambios ignora las lecturas', () => {
     const cambios = () => spawnSync(process.execPath, [ESTADO, '--cambios', sha, '--desde', '2000-01-01T00:00:00.000Z', '--permitidos', 'src/a.ts'], { cwd: raiz, encoding: 'utf8', env }).stdout
 
     const antes = cambios()
-    assert.match(antes, /^ {2}✓ M src\/a\.ts$/m)
+    assert.match(antes, /^CAMBIOS desde \w+ \(1\): src\/ 1$/m)
     assert.match(antes, /ALCANCE: OK/)
 
     hook(raiz, 'explorador', ev(raiz, 'Read', { file_path: path.join(raiz, 'docs', 'leida.md') }))
@@ -1753,6 +1928,66 @@ test('estado: --cambios ignora las lecturas', () => {
   } finally {
     borrarRegistro(raiz)
   }
+})
+
+test('estado: listaPermitidos no parte en comas entre paréntesis', () => {
+  assert.deepEqual(listaPermitidos("src/a.ts (nuevo, sin 'use server', cliente inyectado)"), ['src/a.ts'])
+  assert.deepEqual(listaPermitidos("src/a.ts (nuevo, sin 'use server'), b/*.ts, c.md (doc, corto)"), ['src/a.ts', 'b/*.ts', 'c.md'])
+  assert.deepEqual(permitidosDe('`src/a.ts` (nuevo, sin x), README.md — índice'), ['src/a.ts', 'README.md'])
+})
+
+test('costos: problemasDe acepta viñetas y ruta:línea sin numeración', () => {
+  assert.deepEqual(problemasDe('VEREDICTO: RECHAZADO\nPROBLEMAS:\n1. uno\n2) dos\nOBSERVACIONES: x'), ['uno', 'dos'])
+  assert.deepEqual(problemasDe('PROBLEMAS:\n- a falla\n* b falla\n• c falla\nOBSERVACIONES:\n- no cuenta'), ['a falla', 'b falla', 'c falla'])
+  assert.deepEqual(problemasDe('PROBLEMAS:\nsrc/a.ts:12 — mal\nsrc/b.ts:3-5 – peor\n- src/c.ts:9 - otro\n\nOBSERVACIONES: nada'), ['src/a.ts:12 — mal', 'src/b.ts:3-5 – peor', 'src/c.ts:9 - otro'])
+  // Con numerados presentes, sus sub-viñetas no se cuentan aparte.
+  assert.deepEqual(problemasDe('PROBLEMAS:\n1. src/a.ts:1 — mal\n   - detalle\n   - otro detalle\n2. dos\nOBSERVACIONES: x'), ['src/a.ts:1 — mal', 'dos'])
+  assert.deepEqual(problemasDe('PROBLEMAS: ninguno\nOBSERVACIONES: - algo'), [])
+  assert.deepEqual(problemasDe('PROBLEMAS:\n- ninguno'), [])
+  assert.deepEqual(problemasDe('sin sección'), [])
+})
+
+test('estado: preflight avisa el contexto del proyecto por encima de 10k tokens', () => {
+  const grande = estadoCon({}, () => [], { 'CLAUDE.md': '# Reglas\n' + 'x'.repeat(40_000) })
+  assert.match(grande.salida, /^CONTEXTO DEL PROYECTO: ~11\d{3} tokens por agente \(CLAUDE\.md\)$/m)
+  assert.match(grande.salida, /^AVISO: contexto del proyecto pesado: ~\$0,28 por flujo solo en escribirlo en caché; /m)
+  assert.match(grande.salida, /^REGLAS DEL PROYECTO: .*\n^CONTEXTO DEL PROYECTO: /m)
+  assert.equal(grande.codigo, 0)
+})
+
+test('estado: preflight sin AVISO de contexto por debajo del umbral', () => {
+  const chico = estadoCon({}, () => [], { 'CLAUDE.md': 'Reglas cortas\n' })
+  assert.match(chico.salida, /^CONTEXTO DEL PROYECTO: ~\d tokens por agente \(CLAUDE\.md\)$/m)
+  assert.doesNotMatch(chico.salida, /AVISO/)
+  const ninguno = estadoCon({}, () => [])
+  assert.match(ninguno.salida, /^CONTEXTO DEL PROYECTO: ~0 tokens por agente \(ningún CLAUDE\.md ni AGENTS\.md\)$/m)
+})
+
+test('estado: contextoDelProyecto cuenta AGENTS.md solo sin CLAUDE.md y sigue los @import', () => {
+  const sinClaude = repo('contexto', { 'AGENTS.md': 'a'.repeat(350) })
+  temporales.push(sinClaude)
+  assert.deepEqual(contextoDelProyecto(sinClaude), { tokens: 100, archivos: ['AGENTS.md'] })
+
+  const conClaude = repo('contexto', { 'CLAUDE.md': 'c'.repeat(35), 'AGENTS.md': 'a'.repeat(350) })
+  temporales.push(conClaude)
+  assert.deepEqual(contextoDelProyecto(conClaude), { tokens: 10, archivos: ['CLAUDE.md'] })
+
+  const importando = repo('contexto', {
+    'CLAUDE.md': 'Ver @AGENTS.md y @docs/reglas.md, también @falta.md y `@en-codigo.md` y a@b.com\n```\n@en-bloque.md\n```\n',
+    'AGENTS.md': 'a'.repeat(350),
+    'docs/reglas.md': 'Sigue @otra.md y vuelve a @../CLAUDE.md',
+    'docs/otra.md': 'o'.repeat(70),
+    'en-codigo.md': 'z'.repeat(700),
+    'en-bloque.md': 'z'.repeat(700),
+  })
+  temporales.push(importando)
+  const { tokens, archivos } = contextoDelProyecto(importando)
+  assert.deepEqual(archivos, ['CLAUDE.md', 'AGENTS.md', 'docs/reglas.md', 'docs/otra.md'])
+  const bytes = ['CLAUDE.md', 'AGENTS.md', 'docs/reglas.md', 'docs/otra.md'].reduce((s, a) => s + fs.statSync(path.join(importando, a)).size, 0)
+  assert.equal(tokens, Math.round(bytes / 3.5))
+
+  const importado = estadoEn(importando, [])
+  assert.match(importado.salida, /^CONTEXTO DEL PROYECTO: ~\d+ tokens por agente \(CLAUDE\.md, AGENTS\.md, docs\/reglas\.md, docs\/otra\.md\)$/m)
 })
 
 test.after(() => {

@@ -44,7 +44,7 @@ import path from 'node:path'
 import { execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, registroDe, flujoDe, arbolDe, configDe, coincide, relativaAlRepo, rutaNativa, RAIZ } from './guardia.mjs'
-import { pasosDe, ultimaVerde, vivo } from './verificar.mjs'
+import { pasosDe, ultimaVerde, vivo, salidasDe, cambiosDe } from './verificar.mjs'
 import { metricasDelFlujo, precioDe, resumenDeCosto, resumenDeVeredictos } from './costos.mjs'
 
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
@@ -69,11 +69,19 @@ const EDICIONES = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
 
 /**
  * `"a.ts, src/routeTree.gen.ts (generado) ,b/*.ts"` → `['a.ts', 'src/routeTree.gen.ts', 'b/*.ts']`.
+ * Solo parte en las comas fuera de paréntesis: `"src/a.ts (nuevo, sin 'use server')"` es una sola ruta, `src/a.ts`.
  * Una ruta absoluta dentro del repo pasa a relativa; una de fuera queda tal cual (y caerá fuera de alcance).
  */
 export function listaPermitidos(texto) {
-  return String(texto ?? '')
-    .split(',')
+  const partes = ['']
+  let profundidad = 0
+  for (const c of String(texto ?? '')) {
+    if (c === '(') profundidad++
+    else if (c === ')') profundidad = Math.max(0, profundidad - 1)
+    if (c === ',' && profundidad === 0) partes.push('')
+    else partes[partes.length - 1] += c
+  }
+  return partes
     .map((s) => s.replace(/\s*\([^)]*\)\s*$/, '').trim().replace(/\\/g, '/').replace(/^\.\//, ''))
     .filter(Boolean)
     .map((p) => {
@@ -664,6 +672,75 @@ function autoprueba() {
   }
 }
 
+const BYTES_POR_TOKEN = 3.5
+const TOPE_IMPORTS = 5
+const UMBRAL_CONTEXTO = 10_000
+// Agentes típicos de un flujo que escriben el contexto del proyecto en caché: [modelo, escritura, cuántos].
+// Explorador (Haiku), planificador y revisión final (Opus), revisor-plan y 3 ejecutores (Sonnet), todos con caché de 5 min;
+// el orquestador (Sonnet) la escribe con 1 h.
+const AGENTES_TIPICOS = [
+  ['claude-haiku-5-5', 'escritura5m', 1],
+  ['claude-opus-5-5', 'escritura5m', 2],
+  ['claude-sonnet-5-5', 'escritura5m', 4],
+  ['claude-sonnet-5-5', 'escritura1h', 1],
+]
+
+/** Rutas `@ruta` que importa un CLAUDE.md, fuera de bloques ``` y de `código`. */
+function importsDe(texto) {
+  const limpio = texto.replace(/^(```|~~~)[\s\S]*?^\1[^\n]*$/gm, '').replace(/`[^`\n]*`/g, '')
+  return [...limpio.matchAll(/(?:^|\s)@(\S+)/g)].map((m) => m[1].replace(/[.,;:)\]]+$/, '')).filter(Boolean)
+}
+
+/**
+ * Lo que Claude Code carga como instrucciones del proyecto en cada agente: CLAUDE.md, .claude/CLAUDE.md y CLAUDE.local.md de
+ * la raíz, más los `@ruta` que importen (relativos al archivo que importa, `~/` es la carpeta del usuario; hasta 5 niveles,
+ * sin repetir, saltando los que no existen). AGENTS.md cuenta si no hay ningún CLAUDE.md (supuesto tomado de lo observado:
+ * Claude Code lo cargó como instrucciones del proyecto; no está confirmado que lo cargue junto a un CLAUDE.md) o si
+ * algún archivo cargado lo importa. Tokens ≈ bytes / 3,5. `{ tokens, archivos }`, con `archivos` relativos a la raíz.
+ */
+export function contextoDelProyecto(raiz) {
+  const raices = ['CLAUDE.md', path.join('.claude', 'CLAUDE.md'), 'CLAUDE.local.md'].map((r) => path.join(raiz, r))
+  const hayClaude = raices.slice(0, 2).some((r) => fs.existsSync(r))
+  if (!hayClaude) raices.push(path.join(raiz, 'AGENTS.md'))
+  const vistos = new Set()
+  const archivos = []
+  let bytes = 0
+  const cargar = (archivo, nivel) => {
+    const clave = path.resolve(archivo)
+    if (vistos.has(clave)) return
+    vistos.add(clave)
+    let buffer
+    try {
+      if (!fs.statSync(clave).isFile()) return
+      buffer = fs.readFileSync(clave)
+    } catch {
+      return
+    }
+    bytes += buffer.length
+    const rel = path.relative(raiz, clave)
+    archivos.push(rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.replace(/\\/g, '/') : clave.replace(/\\/g, '/'))
+    if (nivel >= TOPE_IMPORTS) return
+    for (const ruta of importsDe(buffer.toString('utf8'))) {
+      const destino = ruta.startsWith('~/') ? path.join(os.homedir(), ruta.slice(2)) : path.resolve(path.dirname(clave), ruta)
+      cargar(destino, nivel + 1)
+    }
+  }
+  for (const r of raices) cargar(r, 0)
+  return { tokens: Math.round(bytes / BYTES_POR_TOKEN), archivos }
+}
+
+/** Líneas del preflight sobre el contexto del proyecto: siempre `CONTEXTO DEL PROYECTO`, y un `AVISO` si pasa de 10.000 tokens. */
+function lineasDelProyecto(raiz) {
+  const { tokens, archivos } = contextoDelProyecto(raiz)
+  const lineas = [`CONTEXTO DEL PROYECTO: ~${tokens} tokens por agente (${archivos.length ? archivos.join(', ') : 'ningún CLAUDE.md ni AGENTS.md'})`]
+  if (tokens > UMBRAL_CONTEXTO) {
+    const porMillon = AGENTES_TIPICOS.reduce((s, [modelo, escritura, n]) => s + n * (precioDe(modelo)?.[escritura] ?? 0), 0)
+    const usd = ((tokens * porMillon) / 1e6).toFixed(2).replace('.', ',')
+    lineas.push(`AVISO: contexto del proyecto pesado: ~$${usd} por flujo solo en escribirlo en caché; acórtalo o mueve lo largo a archivos que se lean a demanda`)
+  }
+  return lineas
+}
+
 function preflight(forzar) {
   const desde = new Date().toISOString()
   const rama = git(['rev-parse', '--abbrev-ref', 'HEAD'], { opcional: true })?.trim() ?? '?'
@@ -708,6 +785,7 @@ function preflight(forzar) {
   console.log(`FLUJO: ${flujo}`)
   console.log(mapa)
   console.log(`REGLAS DEL PROYECTO: ${reglas ?? 'ninguna (no hay .claude/implementador/ ni .claude/implementador.md; rigen CLAUDE.md y las reglas comunes)'}`)
+  for (const linea of lineasDelProyecto(RAIZ)) console.log(linea)
   console.log(`CONFIG: ${config.archivo ? '.claude/implementador.json' : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
   console.log(`VERIFICACIÓN (${origen}): ${pasos.length ? pasos.map((p) => p.cmd).join(' → ') : 'SIN PASOS'}`)
   if (preparada) console.log(`VERIFICACIÓN INICIAL: ${lanzarInicial(pasos.length > 0)}`)
@@ -830,13 +908,49 @@ function reversion(base, restaurar, borrar, aMano) {
 }
 
 /**
- * Qué cambió desde `base` y qué cae fuera de `permitidos`. Con muchos archivos dentro del alcance, van agrupados
- * por carpeta; lo de fuera y lo que solo está en el registro, siempre uno por uno. En el cierre (`paso` 7) agrega `REVERSIÓN`.
+ * Lo que dejó `verificar.mjs` y sigue igual en `ahora`: `Map` de ruta (en minúsculas en Windows) a `{ paso, generado }`.
+ * Cuenta una salida de la misma ruta y el mismo blob, anotada desde `desde` (si hay). Un cambio a mano posterior
+ * tiene otro blob y no entra. Si no se puede comparar, queda vacío (todo lo de fuera sigue siendo FUERA).
+ */
+function salidasVigentes(base, ahora, desde, clave) {
+  const vigentes = new Map()
+  try {
+    const inicio = desde ? Date.parse(desde) : Number.NaN
+    const salidas = salidasDe(RAIZ).filter((s) => !(inicio > Date.parse(s.t)))
+    if (!salidas.length) return vigentes
+    const blobs = new Map(cambiosDe(RAIZ, base, ahora).map((c) => [clave(c.ruta), c.blob]))
+    for (const s of salidas) {
+      if (blobs.get(clave(s.ruta)) === s.blob) vigentes.set(clave(s.ruta), { paso: String(s.paso ?? 'verificar'), generado: s.generado === true })
+    }
+  } catch {
+    // Sin la comparación, nada se perdona: todo lo de fuera sale FUERA.
+  }
+  return vigentes
+}
+
+/** Las líneas de la salida de verificar fuera de los permitidos: una por archivo, o por carpeta si pasan de `TOPE_CAMBIOS`. */
+function lineasDeSalidas(salidas) {
+  const nota = (lista) => {
+    const pasos = [...new Set(lista.flatMap((s) => s.paso.split(', ')))].join(', ')
+    return `(salida de verificar: ${pasos}${lista.every((s) => s.generado) ? '' : ', no generado'})`
+  }
+  if (salidas.length <= TOPE_CAMBIOS) return salidas.map((s) => `  ~ ${s.estado} ${s.ruta}   ← ${nota([s])}`)
+  const porRuta = new Map(salidas.map((s) => [s.ruta, s]))
+  return agruparPorCarpeta(salidas.map((s) => s.ruta)).map((g) => `  ~ ${g.carpeta} — ${g.rutas.length} archivo(s)   ← ${nota(g.rutas.map((r) => porRuta.get(r)))}`)
+}
+
+/**
+ * Qué cambió desde `base` y qué cae fuera de `permitidos`. Con permitidos, nada fuera y sin cerrar, va en una línea
+ * `CAMBIOS` agrupada por carpeta (más lo que solo está en el registro, uno por uno); si no, con muchos archivos
+ * dentro del alcance van agrupados por carpeta, y lo de fuera y lo que solo está en el registro, uno por uno. Lo que
+ * dejó `verificar.mjs` fuera de los permitidos no es FUERA.
+ * En el cierre (`paso` 7) agrega `REVERSIÓN`.
  */
 function cambios(base, desde, permitidos, paso, tokens, resultado) {
   const ahora = foto(permitidos)
   const mapa = new Map()
   const clave = (r) => (WIN ? r.toLowerCase() : r)
+  const vigentes = salidasVigentes(base, ahora, desde, clave)
   for (const linea of git(['diff', '--name-status', '--no-renames', base, ahora]).split('\n')) {
     const m = /^([A-Z])\d*\t(.+)$/.exec(linea.trim())
     if (m) mapa.set(clave(m[2]), { estado: m[1], ruta: m[2], soloRegistro: false })
@@ -856,8 +970,16 @@ function cambios(base, desde, permitidos, paso, tokens, resultado) {
   const restaurar = []
   const borrar = []
   const aMano = []
+  const deVerificar = []
   for (const c of lista) {
     const dentro = enAlcance(c.ruta, permitidos)
+    const salida = !dentro && !c.soloRegistro ? vigentes.get(clave(c.ruta)) : undefined
+    if (salida) {
+      deVerificar.push({ ...c, ...salida })
+      if (c.estado === 'A') borrar.push(c.ruta)
+      else restaurar.push(c.ruta)
+      continue
+    }
     if (!dentro) fuera++
     else if (c.soloRegistro) aMano.push(c.ruta)
     else (c.estado === 'A' ? borrar : restaurar).push(c.ruta)
@@ -870,18 +992,27 @@ function cambios(base, desde, permitidos, paso, tokens, resultado) {
     if (dentro && !nota) agrupables.push(c)
     lineas.push({ texto: `  ${dentro ? marcaDentro : '✗'} ${c.estado} ${c.ruta}${nota ? `   ← ${nota}` : ''}`, suelta: !dentro || Boolean(nota) })
   }
-  console.log(`CAMBIOS desde ${corto(base)} (${lista.length}):`)
-  if (agrupables.length <= TOPE_CAMBIOS) for (const l of lineas) console.log(l.texto)
-  else {
-    const porRuta = new Map(agrupables.map((c) => [c.ruta, c]))
-    for (const g of agruparPorCarpeta(agrupables.map((c) => c.ruta))) {
-      const cuenta = {}
-      for (const r of g.rutas) cuenta[porRuta.get(r).estado] = (cuenta[porRuta.get(r).estado] ?? 0) + 1
-      const detalle = Object.entries(cuenta).map(([e, n]) => `${e} ${n}`).join(', ')
-      console.log(`  ${marcaDentro} ${g.carpeta} — ${g.rutas.length} archivo(s) (${detalle})`)
-    }
+  if (permitidos.length && !fuera && paso !== 7) {
+    const partes = agruparPorCarpeta(agrupables.map((c) => c.ruta)).map((g) => `${g.carpeta} ${g.rutas.length}`)
+    if (deVerificar.length) partes.push(`salida de verificar ${deVerificar.length}`)
+    if (aMano.length) partes.push(`solo en el registro ${aMano.length}`)
+    console.log(`CAMBIOS desde ${corto(base)} (${lista.length})${partes.length ? `: ${partes.join(' · ')}` : ''}`)
     for (const l of lineas) if (l.suelta) console.log(l.texto)
+  } else {
+    console.log(`CAMBIOS desde ${corto(base)} (${lista.length}):`)
+    if (agrupables.length <= TOPE_CAMBIOS) for (const l of lineas) console.log(l.texto)
+    else {
+      const porRuta = new Map(agrupables.map((c) => [c.ruta, c]))
+      for (const g of agruparPorCarpeta(agrupables.map((c) => c.ruta))) {
+        const cuenta = {}
+        for (const r of g.rutas) cuenta[porRuta.get(r).estado] = (cuenta[porRuta.get(r).estado] ?? 0) + 1
+        const detalle = Object.entries(cuenta).map(([e, n]) => `${e} ${n}`).join(', ')
+        console.log(`  ${marcaDentro} ${g.carpeta} — ${g.rutas.length} archivo(s) (${detalle})`)
+      }
+      for (const l of lineas) if (l.suelta) console.log(l.texto)
+    }
   }
+  for (const l of lineasDeSalidas(deVerificar)) console.log(l)
   const negados = filas.filter((f) => f.decision === 'negado')
   if (negados.length) {
     console.log(`GUARDIA: ${negados.length} negación(es) desde ${desde}:`)
