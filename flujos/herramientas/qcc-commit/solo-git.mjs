@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Guardia PreToolUse del agente qcc-generador-commit: solo deja pasar git status, diff, log y show simples.
+// La única opción global permitida es `-c core.quotePath=false`, para ver las rutas con tildes sin escapar.
 // Lee el evento por stdin y, si el comando no se permite, imprime un deny. No escribe registros.
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const WIN = process.platform === 'win32'
 const SUBCOMANDOS = ['status', 'diff', 'log', 'show']
+const SIN_ESCAPAR = /^core\.quotepath=false$/i
 // Saltos de línea, operadores de shell, llaves (bash las expande) y comodines (globs).
 const METACARACTERES = /[\n\r;&|<>`$(){}*?[]/
 // Opciones largas que escriben archivos o ejecutan programas.
@@ -37,8 +39,9 @@ export function motivoDe(comando) {
   if (METACARACTERES.test(comando)) return 'el comando tiene saltos de línea o metacaracteres de shell'
   const tokens = comando.trim().split(/\s+/)
   if (tokens[0] !== 'git') return 'solo se permite el programa git'
-  if (!SUBCOMANDOS.includes(tokens[1])) return 'solo se permiten los subcomandos status, diff, log y show, sin opciones antes del subcomando'
-  for (const crudo of tokens.slice(2)) {
+  const sub = tokens[1] === '-c' && SIN_ESCAPAR.test(tokens[2] ?? '') ? 3 : 1
+  if (!SUBCOMANDOS.includes(tokens[sub])) return 'solo se permiten los subcomandos status, diff, log y show, sin más opción antes del subcomando que -c core.quotePath=false'
+  for (const crudo of tokens.slice(sub + 1)) {
     const token = crudo.replace(/['"\\]/g, '')
     if (esOpcionProhibida(token)) return `la opción ${token} no se permite`
   }
@@ -61,7 +64,7 @@ async function main() {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
-      permissionDecisionReason: `Guardia /qcc-commit: ${motivo}. Solo se permiten git status, diff, log y show simples.`,
+      permissionDecisionReason: `Guardia /qcc-commit: ${motivo}. Solo se permiten git status, diff, log y show simples, con -c core.quotePath=false como única opción global.`,
     },
   }))
 }

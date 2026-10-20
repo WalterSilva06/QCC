@@ -16,6 +16,9 @@ const PERMITIDOS = [
   'git log -8 --format=%s',
   'git show --stat HEAD',
   '  git status  ',
+  'git -c core.quotePath=false status --short',
+  'git -c core.quotepath=false status --short -uall -- src/',
+  'git -c core.quotePath=false diff -- "diseño.md"',
 ]
 
 const NEGADOS = [
@@ -30,6 +33,14 @@ const NEGADOS = [
   ['variable antes de git', 'GIT_DIR=x git status'],
   ['-c global', 'git -c core.pager=x log'],
   ['-C global', 'git -C .. status'],
+  ['quotePath=true', 'git -c core.quotePath=true status'],
+  ['otra clave parecida', 'git -c corexquotePath=false status'],
+  ['quotePath entre comillas', 'git -c "core.quotePath=false" status'],
+  ['quotePath sin espacio', 'git -ccore.quotePath=false status'],
+  ['quotePath sin subcomando', 'git -c core.quotePath=false'],
+  ['quotePath con push', 'git -c core.quotePath=false push'],
+  ['quotePath y otro -c', 'git -c core.quotePath=false -c core.pager=x log'],
+  ['quotePath con --output', 'git -c core.quotePath=false diff --output=f'],
   ['punto y coma', 'git status; rm x'],
   ['&&', 'git status && x'],
   ['pipe', 'git status | x'],
