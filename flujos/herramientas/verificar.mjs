@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Escalera de verificación de los flujos /implementador, para cualquier proyecto.
+// Escalera de verificación de los flujos /qcc-implementador, para cualquier proyecto.
 //
 // Los pasos salen de `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, `.claude/implementador.json`) (`"verificar": [{ "nombre", "cmd", "timeoutSeg"? }]`,
 // en orden). Sin esa clave se detectan:

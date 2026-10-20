@@ -279,7 +279,7 @@ function versionado(rel, raiz) {
   return versionados.get(clave)
 }
 
-// El resto de `.claude/` (reglas y config de /implementador) se edita si el plan lo permite.
+// El resto de `.claude/` (reglas y config de /qcc-implementador) se edita si el plan lo permite.
 const CLAUDE_BLINDADO = /^\.claude\/(settings(\.local)?\.json$|agents(\/|$))/i
 const ARCHIVO_ENV = /(^|\/)\.env(\.[^/]+)?$/i
 const ENV_PLANTILLA = /\.env\.(example|sample|template|dist)$/i

@@ -1,4 +1,4 @@
-// Casos de la guardia, del chequeo de alcance, de estado y de verificar de /implementador.
+// Casos de la guardia, del chequeo de alcance, de estado y de verificar de /qcc-implementador.
 // Correr: node --test ~/.claude/flujos/guardia.test.mjs
 //
 // Arma dos repos de prueba en el temporal: uno con `.claude/implementador.json` estricto (nombre viejo, que se
