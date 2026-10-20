@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Estado git del flujo /implementador (nivel usuario: sirve para
+// Estado git del flujo /qcc-implementador (nivel usuario: sirve para
 // cualquier proyecto con git). El proyecto es el repo que contiene el directorio actual.
 //
 //   node ~/.claude/flujos/estado.mjs [--paso <n>] [--forzar]  preflight + foto global; abre la carpeta del flujo
@@ -120,13 +120,13 @@ function foto(forzar = []) {
   const arbol = arbolDe(RAIZ, forzar)
   const env = {
     ...process.env,
-    GIT_AUTHOR_NAME: 'implementador',
-    GIT_AUTHOR_EMAIL: 'implementador@local',
-    GIT_COMMITTER_NAME: 'implementador',
-    GIT_COMMITTER_EMAIL: 'implementador@local',
+    GIT_AUTHOR_NAME: 'qcc-implementador',
+    GIT_AUTHOR_EMAIL: 'qcc-implementador@local',
+    GIT_COMMITTER_NAME: 'qcc-implementador',
+    GIT_COMMITTER_EMAIL: 'qcc-implementador@local',
   }
   const head = git(['rev-parse', '--verify', '-q', 'HEAD'], { opcional: true })?.trim()
-  return git(['commit-tree', arbol, ...(head ? ['-p', head] : []), '-m', 'implementador: foto del árbol'], { env }).trim()
+  return git(['commit-tree', arbol, ...(head ? ['-p', head] : []), '-m', 'qcc-implementador: foto del árbol'], { env }).trim()
 }
 
 function exigirBase(base) {
@@ -401,7 +401,7 @@ export function permitidosDe(valor) {
     .filter((p) => p && !/^(ninguno|nada)$/i.test(p))
 }
 
-/** Criterios que `criticos` (de `.claude/implementador.json`) pide para `ruta`: los fijos y los que dependen de una condición. */
+/** Criterios que `criticos` (de `.claude/qcc-implementador.json`) pide para `ruta`: los fijos y los que dependen de una condición. */
 export function criticosDe(ruta, reglas) {
   const fijos = new Set()
   const condicionales = []
@@ -524,7 +524,7 @@ function resumirPlan(texto, destino) {
     console.log(`S${s.n} · ${s.objetivo} · Crítica: ${critica ?? '(falta)'} · permitidos: ${permitidos.join(', ') || '(faltan)'} → ${archivo}`)
   }
   const pedidos = [...porCriterio.keys()].sort((a, b) => a - b)
-  if (!criticos.length) console.log('RUTAS CRÍTICAS: el proyecto no declara «criticos» en .claude/implementador.json')
+  if (!criticos.length) console.log(`RUTAS CRÍTICAS: el proyecto no declara «criticos» en ${configDe(RAIZ).nombre}`)
   else console.log(`RUTAS CRÍTICAS: ${pedidos.length ? pedidos.map((n) => `#${n} (${porCriterio.get(n)})`).join(', ') : 'ninguna'}`)
   if (pedidos.length && clasificacion !== null) {
     const citados = new Set([...clasificacion.matchAll(/#(\d+)/g)].map((m) => Number(m[1])))
@@ -653,19 +653,21 @@ function autoprueba() {
       }
     }
     for (const agente of ['ejecutor', 'revisor']) {
-      const definicion = fs.readFileSync(path.join(AGENTES, `${agente}.md`), 'utf8')
-      if (!definicion.includes('guardia.mjs')) return `FALLA (~/.claude/agents/${agente}.md no declara el hook)`
+      const definicion = fs.readFileSync(path.join(AGENTES, `qcc-${agente}.md`), 'utf8')
+      if (!definicion.includes('guardia.mjs')) return `FALLA (~/.claude/agents/qcc-${agente}.md no declara el hook)`
     }
     for (const agente of ['explorador', 'planificador', 'revisor-plan', 'ejecutor', 'revisor']) {
-      const propio = path.join(RAIZ, '.claude', 'agents', `${agente}.md`)
+      const viejo = path.join(RAIZ, '.claude', 'agents', `${agente}.md`)
+      if (fs.existsSync(viejo)) avisos.push(`.claude/agents/${agente}.md ya no redefine nada: los agentes se llaman qcc-${agente}`)
+      const propio = path.join(RAIZ, '.claude', 'agents', `qcc-${agente}.md`)
       if (!fs.existsSync(propio)) continue
       // La definición del proyecto manda sobre la global: sin el hook, ese agente corre sin guardia.
       if ((agente === 'ejecutor' || agente === 'revisor') && !fs.readFileSync(propio, 'utf8').includes('guardia.mjs')) {
-        return `FALLA (el proyecto redefine ${agente} en .claude/agents/${agente}.md sin la guardia)`
+        return `FALLA (el proyecto redefine qcc-${agente} en .claude/agents/qcc-${agente}.md sin la guardia)`
       }
-      avisos.push(`el proyecto redefine ${agente} (.claude/agents/${agente}.md) y manda sobre el global`)
+      avisos.push(`el proyecto redefine qcc-${agente} (.claude/agents/qcc-${agente}.md) y manda sobre el global`)
     }
-    if (configDe(RAIZ).invalido) avisos.push('.claude/implementador.json no es JSON válido: rigen los valores por defecto')
+    if (configDe(RAIZ).invalido) avisos.push(`${configDe(RAIZ).nombre} no es JSON válido: rigen los valores por defecto`)
     return avisos.length ? `OK con avisos: ${avisos.join(' · ')}` : 'OK'
   } catch (e) {
     return `FALLA (${e.message})`
@@ -741,6 +743,19 @@ function lineasDelProyecto(raiz) {
   return lineas
 }
 
+/** Reglas del proyecto, en este orden y solo la primera que exista: la carpeta o el `.md` con el nombre nuevo y luego los viejos. */
+const REGLAS_CANDIDATAS = [
+  { ruta: '.claude/qcc-implementador/', carpeta: true },
+  { ruta: '.claude/qcc-implementador.md', carpeta: false },
+  { ruta: '.claude/implementador/', carpeta: true },
+  { ruta: '.claude/implementador.md', carpeta: false },
+]
+
+/** `{ ruta, carpeta }` de las reglas que rigen en `raiz`, o `null` si no hay ninguna. */
+export function reglasDe(raiz) {
+  return REGLAS_CANDIDATAS.find((c) => fs.existsSync(path.join(raiz, c.ruta.replace(/\/$/, '')))) ?? null
+}
+
 function preflight(forzar) {
   const desde = new Date().toISOString()
   const rama = git(['rev-parse', '--abbrev-ref', 'HEAD'], { opcional: true })?.trim() ?? '?'
@@ -748,11 +763,7 @@ function preflight(forzar) {
   const sucios = git(['status', '--porcelain=v1', '--untracked-files=all']).split('\n').filter(Boolean)
   const base = foto()
   const config = configDe(RAIZ)
-  const reglas = fs.existsSync(path.join(RAIZ, '.claude', 'implementador'))
-    ? '.claude/implementador/'
-    : fs.existsSync(path.join(RAIZ, '.claude', 'implementador.md'))
-      ? '.claude/implementador.md'
-      : null
+  const reglas = reglasDe(RAIZ)
   const { pasos, origen } = pasosDe(RAIZ)
   let flujo = FLUJO
   let mapa = 'MAPA: ninguno (la carpeta del flujo no se preparó)'
@@ -784,30 +795,32 @@ function preflight(forzar) {
   console.log(`BASE_GLOBAL=${base} DESDE_GLOBAL=${desde}`)
   console.log(`FLUJO: ${flujo}`)
   console.log(mapa)
-  console.log(`REGLAS DEL PROYECTO: ${reglas ?? 'ninguna (no hay .claude/implementador/ ni .claude/implementador.md; rigen CLAUDE.md y las reglas comunes)'}`)
+  console.log(`REGLAS DEL PROYECTO: ${reglas?.ruta ?? 'ninguna (no hay .claude/qcc-implementador/ ni .claude/qcc-implementador.md; rigen CLAUDE.md y las reglas comunes)'}`)
   for (const linea of lineasDelProyecto(RAIZ)) console.log(linea)
-  console.log(`CONFIG: ${config.archivo ? '.claude/implementador.json' : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
+  console.log(`CONFIG: ${config.archivo ? config.nombre : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
   console.log(`VERIFICACIÓN (${origen}): ${pasos.length ? pasos.map((p) => p.cmd).join(' → ') : 'SIN PASOS'}`)
   if (preparada) console.log(`VERIFICACIÓN INICIAL: ${lanzarInicial(pasos.length > 0)}`)
   console.log(`GUARDIA: ${autoprueba()}`)
 }
 
-const SIN_REGLAS = '(Este proyecto no tiene .claude/implementador/ ni .claude/implementador.md: rigen las reglas comunes, el CLAUDE.md del proyecto y lo que leas del repo.)'
+const SIN_REGLAS = '(Este proyecto no tiene .claude/qcc-implementador/ ni .claude/qcc-implementador.md: rigen las reglas comunes, el CLAUDE.md del proyecto y lo que leas del repo.)'
 
 /**
  * Las reglas del proyecto que lee el orquestador, encabezadas por la línea `REGLAS DEL PROYECTO` que llevan los despachos:
- * los archivos que haya de `.claude/implementador/`, o `.claude/implementador.md`.
+ * los archivos que haya de la primera que exista entre `.claude/qcc-implementador/`, `.claude/qcc-implementador.md`,
+ * `.claude/implementador/` y `.claude/implementador.md`.
  */
 function imprimirReglas() {
-  const carpeta = path.join(RAIZ, '.claude', 'implementador')
-  if (fs.existsSync(carpeta)) {
+  const reglas = reglasDe(RAIZ)
+  if (reglas?.carpeta) {
+    const carpeta = path.join(RAIZ, reglas.ruta)
     const partes = ['clasificacion.md', 'buscar.md', 'planificar.md'].map((a) => leerTexto(path.join(carpeta, a))?.trimEnd()).filter((t) => t !== undefined)
-    console.log('REGLAS DEL PROYECTO: .claude/implementador/\n')
+    console.log(`REGLAS DEL PROYECTO: ${reglas.ruta}\n`)
     console.log(partes.length ? partes.join('\n\n') : '(no tiene clasificacion.md, buscar.md ni planificar.md: rigen las reglas comunes y el CLAUDE.md del proyecto.)')
     return
   }
-  const unico = leerTexto(path.join(RAIZ, '.claude', 'implementador.md'))?.trimEnd()
-  console.log(`REGLAS DEL PROYECTO: ${unico === undefined ? 'ninguna' : '.claude/implementador.md'}\n`)
+  const unico = reglas ? leerTexto(path.join(RAIZ, reglas.ruta))?.trimEnd() : undefined
+  console.log(`REGLAS DEL PROYECTO: ${unico === undefined ? 'ninguna' : reglas.ruta}\n`)
   console.log(unico ?? SIN_REGLAS)
 }
 

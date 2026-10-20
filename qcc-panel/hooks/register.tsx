@@ -27,6 +27,7 @@ import {
   nodos,
   nombreOrquestador,
   resumenFlujo,
+  rolDeAgente,
   senalAlTerminar,
   senalDeHerramienta,
   sumarGasto,
@@ -79,7 +80,7 @@ import {
 } from './semana'
 import type { NivelEsfuerzo, Registro, Uso } from './semana'
 
-const PANEL = 'panel-uso'
+const PANEL = 'qcc-panel'
 const COLUMNAS = 40
 const TICK_MS = 30_000
 const SCROLL_MS = 150
@@ -87,20 +88,20 @@ const SCROLL_MS = 150
 /** `key` de la fila de pestañas, para apuntarle con `$.ui.scroll` al cambiar de pestaña. */
 const CLAVE_PESTANAS = 'pestanas'
 
-const medida = atom({ plugin: 'panel-uso', key: 'medida' } as const, null)
-const esfuerzo = atom({ plugin: 'panel-uso', key: 'esfuerzo' } as const, null)
-const ahora = atom({ plugin: 'panel-uso', key: 'ahora' } as const, 0)
-const desglose = atom({ plugin: 'panel-uso', key: 'desglose' } as const, null)
-const precisando = atom({ plugin: 'panel-uso', key: 'precisando' } as const, false)
-const semana = atom({ plugin: 'panel-uso', key: 'semana' } as const, null)
-const sesion = atom({ plugin: 'panel-uso', key: 'sesion' } as const, null)
-const pestana = atom({ plugin: 'panel-uso', key: 'pestana' } as const, 'inicio')
-const actividad = atom({ plugin: 'panel-uso', key: 'actividad' } as const, {})
-const flujo = atom({ plugin: 'panel-uso', key: 'flujo' } as const, null)
-const filasExploradores = atom({ plugin: 'panel-uso', key: 'filasExploradores' } as const, [])
-const historial = atom({ plugin: 'panel-uso', key: 'historial' } as const, null)
-const home = atom({ plugin: 'panel-uso', key: 'home' } as const, null)
-const freno = atom({ plugin: 'panel-uso', key: 'freno' } as const, null)
+const medida = atom({ plugin: 'qcc-panel', key: 'medida' } as const, null)
+const esfuerzo = atom({ plugin: 'qcc-panel', key: 'esfuerzo' } as const, null)
+const ahora = atom({ plugin: 'qcc-panel', key: 'ahora' } as const, 0)
+const desglose = atom({ plugin: 'qcc-panel', key: 'desglose' } as const, null)
+const precisando = atom({ plugin: 'qcc-panel', key: 'precisando' } as const, false)
+const semana = atom({ plugin: 'qcc-panel', key: 'semana' } as const, null)
+const sesion = atom({ plugin: 'qcc-panel', key: 'sesion' } as const, null)
+const pestana = atom({ plugin: 'qcc-panel', key: 'pestana' } as const, 'inicio')
+const actividad = atom({ plugin: 'qcc-panel', key: 'actividad' } as const, {})
+const flujo = atom({ plugin: 'qcc-panel', key: 'flujo' } as const, null)
+const filasExploradores = atom({ plugin: 'qcc-panel', key: 'filasExploradores' } as const, [])
+const historial = atom({ plugin: 'qcc-panel', key: 'historial' } as const, null)
+const home = atom({ plugin: 'qcc-panel', key: 'home' } as const, null)
+const freno = atom({ plugin: 'qcc-panel', key: 'freno' } as const, null)
 
 /** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
@@ -787,7 +788,7 @@ export const register: Register = on => {
     let id = ''
     try {
       const agentId = (r as { agentId?: unknown }).agentId
-      if (typeof e.subagentType === 'string' && e.subagentType.trim() === AGENTE_DE_PASO.explorador.agente && typeof agentId === 'string') id = agentId
+      if (typeof e.subagentType === 'string' && rolDeAgente(e.subagentType) === AGENTE_DE_PASO.explorador.agente && typeof agentId === 'string') id = agentId
     } catch {
       // Sin el id, el explorador se anota al volver su resultado.
     }

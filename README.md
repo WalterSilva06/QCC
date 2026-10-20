@@ -7,16 +7,27 @@ Son herramientas personales, en dos partes separadas.
 
 | Parte | Carpeta | Qué es | Documentación |
 |---|---|---|---|
-| Mod | `panel-uso/` | Panel lateral con los límites de uso y cuatro pestañas: Inicio (contexto de la sesión, esfuerzo y tokens), Flujo (el paso del flujo en curso), Gasto semanal e Historial de flujos. Comandos `/uso` y `/uso carpeta`. | [MODS.md](MODS.md) |
-| Flujos | `flujos/` | `/implementador` (explora, planifica, ejecuta por subtareas y cierra con una revisión final independiente) y `/generar-commit` (mensaje y commit automáticos, en Haiku high), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
+| Mod | `qcc-panel/` | Panel lateral con los límites de uso y cuatro pestañas: Inicio (contexto de la sesión, esfuerzo y tokens), Flujo (el paso del flujo en curso), Gasto semanal e Historial de flujos. Comandos `/uso` y `/uso carpeta`. | [MODS.md](MODS.md) |
+| Flujos | `flujos/` | `/qcc-implementador` (explora, planifica, ejecuta por subtareas y cierra con una revisión final independiente) y `/qcc-commit` (mensaje y commit automáticos, en Haiku high), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
 
 ## Instalar
 
 Mod, desde la raíz del repo (detalles en [MODS.md](MODS.md#instalación)):
 
 ```
-claude plugin marketplace add <ruta del repo>\panel-uso
-claude plugin install panel-uso@mods-locales
+claude plugin marketplace add <ruta del repo>\qcc-panel
+claude plugin install qcc-panel@mods-locales
+```
+
+Migración desde la versión anterior (el plugin se llamaba `panel-uso` y los comandos `/implementador` y `/generar-commit`): desinstala el viejo, reinstala desde `qcc-panel/` y limpia lo huérfano de `~/.claude`.
+
+```
+claude plugin uninstall panel-uso@mods-locales
+claude plugin marketplace remove mods-locales
+claude plugin marketplace add <ruta del repo>\qcc-panel
+claude plugin install qcc-panel@mods-locales
+node flujos/instalar.mjs
+node flujos/instalar.mjs --limpiar
 ```
 
 Después de editar el mod, `/reload-plugins` lo vuelve a leer.
@@ -32,10 +43,10 @@ Los flujos corren desde la copia instalada en `~/.claude`: un cambio en `flujos/
 ## Verificar
 
 ```
-claude plugin validate panel-uso
-claude plugin test panel-uso
+claude plugin validate qcc-panel
+claude plugin test qcc-panel
 node --test flujos/herramientas/guardia.test.mjs
-node --test flujos/herramientas/generar-commit/solo-git.test.mjs
+node --test flujos/herramientas/qcc-commit/solo-git.test.mjs
 ```
 
 Los cuatro tienen que terminar sin errores antes de dar algo por hecho (ver [AGENTS.md](AGENTS.md#verificar)).
@@ -44,4 +55,4 @@ Los cuatro tienen que terminar sin errores antes de dar algo por hecho (ver [AGE
 
 - [AGENTS.md](AGENTS.md): reglas generales del repo para Claude (estructura, verificación y convenciones).
 - [MODS.md](MODS.md): el panel de uso.
-- [FLUJOS.md](FLUJOS.md): los flujos (`/implementador` y `/generar-commit`).
+- [FLUJOS.md](FLUJOS.md): los flujos (`/qcc-implementador` y `/qcc-commit`).

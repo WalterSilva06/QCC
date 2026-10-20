@@ -1,6 +1,6 @@
 ---
-name: generar-commit
-description: "Genera el mensaje de commit (resumen y descripción en español) de los cambios sin commit y hace el commit sin preguntar. Solo cuando el usuario escribe /generar-commit; nunca por iniciativa propia."
+name: qcc-commit
+description: "Genera el mensaje de commit (resumen y descripción en español) de los cambios sin commit y hace el commit sin preguntar. Solo cuando el usuario escribe /qcc-commit; nunca por iniciativa propia."
 argument-hint: "[por qué del cambio, opcional]"
 model: haiku
 effort: high
@@ -10,7 +10,7 @@ allowed-tools:
   - Bash(git commit -F -*)
 ---
 
-# /generar-commit
+# /qcc-commit
 
 Eres el orquestador: delegas la lectura de los cambios y haces el commit sin preguntar al usuario.
 
@@ -18,7 +18,7 @@ Eres el orquestador: delegas la lectura de los cambios y haces el commit sin pre
 
 ## Pasos
 
-1. No leas el diff tú. Despacha el agente con `subagent_type: generador-commit`, `model: "haiku"`, `run_in_background: false` y este prompt, nada más:
+1. No leas el diff tú. Despacha el agente con `subagent_type: qcc-generador-commit`, `model: "haiku"`, `run_in_background: false` y este prompt, nada más:
 
    ```
    POR QUÉ: <el «Por qué del cambio» de arriba, literal; si está vacío, «no lo dio»>

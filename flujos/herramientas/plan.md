@@ -1,8 +1,8 @@
-`.claude/implementador/` o, sin ella, `.claude/implementador.md` (reglas del proyecto) y el `CLAUDE.md` del proyecto mandan sobre este archivo.
+`.claude/qcc-implementador/` o, sin ella, `.claude/qcc-implementador.md` (reglas del proyecto; el nombre viejo `.claude/implementador/` o `.claude/implementador.md` vale de respaldo) y el `CLAUDE.md` del proyecto mandan sobre este archivo.
 
 ## 2. Clasificación
 
-CRÍTICO si se cumple **cualquiera** (cita los números en el plan; si no aplica ninguno, escribe «sin criterios»). Ante la duda, CRÍTICO. Las rutas y ejemplos concretos de cada criterio están en las reglas del proyecto y en `criticos` de `.claude/implementador.json`, si existen; al guardar el plan, `estado.mjs` avisa si una ruta de `criticos` queda sin citar.
+CRÍTICO si se cumple **cualquiera** (cita los números en el plan; si no aplica ninguno, escribe «sin criterios»). Ante la duda, CRÍTICO. Las rutas y ejemplos concretos de cada criterio están en las reglas del proyecto y en `criticos` de `.claude/qcc-implementador.json`, si existen; al guardar el plan, `estado.mjs` avisa si una ruta de `criticos` queda sin citar.
 
 1. **Seguridad y acceso:** permisos, roles, autorización, RLS/policies/grants, validación de entrada en fronteras, secretos, rate limit, clientes con privilegios elevados.
 2. **Auth y sesión:** login, registro, recuperación, tokens, cookies, OAuth, redirecciones de login.

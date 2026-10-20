@@ -1,8 +1,10 @@
-# Configurar un proyecto para /implementador
+# Configurar un proyecto para /qcc-implementador
 
 Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `package.json`, Cargo, Go o pytest) y la guardia usa sus valores por defecto. `node ~/.claude/flujos/estado.mjs` (desde el repo) muestra qué tomó.
 
-## `.claude/implementador.json`
+## `.claude/qcc-implementador.json`
+
+El nombre viejo `.claude/implementador.json` sigue valiendo de respaldo.
 
 ```jsonc
 {
@@ -47,11 +49,11 @@ Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `pa
 
 El archivo real es JSON sin comentarios. `verificar.mjs` repite desde una caché el VERDE de los últimos 30 min si el árbol y los pasos no cambiaron (`--sin-cache` lo corre igual).
 
-## `.claude/implementador/`
+## `.claude/qcc-implementador/`
 
-Reglas del proyecto en prosa. Las skills lo inyectan y los agentes lo leen. Un archivo por sección: cada agente lee solo los suyos. Sin la carpeta rige `.claude/implementador.md` con las mismas secciones. Secciones útiles:
+Reglas del proyecto en prosa. Las skills lo inyectan y los agentes lo leen. Un archivo por sección: cada agente lee solo los suyos. Sin la carpeta rige `.claude/qcc-implementador.md` con las mismas secciones. Los nombres viejos (`.claude/implementador/` y `.claude/implementador.md`) siguen valiendo de respaldo. Secciones útiles:
 
-- **`clasificacion.md`** (orquestador, planificador, revisor-plan): lo que no es una ruta de cada criterio CRÍTICO de `plan.md` §2. Las rutas van en `criticos` de `.claude/implementador.json`, donde `estado.mjs` las aplica.
+- **`clasificacion.md`** (orquestador, planificador, revisor-plan): lo que no es una ruta de cada criterio CRÍTICO de `plan.md` §2. Las rutas van en `criticos` de `.claude/qcc-implementador.json`, donde `estado.mjs` las aplica.
 - **`buscar.md`** (orquestador, explorador, planificador): carpetas que Grep no ve, dónde viven los tests, guardianes, archivos que no se leen o que solo se leen con Grep.
 - **`planificar.md`** (planificador, revisor-plan): convención de migraciones, infraestructura de tests, riesgos típicos, qué queda para el usuario.
 - **`ejecutor.md`** (ejecutor): reglas de tipos, test puntual, patrón para acotar la salida de los tests, particularidades de la verificación.

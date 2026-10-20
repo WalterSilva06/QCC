@@ -26,6 +26,7 @@ import {
   nodos,
   nombreOrquestador,
   resumenFlujo,
+  rolDeAgente,
   senalAlTerminar,
   senalDeHerramienta,
   sumarGasto,
@@ -63,9 +64,9 @@ import type { Actividad, FilaSemana, Flujo, Freno, Semana } from '../types'
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
 
 const PANE = {
-  plugin: 'panel-uso',
+  plugin: 'qcc-panel',
   component: 'Pane',
-  requestId: 'panel-uso',
+  requestId: 'qcc-panel',
   props: {
     title: 'Uso',
     isFocused: false,
@@ -1258,7 +1259,7 @@ describe('semana', () => {
     const sem = textos.indexOf('Esta semana')
     expect(textos.slice(sem).map(t => t.trimEnd())).toContain('Sonnet 5.5 low')
     expect(textos[sem + 1]).toBe('400k')
-    expect(abiertos).toEqual(['panel-uso'])
+    expect(abiertos).toEqual(['qcc-panel'])
     await ui.unmount()
   })
 
@@ -1800,18 +1801,18 @@ describe('flujo (puro)', () => {
   const bash = (command: string) => senalDeHerramienta('Bash', { command }, undefined)
   const doc = (f: Flujo | null) => (f ? `${f.estado}:${f.paso}` : 'null')
 
-  test('iniciarFlujo: solo implementador (con o sin / y prefijo)', async () => {
+  test('iniciarFlujo: solo qcc-implementador (con o sin / y prefijo)', async () => {
     const base = { paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
 
-    expect(iniciarFlujo('implementador', '')).toEqual({ ...base, nombre: 'implementador' })
-    expect(iniciarFlujo('/implementador-ligero', '')).toBeNull()
-    expect(iniciarFlujo('claude-config:implementador', '')).toEqual({ ...base, nombre: 'implementador' })
+    expect(iniciarFlujo('qcc-implementador', '')).toEqual({ ...base, nombre: 'qcc-implementador' })
+    expect(iniciarFlujo('/qcc-implementador-ligero', '')).toBeNull()
+    expect(iniciarFlujo('claude-config:qcc-implementador', '')).toEqual({ ...base, nombre: 'qcc-implementador' })
     expect(iniciarFlujo('simplify', '')).toBeNull()
-    expect(iniciarFlujo('/implementador:otra', '')).toBeNull()
+    expect(iniciarFlujo('/qcc-implementador:otra', '')).toBeNull()
     expect(iniciarFlujo('', '')).toBeNull()
     // Con la hora, el flujo y su primer tramo empiezan ahí, sin tiempos ni fin.
-    expect(iniciarFlujo('implementador', '', 5_000)).toEqual({
-      nombre: 'implementador',
+    expect(iniciarFlujo('qcc-implementador', '', 5_000)).toEqual({
+      nombre: 'qcc-implementador',
       paso: 0,
       ejecuto: false,
       estado: 'en curso',
@@ -1822,18 +1823,38 @@ describe('flujo (puro)', () => {
     })
   })
 
+  test('iniciarFlujo acepta qcc-implementador y rechaza implementador', async () => {
+    expect(iniciarFlujo('qcc-implementador', '')?.nombre).toBe('qcc-implementador')
+    expect(iniciarFlujo('/qcc:qcc-implementador', '')?.nombre).toBe('qcc-implementador')
+    expect(iniciarFlujo('implementador', '')).toBeNull()
+    expect(iniciarFlujo('/qcc:implementador', '')).toBeNull()
+    expect(PASOS).not.toHaveProperty('implementador')
+  })
+
+  test('subagent_type qcc-explorador da la misma señal que explorador', async () => {
+    for (const rol of ['explorador', 'planificador', 'revisor-plan', 'ejecutor', 'revisor']) {
+      expect(rolDeAgente(`qcc-${rol}`)).toBe(rol)
+      expect(rolDeAgente(` qcc-${rol} `)).toBe(rol)
+      expect(rolDeAgente(rol)).toBe(rol)
+      expect(senalDeHerramienta('Agent', { subagent_type: `qcc-${rol}` }, undefined)).toEqual(senalDeHerramienta('Agent', { subagent_type: rol }, undefined))
+    }
+
+    expect(senalDeHerramienta('Agent', { subagent_type: 'qcc-explorador' }, undefined)).toEqual(agente('explorador'))
+    expect(senalDeHerramienta('Agent', { subagent_type: 'qcc-' }, undefined)).toBeNull()
+  })
+
   test('iniciarFlujo: el texto del pedido no cambia el flujo', async () => {
     const base = { paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
     const relevo = '**Pedido:** RELEVO · inicio\nPEDIDO: arreglar el panel'
     const uso: Flujo['usoBase'] = { 'Opus 5.5|high|principal': [100, 10] }
 
-    // Con o sin la marca, implementador abre implementador.
+    // Con o sin la marca, qcc-implementador abre qcc-implementador.
     for (const texto of [relevo, '**Pedido:** arreglar el panel']) {
-      expect(iniciarFlujo('implementador', texto)).toEqual({ ...base, nombre: 'implementador' })
-      expect(iniciarFlujo('/claude-config:implementador', texto)).toEqual({ ...base, nombre: 'implementador' })
+      expect(iniciarFlujo('qcc-implementador', texto)).toEqual({ ...base, nombre: 'qcc-implementador' })
+      expect(iniciarFlujo('/claude-config:qcc-implementador', texto)).toEqual({ ...base, nombre: 'qcc-implementador' })
     }
 
-    expect(iniciarFlujo('implementador', relevo, 5_000, uso)).toEqual({ ...base, nombre: 'implementador', inicio: 5_000, desde: 5_000, usoBase: uso })
+    expect(iniciarFlujo('qcc-implementador', relevo, 5_000, uso)).toEqual({ ...base, nombre: 'qcc-implementador', inicio: 5_000, desde: 5_000, usoBase: uso })
   })
 
   test('senalDeHerramienta: estado.mjs con sus opciones, verificar.mjs, ~ y $HOME, y no un cat', async () => {
@@ -1885,7 +1906,7 @@ describe('flujo (puro)', () => {
 
   test('estado con --paso: manda sobre la heurística; sin marca o fuera de rango, la heurística', async () => {
     const marcado = (paso: number): Senal => ({ tipo: 'estado', modo: 'cambios', paso })
-    const f = (paso: number): Flujo => ({ nombre: 'implementador', paso, ejecuto: true, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null })
+    const f = (paso: number): Flujo => ({ nombre: 'qcc-implementador', paso, ejecuto: true, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null })
 
     expect(avanzar(f(5), marcado(6))?.paso).toBe(6)
     expect(avanzar(f(5), { tipo: 'estado', modo: 'base', paso: 5 })?.paso).toBe(5)
@@ -1909,7 +1930,7 @@ describe('flujo (puro)', () => {
       bash('node ~/.claude/flujos/estado.mjs --cambios abc --desde x --paso 7'),
     ]
 
-    let flujo = iniciarFlujo('implementador', '')
+    let flujo = iniciarFlujo('qcc-implementador', '')
     const vistos: number[] = []
 
     for (const s of senales) {
@@ -1939,7 +1960,7 @@ describe('flujo (puro)', () => {
     expect(senalDeHerramienta('AskUserQuestion', { questions: [{ header: 'Planes' }] }, undefined)).toEqual(pregunta(false))
     expect(senalDeHerramienta('AskUserQuestion', {}, undefined)).toEqual(pregunta(false))
 
-    for (const file_path of ['/repo/MODS.md', '/repo/.claude/implementador.md', 'D:\\repo\\FLUJOS.md']) {
+    for (const file_path of ['/repo/MODS.md', '/repo/.claude/qcc-implementador.md', 'D:\\repo\\FLUJOS.md']) {
       expect(senalDeHerramienta('Edit', { file_path }, undefined)).toBeNull()
       expect(senalDeHerramienta('Write', { file_path }, undefined)).toBeNull()
     }
@@ -1966,7 +1987,7 @@ describe('flujo (puro)', () => {
     expect(senalAlTerminar(verificar)).toBeNull()
   })
 
-  test('implementador CRÍTICO: de Preflight a Cierre con ciclo de corrección y revisión integral', async () => {
+  test('qcc-implementador CRÍTICO: de Preflight a Cierre con ciclo de corrección y revisión integral', async () => {
     const subtarea = [estado('base'), agente('ejecutor'), estado('cambios'), agente('revisor')]
     const secuencia = [
       estado('preflight'),
@@ -1984,11 +2005,11 @@ describe('flujo (puro)', () => {
       verificar,
     ]
 
-    expect(pasos('implementador', secuencia)).toEqual([0, 0, 1, 2, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
+    expect(pasos('qcc-implementador', secuencia)).toEqual([0, 0, 1, 2, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
   })
 
   test('planificador lleva al paso 2 y cuenta el plan', async () => {
-    const f: Flujo = { nombre: 'implementador', paso: 1, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const f: Flujo = { nombre: 'qcc-implementador', paso: 1, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
 
     const plan = avanzar(f, agente('planificador'), 1_000)
     expect(plan).toMatchObject({ paso: 2, planes: 1 })
@@ -2008,10 +2029,10 @@ describe('flujo (puro)', () => {
       pregunta(true),
     ]
 
-    expect(pasos('implementador', secuencia)).toEqual([0, 1, 2, 2, 3, 4])
+    expect(pasos('qcc-implementador', secuencia)).toEqual([0, 1, 2, 2, 3, 4])
 
     const f: Flujo = {
-      nombre: 'implementador',
+      nombre: 'qcc-implementador',
       paso: 3,
       ejecuto: false,
       planes: 1,
@@ -2034,15 +2055,15 @@ describe('flujo (puro)', () => {
     expect(avanzar(f, agente('revisor'), 1_000)).toMatchObject({ paso: 5, revisiones: { 5: 1 } })
   })
 
-  test('implementador NORMAL: sin planificador salta de Plan a Aprobación', async () => {
+  test('qcc-implementador NORMAL: sin planificador salta de Plan a Aprobación', async () => {
     expect(
-      pasos('implementador', [estado('preflight'), agente('explorador'), agenteFin('explorador'), pregunta(true), estado('base')]),
+      pasos('qcc-implementador', [estado('preflight'), agente('explorador'), agenteFin('explorador'), pregunta(true), estado('base')]),
     ).toEqual([0, 1, 2, 4, 5])
     // Una pregunta que no es el plan no mueve nada; el fin de otro agente tampoco.
-    expect(pasos('implementador', [agente('explorador'), pregunta(false), agenteFin('planificador')])).toEqual([1, 1, 1])
+    expect(pasos('qcc-implementador', [agente('explorador'), pregunta(false), agenteFin('planificador')])).toEqual([1, 1, 1])
     // El fin del explorador solo cuenta desde Exploración.
-    expect(pasos('implementador', [estado('base'), agenteFin('explorador')])).toEqual([5, 5])
-    expect(pasos('implementador', [estado('diff')])).toEqual([0])
+    expect(pasos('qcc-implementador', [estado('base'), agenteFin('explorador')])).toEqual([5, 5])
+    expect(pasos('qcc-implementador', [estado('diff')])).toEqual([0])
   })
 
   test('un verificar sin revisor antes queda en Ejecución; tras el revisor marca Verificación final y Cierre', async () => {
@@ -2060,16 +2081,16 @@ describe('flujo (puro)', () => {
     ]
 
     // El índice 3 es el verificar de una subtarea (sin revisor antes): queda en Ejecución.
-    expect(pasos('implementador', secuencia)).toEqual([5, 5, 5, 5, 5, 5, 5, 6, 7, 7])
+    expect(pasos('qcc-implementador', secuencia)).toEqual([5, 5, 5, 5, 5, 5, 5, 6, 7, 7])
   })
 
   test('el verificar y el revisor de cada subtarea quedan en Ejecución; solo el verificar tras el último revisor marca Verificación final', async () => {
     const sub = [estado('base'), agente('ejecutor'), estado('cambios'), verificar, agente('revisor')]
     const secuencia = [pregunta(true), ...sub, ...sub, verificar, agente('revisor'), estado('cambios'), verificar]
 
-    expect(pasos('implementador', secuencia)).toEqual([4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
+    expect(pasos('qcc-implementador', secuencia)).toEqual([4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
 
-    let f = iniciarFlujo('implementador', '', 0)
+    let f = iniciarFlujo('qcc-implementador', '', 0)
 
     for (const s of secuencia) f = avanzar(f, s, 1_000)
 
@@ -2094,9 +2115,9 @@ describe('flujo (puro)', () => {
       agente('revisor'),
     ]
 
-    expect(pasos('implementador', secuencia)).toEqual(Array(12).fill(5))
+    expect(pasos('qcc-implementador', secuencia)).toEqual(Array(12).fill(5))
 
-    let f = iniciarFlujo('implementador', '', 0)
+    let f = iniciarFlujo('qcc-implementador', '', 0)
 
     for (const s of secuencia) f = avanzar(f, s, 1_000)
 
@@ -2121,9 +2142,9 @@ describe('flujo (puro)', () => {
       agente('revisor'),
     ]
 
-    expect(pasos('implementador', secuencia)).toEqual([5, 5, 5, 5, 5, 6, 5, 5, 6, 6, 5, 5, 6, 6])
+    expect(pasos('qcc-implementador', secuencia)).toEqual([5, 5, 5, 5, 5, 6, 5, 5, 6, 6, 5, 5, 6, 6])
 
-    let f = iniciarFlujo('implementador', '', 0)
+    let f = iniciarFlujo('qcc-implementador', '', 0)
 
     for (const s of secuencia) f = avanzar(f, s, 1_000)
 
@@ -2145,7 +2166,7 @@ describe('flujo (puro)', () => {
       agente('revisor'),
     ]
 
-    expect(pasos('implementador', secuencia)).toEqual([5, 5, 5, 5, 5, 6, 5, 5, 5, 5, 5])
+    expect(pasos('qcc-implementador', secuencia)).toEqual([5, 5, 5, 5, 5, 6, 5, 5, 5, 5, 5])
   })
 
   test('una corrección del cierre con dos ejecutores seguidos conserva la verificación final', async () => {
@@ -2162,11 +2183,11 @@ describe('flujo (puro)', () => {
       verificar,
     ]
 
-    expect(pasos('implementador', secuencia).at(-1)).toBe(6)
+    expect(pasos('qcc-implementador', secuencia).at(-1)).toBe(6)
   })
 
   test('reviso y cierre: solo se escriben cuando hay algo que anotar y un flujo sin ellos se tolera', async () => {
-    const nuevo = iniciarFlujo('implementador', '') as Flujo
+    const nuevo = iniciarFlujo('qcc-implementador', '') as Flujo
 
     expect(nuevo).not.toHaveProperty('reviso')
     expect(nuevo).not.toHaveProperty('cierre')
@@ -2204,11 +2225,11 @@ describe('flujo (puro)', () => {
     expect(avanzar(cerrado, estado('base'), 0)).toMatchObject({ paso: 5, cierre: false })
   })
 
-  test('PASOS.implementador: Plan en el paso 2 y Revisión del plan en el 3', async () => {
-    expect(PASOS.implementador).toHaveLength(8)
-    expect(PASOS.implementador[2]).toBe('Plan')
-    expect(PASOS.implementador[3]).toBe('Revisión del plan')
-    expect(PASOS.implementador.slice(4)).toEqual(['Aprobación', 'Ejecución', 'Verificación final', 'Cierre'])
+  test('PASOS qcc-implementador: Plan en el paso 2 y Revisión del plan en el 3', async () => {
+    expect(PASOS['qcc-implementador']).toHaveLength(8)
+    expect(PASOS['qcc-implementador'][2]).toBe('Plan')
+    expect(PASOS['qcc-implementador'][3]).toBe('Revisión del plan')
+    expect(PASOS['qcc-implementador'].slice(4)).toEqual(['Aprobación', 'Ejecución', 'Verificación final', 'Cierre'])
   })
 
   test('sin flujo o terminado: ninguna señal lo cambia ni lo revive', async () => {
@@ -2226,21 +2247,21 @@ describe('flujo (puro)', () => {
     for (const s of senales) expect(avanzar(null, s)).toBeNull()
 
     for (const respuesta of ['CIERRE · listo', 'CIERRE · x — DETENIDO']) {
-      const f = terminarFlujo({ ...(iniciarFlujo('implementador', '') as Flujo), paso: 5 }, 'answer', respuesta)
+      const f = terminarFlujo({ ...(iniciarFlujo('qcc-implementador', '') as Flujo), paso: 5 }, 'answer', respuesta)
 
       for (const s of senales) expect(avanzar(f, s)).toEqual(f)
     }
 
     // Interrumpido: el preflight, `verificar`, una pregunta y la vuelta de un agente no lo retoman (ver «reanudar»).
     for (const razon of ['answer', 'abort', 'error']) {
-      const f = terminarFlujo({ ...(iniciarFlujo('implementador', '') as Flujo), paso: 5 }, razon, 'listo')
+      const f = terminarFlujo({ ...(iniciarFlujo('qcc-implementador', '') as Flujo), paso: 5 }, razon, 'listo')
 
       for (const s of [estado('preflight'), verificar, pregunta(true), agenteFin('revisor'), agente('otro')]) expect(avanzar(f, s)).toEqual(f)
     }
   })
 
   test('reanudar: un flujo interrumpido sin CIERRE sigue con estado.mjs o un agente del flujo, y la pausa no cuenta como trabajo', async () => {
-    const f: Flujo = { ...(iniciarFlujo('implementador', '', 1_000) as Flujo), paso: 5, ejecuto: true, desde: 4_000 }
+    const f: Flujo = { ...(iniciarFlujo('qcc-implementador', '', 1_000) as Flujo), paso: 5, ejecuto: true, desde: 4_000 }
     // El límite de uso corta el turno con una respuesta sin CIERRE a los 10 s: queda interrumpido, con el consumo fijado.
     const cortado = { ...(terminarFlujo(f, 'answer', 'Llegué al límite de uso', 10_000) as Flujo), consumo: [] }
     expect(cortado).toMatchObject({ estado: 'interrumpido', fin: 10_000, tiempos: { 5: 6_000 } })
@@ -2259,12 +2280,12 @@ describe('flujo (puro)', () => {
     expect(fin).toMatchObject({ estado: 'completo', tiempos: { 5: 36_000, 7: 30_000 } })
     const lista = nodos(fin, T + 60_000)
     expect(lista[lista.length - 1]).toMatchObject({ etiqueta: 'Terminado', ms: 69_000 })
-    expect(resumenFlujo(fin, T + 60_000)).toBe('/implementador · Terminado · 1 min 9 s')
+    expect(resumenFlujo(fin, T + 60_000)).toBe('/qcc-implementador · Terminado · 1 min 9 s')
   })
 
   test('terminarFlujo: completo, detenido por CIERRE … DETENIDO, interrumpido; idempotente', async () => {
     const f: Flujo = {
-      nombre: 'implementador',
+      nombre: 'qcc-implementador',
       paso: 6,
       ejecuto: true,
       estado: 'en curso',
@@ -2300,7 +2321,7 @@ describe('flujo (puro)', () => {
     /** Dónde va el flujo: paso, inicio del tramo abierto y tiempos acumulados. */
     const tramo = (x: Flujo | null) => ({ paso: x?.paso, desde: x?.desde, tiempos: x?.tiempos })
 
-    let f = iniciarFlujo('implementador', '', 1_000)
+    let f = iniciarFlujo('qcc-implementador', '', 1_000)
     expect(tramo(f)).toEqual({ paso: 0, desde: 1_000, tiempos: {} })
 
     // Si el paso no cambia no se suma nada ni se mueve el tramo abierto.
@@ -2354,7 +2375,7 @@ describe('flujo (puro)', () => {
   })
 
   test('nodos y resumenFlujo con tiempos: pasados, actual en curso, saltados sin tiempo y total', async () => {
-    let f = iniciarFlujo('implementador', '', 0)
+    let f = iniciarFlujo('qcc-implementador', '', 0)
     f = avanzar(f, agente('explorador'), 5_000)
     f = avanzar(f, agenteFin('explorador'), 25_000)
     f = avanzar(f, estado('base'), 30_000)
@@ -2365,7 +2386,7 @@ describe('flujo (puro)', () => {
 
     expect(lista.map(n => n.ms)).toEqual([5_000, 20_000, 5_000, undefined, undefined, 170_000, undefined, undefined, undefined])
     expect(lista.map(n => n.estado)).toEqual(['pasado', 'pasado', 'pasado', 'pasado', 'pasado', 'actual', 'pendiente', 'pendiente', 'pendiente'])
-    expect(resumenFlujo(f, T)).toBe('/implementador · Ejecución · 3 min 20 s')
+    expect(resumenFlujo(f, T)).toBe('/qcc-implementador · Ejecución · 3 min 20 s')
 
     // Volver a Ejecución después de la Verificación final: el actual suma lo de antes y lo de ahora.
     let g = avanzar(f, agente('revisor'), 100_000)
@@ -2382,7 +2403,7 @@ describe('flujo (puro)', () => {
     expect(final.at(-1)).toEqual({ etiqueta: 'Terminado', estado: 'actual', ms: 3_900_000 })
     expect(final.slice(6, 8).map(n => n.ms)).toEqual([undefined, undefined])
     // El total de un flujo terminado no sigue corriendo con la hora.
-    expect(resumenFlujo(fin, 9_999_999)).toBe('/implementador · Terminado · 1 h 5 min')
+    expect(resumenFlujo(fin, 9_999_999)).toBe('/qcc-implementador · Terminado · 1 h 5 min')
 
     // Sin la hora no hay tiempos en ningún nodo.
     expect(nodos(f as Flujo).every(n => n.ms === undefined)).toBe(true)
@@ -2390,21 +2411,21 @@ describe('flujo (puro)', () => {
   })
 
   test('nodos y resumenFlujo: pasado, actual, pendiente y Terminado al final', async () => {
-    const f: Flujo = { nombre: 'implementador', paso: 5, ejecuto: true, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const f: Flujo = { nombre: 'qcc-implementador', paso: 5, ejecuto: true, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
     const lista = nodos(f)
 
-    expect(lista.map(n => n.etiqueta)).toEqual([...PASOS.implementador, 'Terminado'])
+    expect(lista.map(n => n.etiqueta)).toEqual([...PASOS['qcc-implementador'], 'Terminado'])
     expect(lista.map(n => n.estado)).toEqual([
       'pasado', 'pasado', 'pasado', 'pasado', 'pasado', 'actual', 'pendiente', 'pendiente', 'pendiente',
     ])
-    expect(resumenFlujo(f)).toBe('/implementador · Ejecución')
+    expect(resumenFlujo(f)).toBe('/qcc-implementador · Ejecución')
 
     const completo = terminarFlujo(f, 'answer', 'CIERRE · ok') as Flujo
     expect(nodos(completo).map(n => n.estado)).toEqual([
       'pasado', 'pasado', 'pasado', 'pasado', 'pasado', 'pasado', 'pendiente', 'pendiente', 'actual',
     ])
     expect(nodos(completo).at(-1)?.etiqueta).toBe('Terminado')
-    expect(resumenFlujo(completo)).toBe('/implementador · Terminado')
+    expect(resumenFlujo(completo)).toBe('/qcc-implementador · Terminado')
 
     // Un flujo guardado con un nombre que ya no existe no lanza: no tiene pasos y se resume sin ellos.
     const viejo = { ...f, nombre: 'otro', paso: 3 } as unknown as Flujo
@@ -2416,15 +2437,15 @@ describe('flujo (puro)', () => {
   })
 
   test('resumenFlujo con y sin la hora', async () => {
-    const f: Flujo = { nombre: 'implementador', paso: 2, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
+    const f: Flujo = { nombre: 'qcc-implementador', paso: 2, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
 
-    expect(resumenFlujo(f, 4_000)).toBe('/implementador · Plan · 4 s')
-    expect(resumenFlujo(f)).toBe('/implementador · Plan')
+    expect(resumenFlujo(f, 4_000)).toBe('/qcc-implementador · Plan · 4 s')
+    expect(resumenFlujo(f)).toBe('/qcc-implementador · Plan')
   })
 
   test('las funciones no mutan el flujo que reciben', async () => {
     const original: Flujo = {
-      nombre: 'implementador',
+      nombre: 'qcc-implementador',
       paso: 4,
       ejecuto: false,
       estado: 'en curso',
@@ -2441,24 +2462,24 @@ describe('flujo (puro)', () => {
     expect(avanzar(f, estado('diff'), 4_000)).toEqual(f)
     expect(terminarFlujo(f, 'answer', 'CIERRE · x — DETENIDO', 4_000)?.estado).toBe('detenido')
     expect(nodos(f, 4_000)).toHaveLength(9)
-    expect(resumenFlujo(f, 4_000)).toBe('/implementador · Aprobación · 4 s')
+    expect(resumenFlujo(f, 4_000)).toBe('/qcc-implementador · Aprobación · 4 s')
     expect(f).toEqual(original)
     expect(f.tiempos).toEqual({ 3: 500 })
   })
 
   test('un flujo con la forma 0.9.3 (sin inicio, desde, tiempos ni fin) no lanza: empieza en la hora que se le da', async () => {
-    const viejo = { nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso' } as unknown as Flujo
+    const viejo = { nombre: 'qcc-implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso' } as unknown as Flujo
 
     // Dibujar: nodos y línea resumen cuentan desde esa hora.
-    expect(resumenFlujo(viejo, 9_000)).toBe('/implementador · Aprobación · 0 s')
+    expect(resumenFlujo(viejo, 9_000)).toBe('/qcc-implementador · Aprobación · 0 s')
     expect(nodos(viejo, 9_000).find(n => n.estado === 'actual')?.ms).toBe(0)
-    expect(resumenFlujo(viejo)).toBe('/implementador · Aprobación')
+    expect(resumenFlujo(viejo)).toBe('/qcc-implementador · Aprobación')
     expect(nodos(viejo, 9_000)).toHaveLength(9)
     expect(nodos(viejo, 9_000).at(-1)).toEqual({ etiqueta: 'Terminado', estado: 'pendiente' })
 
     // Uno ya terminado, también sin fin: se dibuja con «Terminado» actual y sin tiempo.
     const terminado = { ...viejo, estado: 'completo' } as Flujo
-    expect(resumenFlujo(terminado, 9_000)).toBe('/implementador · Terminado · 0 s')
+    expect(resumenFlujo(terminado, 9_000)).toBe('/qcc-implementador · Terminado · 0 s')
     expect(nodos(terminado, 9_000).at(-1)).toEqual({ etiqueta: 'Terminado', estado: 'actual' })
 
     // Avanzar sin cambio de paso conserva el paso y deja los campos completos.
@@ -2493,8 +2514,8 @@ describe('flujo (puro)', () => {
     const A = agente('explorador')
     const F = agenteFin('explorador')
 
-    expect(pasos('implementador', [estado('preflight'), A, A, A, F, F, F])).toEqual([0, 1, 1, 1, 1, 1, 2])
-    expect(pasos('implementador', [A, A, F, A, F, F])).toEqual([1, 1, 1, 1, 1, 2])
+    expect(pasos('qcc-implementador', [estado('preflight'), A, A, A, F, F, F])).toEqual([0, 1, 1, 1, 1, 1, 2])
+    expect(pasos('qcc-implementador', [A, A, F, A, F, F])).toEqual([1, 1, 1, 1, 1, 2])
   })
 
   test('varios exploradores: el tiempo de Exploración corre desde el primero hasta que vuelve el último, una sola vez', async () => {
@@ -2502,7 +2523,7 @@ describe('flujo (puro)', () => {
     const F = agenteFin('explorador')
     const tramo = (x: Flujo | null) => ({ paso: x?.paso, desde: x?.desde, tiempos: x?.tiempos })
 
-    let f = iniciarFlujo('implementador', '', 0)
+    let f = iniciarFlujo('qcc-implementador', '', 0)
 
     for (const t of [1_000, 3_000, 4_000]) {
       f = avanzar(f, A, t)
@@ -2523,10 +2544,10 @@ describe('flujo (puro)', () => {
     const F = agenteFin('explorador')
     const M = agenteFin('explorador', false)
 
-    expect(pasos('implementador', [A, A, F, M])).toEqual([1, 1, 1, 2])
-    expect(pasos('implementador', [A, A, M, F])).toEqual([1, 1, 1, 2])
-    expect(pasos('implementador', [A, A, M, M, A, F])).toEqual([1, 1, 1, 1, 1, 2])
-    expect(pasos('implementador', [A, M])).toEqual([1, 1])
+    expect(pasos('qcc-implementador', [A, A, F, M])).toEqual([1, 1, 1, 2])
+    expect(pasos('qcc-implementador', [A, A, M, F])).toEqual([1, 1, 1, 2])
+    expect(pasos('qcc-implementador', [A, A, M, M, A, F])).toEqual([1, 1, 1, 1, 1, 2])
+    expect(pasos('qcc-implementador', [A, M])).toEqual([1, 1])
   })
 
   test('el contador de exploradores nunca es negativo y una tanda nueva lo reinicia', async () => {
@@ -2534,13 +2555,13 @@ describe('flujo (puro)', () => {
     const F = agenteFin('explorador')
 
     // Un fin de más no deja el contador bajo cero.
-    let g = iniciarFlujo('implementador', '')
+    let g = iniciarFlujo('qcc-implementador', '')
     for (const s of [A, F, F]) g = avanzar(g, s)
     expect(g).toMatchObject({ paso: 2, exploradores: 0, exploro: true })
 
     // Desde otro paso, un explorador abre una tanda nueva: reinicia el contador y `exploro`.
     const f: Flujo = {
-      nombre: 'implementador',
+      nombre: 'qcc-implementador',
       paso: 3,
       ejecuto: false,
       exploradores: 2,
@@ -2567,7 +2588,7 @@ describe('flujo (puro)', () => {
 
   test('un flujo con la forma 0.9.4 (sin exploradores ni exploro) no lanza: su explorador en vuelo, al volver, pasa a Plan', async () => {
     const viejo: Flujo = {
-      nombre: 'implementador',
+      nombre: 'qcc-implementador',
       paso: 1,
       ejecuto: false,
       estado: 'en curso',
@@ -2583,7 +2604,7 @@ describe('flujo (puro)', () => {
     expect(avanzar(viejo, agente('explorador'), 2_000)).toMatchObject({ paso: 1, exploradores: 1 })
 
     // La forma 0.9.3 en Exploración: al volver su explorador pasa a Plan.
-    const v093 = { nombre: 'implementador', variante: null, paso: 1, ejecuto: false, estado: 'en curso' } as unknown as Flujo
+    const v093 = { nombre: 'qcc-implementador', variante: null, paso: 1, ejecuto: false, estado: 'en curso' } as unknown as Flujo
     expect(avanzar(v093, agenteFin('explorador'), 5_000)?.paso).toBe(2)
 
     expect(() => nodos(viejo, 3_000)).not.toThrow()
@@ -2593,7 +2614,7 @@ describe('flujo (puro)', () => {
   test('totalExploradores suma en cada tanda y se conserva al volver y al cerrar', async () => {
     const A = agente('explorador')
     const F = agenteFin('explorador')
-    let f = iniciarFlujo('implementador', '', 0)
+    let f = iniciarFlujo('qcc-implementador', '', 0)
 
     for (const s of [A, A, A, F, F, F]) f = avanzar(f, s, 1_000)
     expect(f).toMatchObject({ totalExploradores: 3, exploradores: 0, paso: 2 })
@@ -2612,7 +2633,7 @@ describe('flujo (puro)', () => {
   test('nodos: Exploración lleva exploradores solo si hubo y no está pendiente', async () => {
     const A = agente('explorador')
     const F = agenteFin('explorador')
-    const nuevo = iniciarFlujo('implementador', '', 0) as Flujo
+    const nuevo = iniciarFlujo('qcc-implementador', '', 0) as Flujo
 
     // Sin exploradores el nodo no trae la propiedad.
     expect(nodos(nuevo)[1]).toEqual({ etiqueta: 'Exploración', estado: 'pendiente' })
@@ -2645,7 +2666,7 @@ describe('flujo (puro)', () => {
     const A = agente('explorador')
     const F = agenteFin('explorador')
     const viejo: Flujo = {
-      nombre: 'implementador',
+      nombre: 'qcc-implementador',
       paso: 1,
       ejecuto: false,
       estado: 'en curso',
@@ -2689,7 +2710,7 @@ describe('flujo (puro)', () => {
       R,
       R,
     ]
-    let f = iniciarFlujo('implementador', '', 0)
+    let f = iniciarFlujo('qcc-implementador', '', 0)
     for (const s of senales) f = avanzar(f, s, 1_000)
 
     expect(f).toMatchObject({ paso: 6, planes: 2, ejecuciones: 3, revisiones: { 5: 3, 6: 2 } })
@@ -2727,8 +2748,8 @@ describe('flujo (puro)', () => {
   test('una sola subtarea: la revisión final cuenta en Verificación final', async () => {
     // Una sola subtarea: su ejecutor y su revisor, verificar.mjs y luego la revisión final.
     const senales = [estado('base'), agente('ejecutor'), estado('cambios'), agente('revisor'), verificar, agente('revisor')]
-    let f = iniciarFlujo('implementador', '', 0)
-    expect(pasos('implementador', senales)).toEqual([5, 5, 5, 5, 6, 6])
+    let f = iniciarFlujo('qcc-implementador', '', 0)
+    expect(pasos('qcc-implementador', senales)).toEqual([5, 5, 5, 5, 6, 6])
     for (const s of senales) f = avanzar(f, s, 1_000)
 
     expect(f).toMatchObject({ paso: 6, ejecuciones: 1, revisiones: { 5: 1, 6: 1 } })
@@ -2742,7 +2763,7 @@ describe('flujo (puro)', () => {
 
   test('un flujo con la forma 0.9.7 (sin planes, ejecuciones ni revisiones) no lanza: Ejecución toma `ejecuto` como cota y cuenta desde ahí', async () => {
     const viejo: Flujo = {
-      nombre: 'implementador',
+      nombre: 'qcc-implementador',
       paso: 5,
       ejecuto: true,
       totalExploradores: 2,
@@ -2760,14 +2781,14 @@ describe('flujo (puro)', () => {
     expect(avanzar(viejo, agente('planificador'), 2_000)?.planes).toBe(1)
 
     // La forma 0.9.3 tampoco lanza.
-    const muyViejo = { nombre: 'implementador', variante: null, paso: 5, ejecuto: true, estado: 'en curso' } as unknown as Flujo
+    const muyViejo = { nombre: 'qcc-implementador', variante: null, paso: 5, ejecuto: true, estado: 'en curso' } as unknown as Flujo
     expect(() => nodos(muyViejo, 3_000)).not.toThrow()
     expect(() => resumenFlujo(muyViejo, 3_000)).not.toThrow()
     expect(nodos(muyViejo, 3_000)[5].veces).toBe(1)
   })
 
   test('la espera del usuario no suma al paso ni al trabajo: va aparte en su paso y en Terminado', async () => {
-    let f = iniciarFlujo('implementador', '', 0)
+    let f = iniciarFlujo('qcc-implementador', '', 0)
     f = avanzar(f, agente('explorador'), 5_000)
     f = avanzar(f, agenteFin('explorador'), 25_000)
     f = abrirEspera(avanzar(f, pregunta(true), 30_000), 30_000)
@@ -2775,7 +2796,7 @@ describe('flujo (puro)', () => {
 
     // Con la pregunta abierta, Aprobación no cuenta trabajo: todo el tiempo es espera.
     expect(nodos(f, 90_000)[4]).toEqual({ etiqueta: 'Aprobación', estado: 'actual', ms: 0, esperaUsuario: 60_000 })
-    expect(resumenFlujo(f, 90_000)).toBe('/implementador · Aprobación · 30 s')
+    expect(resumenFlujo(f, 90_000)).toBe('/qcc-implementador · Aprobación · 30 s')
     // Sin hora, ningún nodo lleva espera.
     expect(nodos(f).some(n => n.esperaUsuario !== undefined)).toBe(false)
 
@@ -2799,12 +2820,12 @@ describe('flujo (puro)', () => {
     expect(lista[5]).toMatchObject({ etiqueta: 'Ejecución', ms: 100_000, esperaUsuario: 60_000 })
     expect(lista[2].esperaUsuario).toBeUndefined()
     expect(lista.at(-1)).toEqual({ etiqueta: 'Terminado', estado: 'actual', ms: 140_000, esperaUsuario: 360_000 })
-    expect(resumenFlujo(f, 600_000)).toBe('/implementador · Terminado · 2 min 20 s')
+    expect(resumenFlujo(f, 600_000)).toBe('/qcc-implementador · Terminado · 2 min 20 s')
     expect(nodos(f as Flujo).some(n => n.esperaUsuario !== undefined)).toBe(false)
   })
 
   test('abrirEspera y cerrarEspera: idempotentes, sin efecto sin flujo o ya terminado, y un cambio de paso con la pregunta abierta no cuenta como trabajo', async () => {
-    const f = iniciarFlujo('implementador', '', 0) as Flujo
+    const f = iniciarFlujo('qcc-implementador', '', 0) as Flujo
 
     // Sin flujo, nada.
     expect(abrirEspera(null, 1_000)).toBeNull()
@@ -2847,13 +2868,13 @@ describe('flujo (puro)', () => {
   })
 
   test('interrumpir con una pregunta abierta: terminarFlujo cierra la espera a su hora y el orden con la vuelta de la pregunta no cambia el resultado', async () => {
-    const abierta = abrirEspera(avanzar(iniciarFlujo('implementador', '', 0), pregunta(true), 5_000), 5_000) as Flujo
+    const abierta = abrirEspera(avanzar(iniciarFlujo('qcc-implementador', '', 0), pregunta(true), 5_000), 5_000) as Flujo
 
     // Escape: el turno termina antes que la vuelta de la pregunta.
     const interrumpido = terminarFlujo(abierta, 'aborted', undefined, 65_000) as Flujo
     expect(interrumpido).toMatchObject({ estado: 'interrumpido', fin: 65_000, preguntaDesde: null, esperaUsuario: { 4: 60_000 } })
     expect(nodos(interrumpido, 90_000).at(-1)).toEqual({ etiqueta: 'Terminado · interrumpido', estado: 'actual', ms: 5_000, esperaUsuario: 60_000 })
-    expect(resumenFlujo(interrumpido, 90_000)).toBe('/implementador · Terminado · interrumpido · 5 s')
+    expect(resumenFlujo(interrumpido, 90_000)).toBe('/qcc-implementador · Terminado · interrumpido · 5 s')
 
     // La vuelta tardía no cambia nada.
     expect(cerrarEspera(interrumpido, 95_000)).toBe(interrumpido)
@@ -2864,15 +2885,15 @@ describe('flujo (puro)', () => {
     expect(resumenFlujo(alReves, 90_000)).toBe(resumenFlujo(interrumpido, 90_000))
 
     // Sin espera abierta, terminarFlujo no agrega campos de espera.
-    const sinEspera = terminarFlujo(iniciarFlujo('implementador', '', 0), 'aborted', undefined, 1_000) as Flujo
+    const sinEspera = terminarFlujo(iniciarFlujo('qcc-implementador', '', 0), 'aborted', undefined, 1_000) as Flujo
     expect(sinEspera).not.toHaveProperty('esperaUsuario')
     expect(sinEspera).not.toHaveProperty('preguntaDesde')
   })
 
   test('formas 0.9.3 a 0.9.7 (sin espera) no lanzan con abrirEspera, cerrarEspera, nodos y resumenFlujo', async () => {
-    const muyViejo = { nombre: 'implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso' } as unknown as Flujo
+    const muyViejo = { nombre: 'qcc-implementador', variante: null, paso: 4, ejecuto: false, estado: 'en curso' } as unknown as Flujo
     const viejo: Flujo = {
-      nombre: 'implementador',
+      nombre: 'qcc-implementador',
       paso: 5,
       ejecuto: true,
       totalExploradores: 2,
@@ -2896,12 +2917,12 @@ describe('flujo (puro)', () => {
 
       const cerrada = cerrarEspera(abierta, 8_000)
       expect(cerrada).toMatchObject({ preguntaDesde: null, esperaUsuario: { [forma.paso]: 3_000 } })
-      expect(resumenFlujo(cerrada, 8_000)).toMatch(/^\/implementador · (Aprobación|Ejecución) · /)
+      expect(resumenFlujo(cerrada, 8_000)).toMatch(/^\/qcc-implementador · (Aprobación|Ejecución) · /)
     }
   })
 
   test('anotarFilaExplorador y cuadradosDeFila', async () => {
-    const base = iniciarFlujo('implementador', '', 0) as Flujo
+    const base = iniciarFlujo('qcc-implementador', '', 0) as Flujo
     const con = (n: number): Flujo => ({ ...base, exploradores: n })
     const fila = 'Haiku 5.5|high|subagente'
     const otra = 'Opus 5.5|high|principal'
@@ -2947,7 +2968,7 @@ describe('flujo (puro)', () => {
   })
 
   test('revisores en vuelo: suben al lanzar, bajan al volver sin mover el paso y no bajan de 0', async () => {
-    const base = { ...(iniciarFlujo('implementador', '', 0) as Flujo), paso: 6 }
+    const base = { ...(iniciarFlujo('qcc-implementador', '', 0) as Flujo), paso: 6 }
 
     let f: Flujo = base
 
@@ -2982,7 +3003,7 @@ describe('flujo (puro)', () => {
   })
 
   test('anotar y cuadradosDeFila cuentan exploradores y revisores', async () => {
-    const base = iniciarFlujo('implementador', '', 0) as Flujo
+    const base = iniciarFlujo('qcc-implementador', '', 0) as Flujo
     const fila = 'Haiku 5.5|high|subagente'
     const vacias: string[] = []
     const anotadas = [fila]
@@ -3006,7 +3027,7 @@ describe('flujo (puro)', () => {
   })
 
   test('cuadradosDeFila: cuenta solo exploradores en vuelo con la config de la fila', async () => {
-    const base = iniciarFlujo('implementador', '', 0) as Flujo
+    const base = iniciarFlujo('qcc-implementador', '', 0) as Flujo
     const haiku = 'Haiku 5.5|high|subagente'
     const sonnet = 'Sonnet 5.5|high|subagente'
     const anotadas = [haiku, sonnet]
@@ -3048,7 +3069,7 @@ describe('flujo (puro)', () => {
   })
 
   test('cuadradosDeFila: sin config observada vuelve a exploradores + revisores', async () => {
-    const base = iniciarFlujo('implementador', '', 0) as Flujo
+    const base = iniciarFlujo('qcc-implementador', '', 0) as Flujo
     const fila = 'Haiku 5.5|high|subagente'
     const anotadas = [fila]
     const sinConfig: Flujo['detalleExploradores'] = [{ id: 'a' }, { id: 'b', desde: 5 }]
@@ -3068,7 +3089,7 @@ describe('flujo (puro)', () => {
   })
 
   test('abreTanda', async () => {
-    const base = iniciarFlujo('implementador', '', 0) as Flujo
+    const base = iniciarFlujo('qcc-implementador', '', 0) as Flujo
     const paso1 = { ...base, paso: 1 }
 
     // Revisor: abre con 0 o sin el campo; no con 1 en vuelo.
@@ -3110,9 +3131,9 @@ describe('flujo (puro)', () => {
     // Sin filas o sin sesión no hay base, y el flujo no lleva el campo.
     expect(baseDeUso(null)).toBeUndefined()
     expect(baseDeUso(sesionCon([]))).toBeUndefined()
-    expect(iniciarFlujo('implementador', '', 5)).not.toHaveProperty('usoBase')
-    expect(iniciarFlujo('implementador', '', 5, {})).not.toHaveProperty('usoBase')
-    const f = iniciarFlujo('implementador', '', 5, base) as Flujo
+    expect(iniciarFlujo('qcc-implementador', '', 5)).not.toHaveProperty('usoBase')
+    expect(iniciarFlujo('qcc-implementador', '', 5, {})).not.toHaveProperty('usoBase')
+    const f = iniciarFlujo('qcc-implementador', '', 5, base) as Flujo
     expect(f.usoBase).toEqual(base)
 
     const despues = sesionCon([
@@ -3129,12 +3150,12 @@ describe('flujo (puro)', () => {
     expect(consumoDeFlujo(f, sesionCon([fila('Opus 5.5', 'high', 'principal', 500, 50)]))).toEqual([])
     expect(consumoDeFlujo(f, null)).toEqual([])
     // Un flujo sin base (anterior a este campo) cuenta toda la sesión.
-    const sinBase = iniciarFlujo('implementador', '', 5) as Flujo
+    const sinBase = iniciarFlujo('qcc-implementador', '', 5) as Flujo
     expect(consumoDeFlujo(sinBase, despues).map(x => x.total)).toEqual([5_000, 3_000, 700])
   })
 
   test('consumoDeFlujo: las filas del consumo no llevan flujo', async () => {
-    const f = iniciarFlujo('implementador', '', 5) as Flujo
+    const f = iniciarFlujo('qcc-implementador', '', 5) as Flujo
     const conFlujo: FilaSemana = { ...fila('Opus 5.5', 'high', 'principal', 3_000, 400), flujo: 1_200 }
 
     expect(consumoDeFlujo(f, sesionCon([conFlujo]))).toEqual([fila('Opus 5.5', 'high', 'principal', 3_000, 400)])
@@ -3143,7 +3164,7 @@ describe('flujo (puro)', () => {
 
   test('congelarConsumo: fija el consumo al terminar una sola vez y no escribe un valor vacío', async () => {
     const base = baseDeUso(sesionCon([fila('Opus 5.5', 'high', 'principal', 1_000, 100)]))
-    const en = iniciarFlujo('implementador', '', 0, base) as Flujo
+    const en = iniciarFlujo('qcc-implementador', '', 0, base) as Flujo
     const ses = sesionCon([fila('Opus 5.5', 'high', 'principal', 4_000, 300)])
 
     // Sin flujo o en curso: la misma referencia.
@@ -3170,7 +3191,7 @@ describe('flujo (puro)', () => {
     expect(nombreOrquestador('claude-sonnet-5-5', 'xhigh')).toBe('Sonnet 5.5 xhigh')
     expect(nombreOrquestador('claude-haiku-5-5', undefined)).toBe('Haiku 5.5 —')
 
-    const f = iniciarFlujo('implementador', '', 0) as Flujo
+    const f = iniciarFlujo('qcc-implementador', '', 0) as Flujo
     expect(marcarOrquestador(null, 'Opus 5.5 high')).toBeNull()
 
     const opus = marcarOrquestador(f, 'Opus 5.5 high') as Flujo
@@ -3237,7 +3258,7 @@ describe('flujo (puro)', () => {
 
   test('detallePaso: ninguna línea fija pasa de 30 caracteres', async () => {
     const lleno = (etiqueta: string): Nodo => ({ etiqueta, estado: 'actual', ms: 1, veces: 9, revisiones: 9, exploradores: 99 })
-    const lineas = PASOS.implementador.flatMap(etiqueta => detallePaso(lleno(etiqueta)))
+    const lineas = PASOS['qcc-implementador'].flatMap(etiqueta => detallePaso(lleno(etiqueta)))
 
     expect(lineas).toEqual([
       '99 exploradores · Haiku high',
@@ -3251,12 +3272,12 @@ describe('flujo (puro)', () => {
     for (const linea of lineas) expect(linea.length).toBeLessThanOrEqual(30)
 
     // Las líneas de los nodos reales de un flujo también caben.
-    const f = iniciarFlujo('implementador', '', 0) as Flujo
+    const f = iniciarFlujo('qcc-implementador', '', 0) as Flujo
 
     for (const n of nodos(f, 1_000)) for (const linea of detallePaso(n)) expect(linea.length).toBeLessThanOrEqual(30)
   })
 
-  const flujoEn = (paso: number, resto: Partial<Flujo> = {}): Flujo => ({ nombre: 'implementador', paso, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null, ...resto })
+  const flujoEn = (paso: number, resto: Partial<Flujo> = {}): Flujo => ({ nombre: 'qcc-implementador', paso, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null, ...resto })
   const nodoPasado = (etiqueta: string, resto: Partial<Nodo> = {}): Nodo => ({ etiqueta, estado: 'pasado', ...resto })
 
   test('detallePaso con configs observadas lista high y medium', async () => {
@@ -3404,7 +3425,7 @@ describe('flujo (puro)', () => {
     expect(nuevo016.configs).toEqual({ 2: { explorador: ['Haiku 5.5 max'] } })
     expect(() => nodos(nuevo016, 5_000)).not.toThrow()
 
-    const v093 = { nombre: 'implementador', variante: null, paso: 1, ejecuto: false, estado: 'en curso', exploradores: 2 } as unknown as Flujo
+    const v093 = { nombre: 'qcc-implementador', variante: null, paso: 1, ejecuto: false, estado: 'en curso', exploradores: 2 } as unknown as Flujo
     expect(() => anotarConfig(v093, 'a1', 'Haiku 5.5 high')).not.toThrow()
     const nuevo093 = anotarConfig(v093, 'a1', 'Haiku 5.5 high') as Flujo
     expect(nuevo093.configs).toEqual({ 1: { explorador: ['Haiku 5.5 high'] } })
@@ -3499,7 +3520,7 @@ describe('flujo (puro)', () => {
 })
 
 describe('gasto por paso (puro)', () => {
-  const enCurso = (paso: number, resto: Partial<Flujo> = {}): Flujo => ({ nombre: 'implementador', paso, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null, ...resto })
+  const enCurso = (paso: number, resto: Partial<Flujo> = {}): Flujo => ({ nombre: 'qcc-implementador', paso, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null, ...resto })
   const pasado = (etiqueta: string, resto: Partial<Nodo> = {}): Nodo => ({ etiqueta, estado: 'pasado', ...resto })
 
   test('sumarGasto: sin flujo, terminado o sin uso devuelve lo mismo y no anota gasto', async () => {
@@ -3547,7 +3568,7 @@ describe('gasto por paso (puro)', () => {
   })
 
   test('forma anterior: flujo 0.9.3 y flujo 0.15.0 sin gasto', async () => {
-    const viejo = { nombre: 'implementador', variante: null, paso: 5, ejecuto: true, estado: 'en curso' } as unknown as Flujo
+    const viejo = { nombre: 'qcc-implementador', variante: null, paso: 5, ejecuto: true, estado: 'en curso' } as unknown as Flujo
     let r: Flujo | null = null
 
     expect(() => { r = sumarGasto(viejo, USO) }).not.toThrow()
@@ -3853,7 +3874,7 @@ describe('gasto por paso (puro)', () => {
     expect(nodos(f016, 5_000)[1]).toEqual({ etiqueta: 'Exploración', estado: 'pasado', exploradores: 2, ms: 2_000, gasto: [100_000, 2_000] })
     expect(detallePaso(nodos(f016, 5_000)[1] as Nodo, undefined, 30)).toEqual(['2 exploradores · Haiku high', 'gasto 100k · sal 2k'])
 
-    const v095 = { nombre: 'implementador', variante: null, paso: 2, ejecuto: false, estado: 'en curso', exploradores: 2 } as unknown as Flujo
+    const v095 = { nombre: 'qcc-implementador', variante: null, paso: 2, ejecuto: false, estado: 'en curso', exploradores: 2 } as unknown as Flujo
     expect(() => nodos(v095, 3_000)).not.toThrow()
     expect(nodos(v095, 3_000)[1]).toMatchObject({ etiqueta: 'Exploración', estado: 'pasado', exploradores: 2 })
     expect(nodos(v095, 3_000)[1]).not.toHaveProperty('porExplorador')
@@ -4274,13 +4295,13 @@ function motorStore(on: On, inicial: Record<string, unknown> = {}) {
 }
 
 /**
- * Lo que el panel dibuja desde el resumen con la pestaña «Flujo» abierta en `/implementador · Ejecución`, texto por texto,
+ * Lo que el panel dibuja desde el resumen con la pestaña «Flujo» abierta en `/qcc-implementador · Ejecución`, texto por texto,
  * con los tiempos del recorrido del test (5 s, 20 s, 3 s, 1 min y 1 min 30 s en curso; `Revisión del plan` se saltó y no lleva tiempo)
  * y el conteo de exploradores lanzados (` ×1`) junto a `Exploración`, antes de su tiempo;
  * bajo su tiempo, la línea de detalle del paso (sin orquestador: el recorrido no pasa por `turn.step`).
  */
 const FLUJO_EJECUCION = [
-  '/implementador · Ejecución · 2 min 58 s',
+  '/qcc-implementador · Ejecución · 2 min 58 s',
   '✓ ',
   'Preflight',
   ' 5 s',
@@ -4450,7 +4471,7 @@ describe('flujo en el panel', () => {
 
     // La sesión ya gastó 100k (2k de salida) antes del flujo: no cuenta, y mientras nada gaste no hay bloque.
     await paso($, 'claude-opus-5-5', 'high')
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
     expect(await textos()).not.toContain('consumo')
     expect(await textos()).not.toContain('orquestador Opus 5.5 high')
@@ -4496,7 +4517,7 @@ describe('flujo en el panel', () => {
     await $.session.measure(MEDIDA)
 
     await paso($, 'claude-opus-5-5', 'high')
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await paso($, 'claude-opus-5-5', 'high')
     await paso($, 'claude-opus-5-5', 'high', 'agente-1')
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
@@ -4538,8 +4559,8 @@ describe('flujo en el panel', () => {
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
 
-    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** x' })
-    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 0 s')
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '**Pedido:** x' })
+    expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Preflight · 0 s')
 
     // El hilo principal llega a `next` con el modelo y el esfuerzo originales; los de un subagente, igual.
     await paso($, 'claude-opus-5-5', 'high')
@@ -4574,7 +4595,7 @@ describe('flujo en el panel', () => {
 
     // Antes del flujo, dentro (hilo principal y un subagente).
     await paso($, 'claude-opus-5-5', 'high')
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await paso($, 'claude-opus-5-5', 'high')
     await paso($, 'claude-opus-5-5', 'high', 'agente-1')
 
@@ -4653,7 +4674,7 @@ describe('flujo en el panel', () => {
     })
     await $.session.measure(MEDIDA)
     await paso($, 'claude-opus-5-5', 'high')
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await paso($, 'claude-opus-5-5', 'high')
     await paso($, 'claude-opus-5-5', 'high', 'agente-1')
 
@@ -4809,7 +4830,7 @@ describe('flujo en el panel', () => {
     })
     await $.session.measure(MEDIDA)
     await paso($, 'claude-opus-5-5', 'high')
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     /** Qué secciones aparecen en la pestaña abierta. */
@@ -4966,8 +4987,8 @@ describe('flujo en el panel', () => {
     expect(entre.length).toBeGreaterThan(0)
     expect(entre.map(n => n.text).join('')).toMatch(/^ \S+( · .*)?$/)
 
-    await $.skill.prompt({ skill: 'implementador', text: '' })
-    expect((await resumen()).texto).toBe('/implementador · Preflight · 0 s')
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
+    expect((await resumen()).texto).toBe('/qcc-implementador · Preflight · 0 s')
     await ui.unmount()
   })
 
@@ -4999,13 +5020,13 @@ describe('flujo en el panel', () => {
     on('ui.open', () => ({ value: { isPlaced: true } }))
 
     // Un /reload-plugins a mitad de flujo repite session.start: el flujo sigue ahí.
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await ui.find({ type: 'Button', key: 'pestana-inicio' })).toBeDefined()
     expect(await textosDe(ui)).not.toContain('Contexto')
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Preflight · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Preflight · 0 s'])
     expect(await textosDe(ui)).toContain('Preflight')
     await ui.unmount()
   })
@@ -5071,7 +5092,7 @@ describe('flujo en el panel', () => {
       }
     })
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await paso($, 'claude-sonnet-5-5', 'medium')
     await bash($, 'node ~/.claude/flujos/estado.mjs')
     reloj.t += 5_000
@@ -5098,7 +5119,7 @@ describe('flujo en el panel', () => {
   test('bajo cada nodo van las líneas de detallePaso, con sangría de 2, tras su tiempo y antes del │', async ($, on) => {
     const ui = await enEjecucion($, on, PANE_ANCHO)
     const esperado = [
-      '/implementador · Ejecución · 1 min 31 s',
+      '/qcc-implementador · Ejecución · 1 min 31 s',
       'orquestador Sonnet 5.5 medium',
       '✓ ',
       'Preflight',
@@ -5204,7 +5225,7 @@ describe('flujo en el panel', () => {
       }
     })
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
@@ -5357,7 +5378,7 @@ describe('flujo en el panel', () => {
     const bajo = motorControlado(on, 'claude-sonnet-5-5')
     bajo.fallan.add('ag-R1')
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
     // El hilo principal responde antes (sin agentId) para que la fila de Esta sesión exista.
     await paso($, 'claude-sonnet-5-5', 'high')
@@ -5400,7 +5421,7 @@ describe('flujo en el panel', () => {
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
 
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await paso($, 'claude-opus-5-5', 'high')
     expect(await lineasGasto(ui)).toEqual(['  gasto 100k · sal 2k'])
 
@@ -5422,11 +5443,11 @@ describe('flujo en el panel', () => {
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
 
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await paso($, 'claude-opus-5-5', 'high')
     await paso($, 'claude-haiku-5-5', 'high', 'sub-1')
     expect(await lineasGasto(ui)).toEqual([])
-    expect((await desdeResumen(ui, 1))[0]).toContain('/implementador')
+    expect((await desdeResumen(ui, 1))[0]).toContain('/qcc-implementador')
     await ui.unmount()
   })
 
@@ -5440,7 +5461,7 @@ describe('flujo en el panel', () => {
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
 
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     const visto = await paso($, 'claude-opus-5-5', 'high').then(
       () => null,
       (e: unknown) => e,
@@ -5451,11 +5472,11 @@ describe('flujo en el panel', () => {
     expect((visto as Error).message).toMatch(/turn\.step/)
     expect((visto as Error).message).not.toMatch(/panel/i)
     expect(await lineasGasto(ui)).toEqual([])
-    expect((await desdeResumen(ui, 1))[0]).toContain('/implementador')
+    expect((await desdeResumen(ui, 1))[0]).toContain('/qcc-implementador')
     await ui.unmount()
   })
 
-  test('/implementador de punta a punta: el diagrama marca cada paso con su tiempo y termina en Terminado', async ($, on) => {
+  test('/qcc-implementador de punta a punta: el diagrama marca cada paso con su tiempo y termina en Terminado', async ($, on) => {
     const pedidos: string[] = []
     const { detener, reloj } = preparar(on, pedidos)
     await $.session.measure(MEDIDA)
@@ -5463,7 +5484,7 @@ describe('flujo en el panel', () => {
     await ui.press({ key: 'pestana-flujo' })
     const antes = pedidos.length
 
-    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** algo' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '**Pedido:** algo' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
     reloj.t += 5_000
     const abrir = detener('explorador')
@@ -5498,7 +5519,7 @@ describe('flujo en el panel', () => {
     reloj.t += 30_000
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
     const tramo = await desdeResumen(ui, FLUJO_EJECUCION.length + 1)
-    expect(tramo.slice(0, 1)).toEqual(['/implementador · Terminado · 3 min 28 s'])
+    expect(tramo.slice(0, 1)).toEqual(['/qcc-implementador · Terminado · 3 min 28 s'])
     expect(tramo.slice(1, 4)).toEqual(['✓ ', 'Preflight', ' 5 s'])
     // Ejecución cerró con 90 s + 30 s; «Terminado» lleva el total de principio a fin.
     expect(tramo.slice(tramo.indexOf('Ejecución') - 1, tramo.indexOf('Ejecución') + 2)).toEqual(['✓ ', 'Ejecución', ' 2 min'])
@@ -5510,29 +5531,29 @@ describe('flujo en el panel', () => {
 
   test('el paso en curso se refresca con el evento siguiente, no antes; plegada, la línea resumen ya trae el total', async ($, on) => {
     const { reloj } = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Preflight · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Preflight · 0 s'])
 
     // Sin eventos el dibujo no cambia (hasta el tick de 30 s); con uno, se pone al día.
     reloj.t += 45_000
-    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 0 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Preflight · 0 s')
     await bash($, 'node ~/.claude/flujos/estado.mjs')
-    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 45 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Preflight · 45 s')
 
     // En Inicio no hay nodos: ningún tiempo suelto fuera de la línea resumen.
     expect(await textosDe(ui)).not.toContain(' 45 s')
     await ui.press({ key: 'pestana-flujo' })
     reloj.t += 15_000
     await bash($, 'node ~/.claude/flujos/estado.mjs')
-    expect(await desdeResumen(ui, 4)).toEqual(['/implementador · Preflight · 1 min', '▸ ', 'Preflight', ' 1 min'])
+    expect(await desdeResumen(ui, 4)).toEqual(['/qcc-implementador · Preflight · 1 min', '▸ ', 'Preflight', ' 1 min'])
     await ui.unmount()
   })
 
   test('cada nodo lleva su tiempo a la derecha: etiqueta que cede y tiempo que no se trunca', async ($, on) => {
     const { reloj } = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     reloj.t += 4_000
     await agente($, 'planificador')
 
@@ -5557,20 +5578,20 @@ describe('flujo en el panel', () => {
 
   test('mientras corre el explorador el paso es Exploración; al volver, Plan', async ($, on) => {
     const motor = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Preflight · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Preflight · 0 s'])
 
     const abrir = motor.detener('explorador')
     const corriendo = agente($, 'explorador')
     await esperar()
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Exploración · 0 s'])
 
     abrir()
     await corriendo
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Plan · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Plan · 0 s'])
     await ui.unmount()
   })
 
@@ -5578,7 +5599,7 @@ describe('flujo en el panel', () => {
     const motor = preparar(on)
 
     const texto = '**Pedido:** arreglar el panel\n\nsegunda línea'
-    expect(await $.skill.prompt({ skill: 'implementador', text: texto })).toEqual({ text: texto })
+    expect(await $.skill.prompt({ skill: 'qcc-implementador', text: texto })).toEqual({ text: texto })
     expect(await $.skill.prompt({ skill: 'simplify', text: 'otra' })).toEqual({ text: 'otra' })
 
     const resultados = [
@@ -5593,7 +5614,7 @@ describe('flujo en el panel', () => {
 
   test('si el explorador falla, el error llega intacto y el paso queda en Exploración', async ($, on) => {
     const motor = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     motor.fallan.add('explorador')
@@ -5605,7 +5626,7 @@ describe('flujo en el panel', () => {
     // El kit convierte el fallo del motor de abajo en su propio error: el hook del panel no lo envuelve ni lo traga.
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).not.toMatch(/panel/i)
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Exploración · 0 s'])
     await ui.unmount()
   })
 
@@ -5623,7 +5644,7 @@ describe('flujo en el panel', () => {
       }
     })
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
@@ -5870,7 +5891,7 @@ describe('flujo en el panel', () => {
 
   test('la espera de AskUserQuestion va aparte: Aprobación y Terminado con « · espera», la línea plegada solo con el trabajo y el resultado intacto', async ($, on) => {
     const { detener, reloj } = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
@@ -5893,18 +5914,18 @@ describe('flujo en el panel', () => {
     expect(despues('Aprobación', 3)).toEqual([' 10 s', ' · espera 2 min', '│'])
     expect(despues('Ejecución', 2)).toEqual([' 30 s', '│'])
     expect(deTerminado(textos, 4)).toEqual(['● ', 'Terminado', ' 45 s', ' · espera 2 min'])
-    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Terminado · 45 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Terminado · 45 s')
 
     // En Inicio, solo queda la línea con el trabajo.
     await ui.press({ key: 'pestana-inicio' })
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Terminado · 45 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Terminado · 45 s'])
     expect((await textosDe(ui)).some(t => t.includes('espera'))).toBe(false)
     await ui.unmount()
   })
 
   test('una pregunta que responde al instante no dibuja espera', async ($, on) => {
     const { reloj } = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
@@ -5914,13 +5935,13 @@ describe('flujo en el panel', () => {
     await bash($, 'node ~/.claude/flujos/estado.mjs --base')
 
     expect((await textosDe(ui)).some(t => t.includes('espera'))).toBe(false)
-    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Ejecución · 15 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Ejecución · 15 s')
     await ui.unmount()
   })
 
   test('Escape con la pregunta abierta: Terminado · interrumpido con la espera hasta ese momento; la vuelta tardía con error llega intacta y no cambia nada', async ($, on) => {
     const { detener, fallan, reloj } = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
@@ -5937,7 +5958,7 @@ describe('flujo en el panel', () => {
     await $.turn.complete(respuesta('', { reason: 'aborted' }))
 
     const final = ['● ', 'Terminado · interrumpido', ' 5 s', ' · espera 1 min']
-    const linea = '/implementador · Terminado · interrumpido · 5 s'
+    const linea = '/qcc-implementador · Terminado · interrumpido · 5 s'
     expect((await desdeResumen(ui, 1))[0]).toBe(linea)
     expect(deTerminado(await textosDe(ui), 4)).toEqual(final)
 
@@ -5954,7 +5975,7 @@ describe('flujo en el panel', () => {
 
   test('tres exploradores en paralelo: el paso sigue en Exploración hasta que vuelve el último, en cualquier orden', async ($, on) => {
     const motor = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -5965,26 +5986,26 @@ describe('flujo en el panel', () => {
     const b = agente($, 'explorador', 'B')
     const c = agente($, 'explorador', 'C')
     await esperar()
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Exploración · 0 s'])
 
     abrirB()
     await b
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Exploración · 0 s'])
 
     abrirA()
     await a
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Exploración · 0 s'])
 
     abrirC()
     await c
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Plan · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Plan · 0 s'])
     await ui.unmount()
   })
 
   test('Exploración muestra cuántos exploradores se lanzaron: ×3 en paralelo, ×4 con otra tanda y sigue tras Terminado', async ($, on) => {
     const motor = preparar(on)
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -6019,10 +6040,10 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('/implementador: Plan ×2, Ejecución ×2 (con una que falla) y rev ×N donde corrieron; siguen tras Terminado y no van en la línea plegada', async ($, on) => {
+  test('/qcc-implementador: Plan ×2, Ejecución ×2 (con una que falla) y rev ×N donde corrieron; siguen tras Terminado y no van en la línea plegada', async ($, on) => {
     const motor = preparar(on)
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -6096,7 +6117,7 @@ describe('flujo en el panel', () => {
 
   test('si uno de varios exploradores falla, su error llega intacto y al volver el último el paso pasa a Plan', async ($, on) => {
     const motor = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const abrirA = motor.detener('A')
@@ -6111,20 +6132,20 @@ describe('flujo en el panel', () => {
 
     abrirA()
     await a
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Exploración · 0 s'])
 
     // B es el último en volver y vuelve con error: cuenta como vuelto y el paso avanza.
     abrirB()
     const error = await b
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).not.toMatch(/panel/i)
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Plan · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Plan · 0 s'])
     await ui.unmount()
   })
 
   test('si fallan todos los exploradores en paralelo, el paso queda en Exploración', async ($, on) => {
     const motor = preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const abrirA = motor.detener('A')
@@ -6144,21 +6165,21 @@ describe('flujo en el panel', () => {
     abrirB()
     expect(await a).toBeInstanceOf(Error)
     expect(await b).toBeInstanceOf(Error)
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Exploración · 0 s'])
     await ui.unmount()
   })
 
   test('turn.complete de un subagente no termina el flujo; uno abortado muestra Terminado · interrumpido', async ($, on) => {
     preparar(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO', { agentId: 'agente-1' }))
-    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 0 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Preflight · 0 s')
 
     await $.turn.complete(respuesta('', { reason: 'aborted' }))
-    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Terminado · interrumpido · 0 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Terminado · interrumpido · 0 s')
     const arbol = await ui.findAll({})
     const i = arbol.findIndex(n => n.type === 'Text' && n.text === 'Terminado · interrumpido')
     expect(arbol.slice(0, i).reverse().find(n => n.type === 'Text' && n.text === '● ')?.props.color).toBe('error')
@@ -6181,10 +6202,10 @@ describe('flujo en el panel', () => {
   test('session.end borra el flujo', async ($, on) => {
     preparar(on)
     on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    expect((await desdeResumen(ui, 1))[0]).toBe('/implementador · Preflight · 0 s')
+    expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Preflight · 0 s')
 
     await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
     expect(await desdeResumen(ui, 1)).toEqual(['sin flujo en esta sesión'])
@@ -6229,7 +6250,7 @@ describe('flujo en el panel', () => {
     on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
     on('ui.open', () => ({ value: { isPlaced: true } }))
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
@@ -6352,7 +6373,7 @@ describe('flujo en el panel', () => {
     on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
     on('ui.open', () => ({ value: { isPlaced: true } }))
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     return { motor, ui: await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' }) }
@@ -6492,7 +6513,7 @@ describe('flujo en el panel', () => {
     const { ui, motor, abrir, vuelos } = await explorando($, on)
     expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
 
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
     const abrirD = motor.detener('D')
     const abrirE = motor.detener('E')
@@ -6513,16 +6534,16 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('skill.prompt de /implementador con RELEVO abre flujo nuevo y vacía las filas', async ($, on) => {
+  test('skill.prompt de /qcc-implementador con RELEVO abre flujo nuevo y vacía las filas', async ($, on) => {
     const { ui, abrir, vuelos } = await explorando($, on)
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Exploración · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Exploración · 0 s'])
     expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
 
     // Ya no hay relevo: una marca RELEVO es un pedido más, el flujo empieza de nuevo y las filas se vacían.
-    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
 
     const [resumen] = await desdeResumen(ui, 1)
-    expect(resumen).toBe('/implementador · Preflight · 0 s')
+    expect(resumen).toBe('/qcc-implementador · Preflight · 0 s')
     expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(1)
 
     abrir.A()
@@ -6532,23 +6553,23 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('un /implementador normal con RELEVO solo en las instrucciones reinicia el flujo y no muestra el modo', async ($, on) => {
+  test('un /qcc-implementador normal con RELEVO solo en las instrucciones reinicia el flujo y no muestra el modo', async ($, on) => {
     const { reloj } = preparar(on)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-    await $.skill.prompt({ skill: 'implementador', text: '**Pedido:** algo' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '**Pedido:** algo' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
     reloj.t += 5_000
     await agente($, 'planificador')
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Plan · 5 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Plan · 5 s'])
 
     reloj.t += 10_000
     await $.skill.prompt({
-      skill: 'implementador',
+      skill: 'qcc-implementador',
       text: '**Pedido:** arreglar el panel\n\n- Si el pedido empieza con `RELEVO · vuelta`, sigue en el paso 3',
     })
 
-    expect(await desdeResumen(ui, 1)).toEqual(['/implementador · Preflight · 0 s'])
+    expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Preflight · 0 s'])
     await ui.unmount()
   })
 
@@ -6589,7 +6610,7 @@ describe('flujo en el panel', () => {
     on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
     on('ui.open', () => ({ value: { isPlaced: true } }))
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await bash($, 'node ~/.claude/flujos/estado.mjs')
 
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
@@ -7192,7 +7213,7 @@ describe('historial en el panel', () => {
   test('el fin del flujo por turn.complete relee el historial; un turno sin flujo en curso no', async ($, on) => {
     const { archivo, llamadas } = motorHistorial(on)
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     await abrirHistorial(ui)
@@ -7249,25 +7270,32 @@ describe('historial en el panel', () => {
 describe('freno', () => {
   const texto = { texto: 'sigue con lo otro' }
   const cerrado = { estado: 'completo', fin: 1000 }
-  const MOTIVO_A = 'Contexto de 96k: haz /clear antes de /implementador; el primer pedido reescribe todo en Sonnet. Envíalo de nuevo para seguir igual.'
+  const MOTIVO_A = 'Contexto de 96k: haz /clear antes de /qcc-implementador; el primer pedido reescribe todo en Sonnet. Envíalo de nuevo para seguir igual.'
   const MOTIVO_B =
     'Flujo cerrado: seguir aquí reescribe 96k de caché con el modelo de la sesión. Para «Queda para ti» usa `! comando`, o /clear. Envíalo de nuevo para seguir igual.'
 
-  test('/implementador con contexto grande frena una sola vez', () => {
-    const a = decidirFreno({ texto: '/implementador x', comando: 'implementador' }, 96_200, null, null)
+  test('/qcc-implementador con contexto grande frena una sola vez', () => {
+    const a = decidirFreno({ texto: '/qcc-implementador x', comando: 'qcc-implementador' }, 96_200, null, null)
     expect(a).toEqual({ motivo: MOTIVO_A, freno: { frenado: true } })
 
-    const reenvio = decidirFreno({ texto: '/implementador x', comando: 'implementador' }, 96_200, null, a.freno)
+    const reenvio = decidirFreno({ texto: '/qcc-implementador x', comando: 'qcc-implementador' }, 96_200, null, a.freno)
     expect(reenvio).toEqual({ motivo: null, freno: null })
   })
 
-  test('con 60.000 pasa, con 60.001 frena, y x:implementador frena', () => {
+  test('con 60.000 pasa, con 60.001 frena, y x:qcc-implementador frena', () => {
     expect(UMBRAL_FRENO).toBe(60_000)
-    expect(decidirFreno({ texto: '/implementador', comando: 'implementador' }, 60_000, null, null)).toEqual({ motivo: null, freno: null })
-    expect(decidirFreno({ texto: '/implementador', comando: 'implementador' }, 60_001, null, null).motivo).toContain('Contexto de 60k')
-    expect(decidirFreno({ texto: '/x:implementador', comando: 'x:implementador' }, 96_200, null, null)).toEqual({ motivo: MOTIVO_A, freno: { frenado: true } })
+    expect(decidirFreno({ texto: '/qcc-implementador', comando: 'qcc-implementador' }, 60_000, null, null)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno({ texto: '/qcc-implementador', comando: 'qcc-implementador' }, 60_001, null, null).motivo).toContain('Contexto de 60k')
+    expect(decidirFreno({ texto: '/x:qcc-implementador', comando: 'x:qcc-implementador' }, 96_200, null, null)).toEqual({ motivo: MOTIVO_A, freno: { frenado: true } })
     expect(decidirFreno({ texto: '/otro', comando: 'otro' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
-    expect(decidirFreno({ texto: '/implementadorx', comando: 'implementadorx' }, 96_200, null, null).motivo).toBeNull()
+    expect(decidirFreno({ texto: '/qcc-implementadorx', comando: 'qcc-implementadorx' }, 96_200, null, null).motivo).toBeNull()
+  })
+
+  test('freno con qcc-implementador: frena con el nombre nuevo y deja pasar el viejo', () => {
+    expect(decidirFreno({ texto: '/qcc-implementador x', comando: 'qcc-implementador' }, 96_200, null, null)).toEqual({ motivo: MOTIVO_A, freno: { frenado: true } })
+    expect(decidirFreno({ texto: '/qcc:qcc-implementador x', comando: 'qcc:qcc-implementador' }, 96_200, null, null).motivo).toBe(MOTIVO_A)
+    expect(decidirFreno({ texto: '/implementador x', comando: 'implementador' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno({ texto: '/qcc:implementador x', comando: 'qcc:implementador' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
   })
 
   test('tras un flujo cerrado el primer mensaje frena, su reenvío pasa y un tercero pasa', () => {
@@ -7315,7 +7343,7 @@ describe('freno', () => {
   })
 
   test('sin tokens nunca frena, pero el primer mensaje tras el cierre consume cierreVisto', () => {
-    expect(decidirFreno({ texto: '/implementador', comando: 'implementador' }, undefined, null, null)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno({ texto: '/qcc-implementador', comando: 'qcc-implementador' }, undefined, null, null)).toEqual({ motivo: null, freno: null })
 
     const primero = decidirFreno(texto, undefined, cerrado, null)
     expect(primero).toEqual({ motivo: null, freno: { cierreVisto: 1000 } })
@@ -7327,7 +7355,7 @@ describe('freno', () => {
     const gastado = decidirFreno({ texto: '! ls' }, 96_200, cerrado, frenado)
     expect(gastado).toEqual({ motivo: null, freno: { cierreVisto: 1000 } })
 
-    const frenadoA = decidirFreno({ texto: '/implementador', comando: 'implementador' }, 96_200, cerrado, null).freno
+    const frenadoA = decidirFreno({ texto: '/qcc-implementador', comando: 'qcc-implementador' }, 96_200, cerrado, null).freno
     expect(decidirFreno({ texto: '/otro', comando: 'otro' }, 96_200, cerrado, frenadoA)).toEqual({ motivo: null, freno: null })
     expect(decidirFreno(texto, 96_200, cerrado, frenadoA).motivo).toBeNull()
     expect(decidirFreno(texto, 96_200, cerrado, frenadoA).freno).toEqual({ cierreVisto: 1000 })
@@ -7339,12 +7367,12 @@ describe('freno', () => {
 
     const antes: Freno = { cierreVisto: 5 }
     expect(decidirFreno(texto, 96_200, null, antes).freno).toBe(antes)
-    expect(decidirFreno({ texto: '/implementador', comando: 'implementador' }, 96_200, null, antes).freno).toEqual({ frenado: true, cierreVisto: 5 })
+    expect(decidirFreno({ texto: '/qcc-implementador', comando: 'qcc-implementador' }, 96_200, null, antes).freno).toEqual({ frenado: true, cierreVisto: 5 })
   })
 })
 
 describe('freno y avisos en el panel', () => {
-  const MOTIVO_A = 'Contexto de 96k: haz /clear antes de /implementador; el primer pedido reescribe todo en Sonnet. Envíalo de nuevo para seguir igual.'
+  const MOTIVO_A = 'Contexto de 96k: haz /clear antes de /qcc-implementador; el primer pedido reescribe todo en Sonnet. Envíalo de nuevo para seguir igual.'
   const MOTIVO_B =
     'Flujo cerrado: seguir aquí reescribe 96k de caché con el modelo de la sesión. Para «Queda para ti» usa `! comando`, o /clear. Envíalo de nuevo para seguir igual.'
   const MEDIDA_50K: SessionMeasureInput = { ...MEDIDA, context: { ...MEDIDA.context, tokens: 50_000 } }
@@ -7402,28 +7430,28 @@ describe('freno y avisos en el panel', () => {
       ...(agentId === undefined ? {} : { agentId }),
     })
 
-  /** Un flujo `/implementador` que ya terminó con la respuesta dada. */
+  /** Un flujo `/qcc-implementador` que ya terminó con la respuesta dada. */
   async function flujoCerrado($: Engine, answer: string) {
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await $.turn.complete(respuesta(answer))
   }
 
-  test('/implementador con contexto grande se frena y el reenvío pasa a next', async ($, on) => {
+  test('/qcc-implementador con contexto grande se frena y el reenvío pasa a next', async ($, on) => {
     const { entradas } = motor(on)
     await $.session.measure(MEDIDA)
 
-    expect(await enviar($, '/implementador x', 'implementador')).toEqual({ drop: MOTIVO_A })
+    expect(await enviar($, '/qcc-implementador x', 'qcc-implementador')).toEqual({ drop: MOTIVO_A })
     expect(entradas).toEqual([])
-    expect(await enviar($, '/implementador x', 'implementador')).toEqual({ text: '/implementador x' })
-    expect(entradas).toEqual(['/implementador x'])
+    expect(await enviar($, '/qcc-implementador x', 'qcc-implementador')).toEqual({ text: '/qcc-implementador x' })
+    expect(entradas).toEqual(['/qcc-implementador x'])
   })
 
-  test('con 50.000 tokens /implementador pasa', async ($, on) => {
+  test('con 50.000 tokens /qcc-implementador pasa', async ($, on) => {
     const { entradas } = motor(on)
     await $.session.measure(MEDIDA_50K)
 
-    expect(await enviar($, '/implementador x', 'implementador')).toEqual({ text: '/implementador x' })
-    expect(entradas).toEqual(['/implementador x'])
+    expect(await enviar($, '/qcc-implementador x', 'qcc-implementador')).toEqual({ text: '/qcc-implementador x' })
+    expect(entradas).toEqual(['/qcc-implementador x'])
   })
 
   test('tras cerrar un flujo, el primer mensaje libre se frena y el reenvío pasa', async ($, on) => {
@@ -7465,14 +7493,14 @@ describe('freno y avisos en el panel', () => {
     await flujoCerrado($, 'CIERRE · x — COMPLETO')
 
     expect(await enviar($, 'aviso de tarea', undefined, { kind: 'task-notification' })).toEqual({ text: 'aviso de tarea' })
-    expect(await enviar($, '/implementador x', 'implementador', { kind: 'peer' })).toEqual({ text: '/implementador x' })
+    expect(await enviar($, '/qcc-implementador x', 'qcc-implementador', { kind: 'peer' })).toEqual({ text: '/qcc-implementador x' })
     expect(await enviar($, 'hola')).toEqual({ drop: MOTIVO_B })
-    expect(entradas).toEqual(['aviso de tarea', '/implementador x'])
+    expect(entradas).toEqual(['aviso de tarea', '/qcc-implementador x'])
   })
 
   test('toast: «El plan espera tu aprobación» con el header Plan y «El flujo te hace una pregunta» con otro', async ($, on) => {
     const { avisos } = motor(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     await preguntar($, 'Plan')
     expect(avisos).toEqual(['El plan espera tu aprobación'])
@@ -7486,7 +7514,7 @@ describe('freno y avisos en el panel', () => {
     await preguntar($, 'Plan')
     expect(avisos).toEqual([])
 
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await preguntar($, 'Plan', 'agente-1')
     expect(avisos).toEqual([])
 
@@ -7511,7 +7539,7 @@ describe('freno y avisos en el panel', () => {
 
   test('toast: un turno interrumpido avisa «Flujo terminado: interrumpido»', async ($, on) => {
     const { avisos } = motor(on)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await $.turn.complete({ ...respuesta(''), reason: 'aborted', isAborted: true })
 
     expect(avisos).toEqual(['Flujo terminado: interrumpido'])
@@ -7520,7 +7548,7 @@ describe('freno y avisos en el panel', () => {
   test('un turno cortado sin CIERRE queda interrumpido, no frena el mensaje siguiente y estado.mjs lo retoma hasta el cierre', async ($, on) => {
     const { entradas, avisos } = motor(on)
     await $.session.measure(MEDIDA)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
 
     // El límite de uso corta el turno: la respuesta no trae CIERRE.
     await $.turn.complete(respuesta('Llegué al límite de uso; falta S4 y S5.'))
@@ -7541,7 +7569,7 @@ describe('freno y avisos en el panel', () => {
 
   test('un toast que falla no rompe el fin del flujo ni la pregunta', async ($, on) => {
     motor(on, true)
-    await $.skill.prompt({ skill: 'implementador', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     expect(await preguntar($, 'Plan')).toEqual({ result: 'listo' })
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
   })

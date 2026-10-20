@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Guardia PreToolUse del agente generador-commit: solo deja pasar git status, diff, log y show simples.
+// Guardia PreToolUse del agente qcc-generador-commit: solo deja pasar git status, diff, log y show simples.
 // Lee el evento por stdin y, si el comando no se permite, imprime un deny. No escribe registros.
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -61,7 +61,7 @@ async function main() {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
-      permissionDecisionReason: `Guardia /generar-commit: ${motivo}. Solo se permiten git status, diff, log y show simples.`,
+      permissionDecisionReason: `Guardia /qcc-commit: ${motivo}. Solo se permiten git status, diff, log y show simples.`,
     },
   }))
 }

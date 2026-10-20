@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Escalera de verificación de los flujos /implementador, para cualquier proyecto.
 //
-// Los pasos salen de `<raíz>/.claude/implementador.json` (`"verificar": [{ "nombre", "cmd", "timeoutSeg"? }]`,
+// Los pasos salen de `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, `.claude/implementador.json`) (`"verificar": [{ "nombre", "cmd", "timeoutSeg"? }]`,
 // en orden). Sin esa clave se detectan:
 //   - JS/TS: scripts de package.json, en este orden: typecheck (o type-check / check-types /
 //     tsc), lint, build, test; con el gestor del lockfile.
@@ -283,7 +283,7 @@ export function pasosDe(raiz) {
   const config = configDe(raiz)
   if (config.verificar) {
     return {
-      origen: '.claude/implementador.json',
+      origen: config.nombre,
       pasos: config.verificar.filter((p) => p && p.cmd).map((p) => ({
         nombre: String(p.nombre ?? p.cmd),
         cmd: String(p.cmd),
@@ -366,7 +366,7 @@ async function main() {
 
   if (!pasos.length) {
     console.log(`verificar: sin pasos (origen: ${origen}) en ${RAIZ}`)
-    console.log('Define los comandos en .claude/implementador.json → "verificar": [{ "nombre": "test", "cmd": "…" }]')
+    console.log('Define los comandos en .claude/qcc-implementador.json →"verificar": [{ "nombre": "test", "cmd": "…" }]')
     console.log('RESULTADO: SIN PASOS')
     process.exitCode = 3
     return

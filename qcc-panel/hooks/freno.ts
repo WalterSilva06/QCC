@@ -21,7 +21,7 @@ function armar(frenado: boolean, cierreVisto: number | undefined): Freno | null 
  * 1. Con `antes.frenado` el envío pasa (es el reenvío del aviso) y `frenado` se borra. Eso vale para cualquier envío: un `! cmd` o un `/otro` también
  *    gasta el reenvío, y el texto siguiente vuelve a poder frenarse por el caso b). Es aceptable. Si el envío cumple las condiciones de b) anota además
  *    `cierreVisto`.
- * 2. a) `comando` es `implementador` o termina en `:implementador` y `tokens` pasa de `UMBRAL_FRENO`: frena con `frenado`.
+ * 2. a) `comando` es `qcc-implementador` o termina en `:qcc-implementador` y `tokens` pasa de `UMBRAL_FRENO`: frena con `frenado`.
  * 3. b) Texto libre (`comando` ausente y texto que no empieza con `!` ni `/`, tras `trimStart`) tras un flujo cerrado (`completo` o `detenido`,
  *    con `fin` no nulo) cuyo cierre aún no se vio (`antes.cierreVisto !== fin`): anota `cierreVisto = fin`. Si además `tokens` pasa del umbral, frena.
  *    Un flujo `interrumpido` no cuenta: el mensaje siguiente suele ser para retomarlo.
@@ -46,9 +46,9 @@ export function decidirFreno(
 
   const comando = envio.comando
 
-  if (grande && comando !== undefined && (comando === 'implementador' || comando.endsWith(':implementador'))) {
+  if (grande && comando !== undefined && (comando === 'qcc-implementador' || comando.endsWith(':qcc-implementador'))) {
     return {
-      motivo: `Contexto de ${k}k: haz /clear antes de /implementador; el primer pedido reescribe todo en Sonnet. Envíalo de nuevo para seguir igual.`,
+      motivo: `Contexto de ${k}k: haz /clear antes de /qcc-implementador; el primer pedido reescribe todo en Sonnet. Envíalo de nuevo para seguir igual.`,
       freno: armar(true, antes?.cierreVisto),
     }
   }

@@ -1,4 +1,4 @@
-// Flujo `/implementador` en curso. Puro: sin `$`, para poder probarlo solo.
+// Flujo `/qcc-implementador` en curso. Puro: sin `$`, para poder probarlo solo.
 
 import type { FilaSemana, Flujo, Semana } from '../types'
 import { duracion, tokens, totalConSalida } from './formato'
@@ -49,7 +49,7 @@ export type PorExplorador = { descripcion: string; ms?: number; gasto?: number; 
 
 /** Los pasos de cada flujo, en orden. */
 export const PASOS: Record<Flujo['nombre'], readonly string[]> = {
-  implementador: ['Preflight', 'Exploración', 'Plan', 'Revisión del plan', 'Aprobación', 'Ejecución', 'Verificación final', 'Cierre'],
+  'qcc-implementador': ['Preflight', 'Exploración', 'Plan', 'Revisión del plan', 'Aprobación', 'Ejecución', 'Verificación final', 'Cierre'],
 }
 
 const SKILLS: readonly string[] = Object.keys(PASOS)
@@ -61,13 +61,18 @@ export function pasosDe(f: Flujo): readonly string[] {
   return PASOS[f.nombre] ?? []
 }
 
+/** El rol corto de un agente: su nombre sin espacios ni prefijo `qcc-` (`qcc-explorador` → `explorador`). */
+export function rolDeAgente(nombre: string): string {
+  return nombre.trim().replace(/^qcc-/, '')
+}
+
 /** El nombre de la skill sin `/` ni prefijo `plugin:`. */
 function nombreDeSkill(skill: string): string {
   return skill.trim().replace(/^\//, '').split(':').pop() ?? ''
 }
 
 /**
- * Flujo nuevo si `skill` es `implementador` (con o sin `/` y con o sin prefijo `plugin:`); `null` si no.
+ * Flujo nuevo si `skill` es `qcc-implementador` (con o sin `/` y con o sin prefijo `plugin:`); `null` si no.
  * `t` es la hora (ms) de inicio.
  * `base` es lo que la sesión ya llevaba gastado (ver `baseDeUso`); sin ella o vacía, el flujo no lleva `usoBase`.
  */
@@ -154,7 +159,7 @@ export function senalDeHerramienta(tool: string, args: unknown, agentId?: string
   if (tool === 'Bash') return senalDeComando(texto(args, 'command'))
 
   if (tool === 'Agent') {
-    const nombre = texto(args, 'subagent_type').trim()
+    const nombre = rolDeAgente(texto(args, 'subagent_type'))
 
     return nombre === '' ? null : { tipo: 'agente', nombre }
   }
@@ -192,7 +197,7 @@ export function exploradoresLanzados(f: Flujo): number {
   return Math.max(f.totalExploradores ?? 0, f.exploradores ?? 0)
 }
 
-/** Qué cambia en `/implementador` con la señal `s`. */
+/** Qué cambia en `/qcc-implementador` con la señal `s`. */
 function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
   const p = f.paso
 
@@ -418,7 +423,7 @@ export function abreTanda(f: Flujo | null, s: Senal): boolean {
   return s.nombre === 'revisor' && (f.revisores ?? 0) === 0
 }
 
-/** Tope de ■ de una fila anotada: el máximo de exploradores en paralelo de `/implementador`. */
+/** Tope de ■ de una fila anotada: el máximo de exploradores en paralelo de `/qcc-implementador`. */
 export const TOPE_EN_VUELO = 5
 
 /**
@@ -804,7 +809,7 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
 
 /**
  * Agente y configuración (modelo y esfuerzo) de cada línea de agente que dibuja el panel.
- * Copia de la tabla «Agentes» de `flujos/skills/implementador/SKILL.md` y del frontmatter de `flujos/agents/*.md`: si cambian allí, cambian aquí.
+ * Copia de la tabla «Agentes» de `flujos/skills/qcc-implementador/SKILL.md` y del frontmatter de `flujos/agents/*.md`: si cambian allí, cambian aquí.
  * `revisorSubtarea` queda para flujos de versiones anteriores, que lanzaban un revisor por subtarea.
  */
 export const AGENTE_DE_PASO = {
@@ -953,8 +958,8 @@ export function detallePaso(n: Nodo, orquestador?: string, ancho?: number): stri
 }
 
 /**
- * Una línea con el flujo y dónde va: `/implementador · Ejecución`; `sin flujo en esta sesión` si no hay.
- * Con la hora `t` (ms) agrega el tiempo total de trabajo al final, sin la espera al usuario: `/implementador · Ejecución · 3 min 20 s`.
+ * Una línea con el flujo y dónde va: `/qcc-implementador · Ejecución`; `sin flujo en esta sesión` si no hay.
+ * Con la hora `t` (ms) agrega el tiempo total de trabajo al final, sin la espera al usuario: `/qcc-implementador · Ejecución · 3 min 20 s`.
  */
 export function resumenFlujo(sinCompletar: Flujo | null, t?: number): string {
   if (!sinCompletar) return 'sin flujo en esta sesión'

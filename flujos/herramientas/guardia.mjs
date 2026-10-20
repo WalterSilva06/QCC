@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Guardia de los subagentes de /implementador (nivel usuario: sirve
+// Guardia de los subagentes de /qcc-implementador (nivel usuario: sirve
 // para cualquier proyecto).
 //
 // Hook PreToolUse que declaran en su frontmatter `ejecutor` (argumento `ejecutor`) y
@@ -12,8 +12,9 @@
 // `explorador`, `planificador` y `revisor-plan` (solo lectura) solo anotan sus Read, Glob y Grep
 // con decision `lectura`: nunca niegan ni imprimen nada.
 //
-// Lo propio de cada proyecto va en `<raíz>/.claude/implementador.json`, clave `guardia`
-// (ver `config.ejemplo.md`). Sin ese archivo rigen los valores por defecto.
+// Lo propio de cada proyecto va en `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, el
+// nombre viejo `.claude/implementador.json`), clave `guardia` (ver `config.ejemplo.md`).
+// Sin ese archivo rigen los valores por defecto.
 //
 // En una copia solo cuenta el destino; las variables asignadas en el mismo comando (`S=/tmp/x; mkdir "$S"`) se
 // expanden; el ejecutor escribe en temporales y el revisor, además, edita en sitio (`sed -i`) solo ahí.
@@ -81,7 +82,7 @@ export function arbolDe(raiz, forzar = []) {
     }
   }
   const indiceReal = path.resolve(raiz, git(['rev-parse', '--git-path', 'index']).trim())
-  const tmp = path.join(os.tmpdir(), `implementador-indice-${process.pid}-${Date.now()}`)
+  const tmp = path.join(os.tmpdir(), `qcc-implementador-indice-${process.pid}-${Date.now()}`)
   try {
     fs.copyFileSync(indiceReal, tmp)
   } catch {
@@ -190,14 +191,23 @@ export function gestorDe(raiz, pkg = leerJson(path.join(raiz, 'package.json'))) 
   return pm ?? null
 }
 
-/** Configuración efectiva del proyecto: valores por defecto + `.claude/implementador.json`. */
+/** Config del proyecto: el nombre nuevo y, solo si no existe, el viejo (nunca se mezclan). */
+const CONFIG_NUEVA = '.claude/qcc-implementador.json'
+const CONFIG_VIEJA = '.claude/implementador.json'
+
+/**
+ * Configuración efectiva del proyecto: valores por defecto + `.claude/qcc-implementador.json`
+ * o, si no existe, `.claude/implementador.json`. `nombre` es el archivo que rige (el nuevo si no hay ninguno).
+ */
 export function configDe(raiz) {
   if (cacheConfig.has(raiz)) return cacheConfig.get(raiz)
-  const archivo = path.join(raiz, '.claude', 'implementador.json')
+  const nombre = fs.existsSync(path.join(raiz, CONFIG_NUEVA)) || !fs.existsSync(path.join(raiz, CONFIG_VIEJA)) ? CONFIG_NUEVA : CONFIG_VIEJA
+  const archivo = path.join(raiz, nombre)
   const crudo = leerJson(archivo)
   const g = crudo?.guardia ?? {}
   const pkg = leerJson(path.join(raiz, 'package.json'))
   const config = {
+    nombre,
     archivo: crudo ? archivo : null,
     invalido: fs.existsSync(archivo) && !crudo,
     verificar: Array.isArray(crudo?.verificar) ? crudo.verificar : null,
@@ -650,7 +660,7 @@ function motivoScript(nombre, ctx) {
     return `${pm} run ${nombre}: script negado a los subagentes (servidor, despliegue o servicio vivo): queda para el usuario`
   }
   if (config.scriptsPermitidos && !config.scriptsPermitidos.includes(nombre)) {
-    return `${pm} run ${nombre}: en este proyecto los subagentes solo corren ${config.scriptsPermitidos.join(', ')} (.claude/implementador.json)`
+    return `${pm} run ${nombre}: en este proyecto los subagentes solo corren ${config.scriptsPermitidos.join(', ')} (${config.nombre})`
   }
   return null
 }
@@ -1118,7 +1128,7 @@ async function main() {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: `Guardia /implementador: ${resultado.motivo}. No lo rodees: anótalo en BLOQUEOS de tu reporte.`,
+        permissionDecisionReason: `Guardia /qcc-implementador: ${resultado.motivo}. No lo rodees: anótalo en BLOQUEOS de tu reporte.`,
       },
     }))
   }

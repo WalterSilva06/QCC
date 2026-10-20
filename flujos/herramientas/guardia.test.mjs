@@ -1,7 +1,8 @@
 // Casos de la guardia, del chequeo de alcance, de estado y de verificar de /implementador.
 // Correr: node --test ~/.claude/flujos/guardia.test.mjs
 //
-// Arma dos repos de prueba en el temporal: uno con `.claude/implementador.json` estricto
+// Arma dos repos de prueba en el temporal: uno con `.claude/implementador.json` estricto (nombre viejo, que se
+// lee de respaldo; los casos de `.claude/qcc-implementador.json` crean sus propios repos)
 // (pnpm, migraciones inmutables, scripts negados, secretos) y uno npm sin config, para
 // comprobar los valores por defecto.
 
@@ -617,12 +618,80 @@ test('estado: preflight informa las reglas del proyecto', () => {
   assert.equal(reglas({ '.claude/implementador.md': 'x\n' }), '.claude/implementador.md')
   assert.equal(
     reglas({}),
-    'ninguna (no hay .claude/implementador/ ni .claude/implementador.md; rigen CLAUDE.md y las reglas comunes)',
+    'ninguna (no hay .claude/qcc-implementador/ ni .claude/qcc-implementador.md; rigen CLAUDE.md y las reglas comunes)',
   )
   assert.equal(
     reglas({ '.claude/implementador/clasificacion.md': 'x\n', '.claude/implementador.md': 'x\n' }),
     '.claude/implementador/',
   )
+})
+
+test('reglas: .claude/qcc-implementador/ manda sobre .claude/implementador/', () => {
+  const reglas = (extra) => /^REGLAS DEL PROYECTO: (.*)$/m.exec(estadoCon({}, () => [], extra).salida)?.[1]
+  const vieja = { '.claude/implementador/clasificacion.md': 'V\n', '.claude/implementador.md': 'V\n' }
+
+  assert.equal(reglas({ '.claude/qcc-implementador/clasificacion.md': 'N\n' }), '.claude/qcc-implementador/')
+  assert.equal(reglas({ '.claude/qcc-implementador.md': 'N\n' }), '.claude/qcc-implementador.md')
+  // Con las dos a la vez manda la nueva (carpeta antes que .md) y las viejas no se mezclan.
+  assert.equal(reglas({ ...vieja, '.claude/qcc-implementador/clasificacion.md': 'N\n' }), '.claude/qcc-implementador/')
+  assert.equal(reglas({ ...vieja, '.claude/qcc-implementador.md': 'N\n' }), '.claude/qcc-implementador.md')
+  assert.equal(reglas({ '.claude/qcc-implementador/clasificacion.md': 'N\n', '.claude/qcc-implementador.md': 'N\n' }), '.claude/qcc-implementador/')
+
+  const texto = (extra) => estadoCon({}, () => ['--reglas'], extra).salida.trimEnd()
+  assert.equal(
+    texto({ ...vieja, '.claude/qcc-implementador/clasificacion.md': 'N\n' }),
+    'REGLAS DEL PROYECTO: .claude/qcc-implementador/\n\nN',
+  )
+  assert.equal(
+    texto({ ...vieja, '.claude/qcc-implementador.md': 'N\n' }),
+    'REGLAS DEL PROYECTO: .claude/qcc-implementador.md\n\nN',
+  )
+})
+
+test('config: .claude/qcc-implementador.json manda sobre .claude/implementador.json', () => {
+  const raiz = repo('config-nueva', {
+    '.claude/qcc-implementador.json': { verificar: [{ nombre: 'nuevo', cmd: 'echo nuevo' }], guardia: { secretos: ['nuevo.key'] } },
+    '.claude/implementador.json': { verificar: [{ nombre: 'viejo', cmd: 'echo viejo' }], guardia: { secretos: ['viejo.key'] } },
+  })
+  temporales.push(raiz)
+  const config = configDe(raiz)
+  assert.equal(config.nombre, '.claude/qcc-implementador.json')
+  assert.equal(config.archivo, path.join(raiz, '.claude', 'qcc-implementador.json'))
+  // Nunca se mezclan: solo valen los valores del nuevo.
+  assert.deepEqual(config.secretos, ['nuevo.key'])
+  assert.deepEqual(config.verificar, [{ nombre: 'nuevo', cmd: 'echo nuevo' }])
+  const { pasos, origen } = pasosDe(raiz)
+  assert.equal(origen, '.claude/qcc-implementador.json')
+  assert.deepEqual(pasos.map((p) => p.cmd), ['echo nuevo'])
+
+  // Un nuevo inválido no cae al viejo: se avisa y rigen los valores por defecto.
+  const rota = repo('config-rota', {
+    '.claude/qcc-implementador.json': '{ no es json',
+    '.claude/implementador.json': { guardia: { secretos: ['viejo.key'] } },
+  })
+  temporales.push(rota)
+  const c = configDe(rota)
+  assert.equal(c.invalido, true)
+  assert.equal(c.archivo, null)
+  assert.deepEqual(c.secretos, [])
+})
+
+test('config: sin la nueva lee la vieja', () => {
+  const vieja = repo('config-vieja', { '.claude/implementador.json': { verificar: [{ nombre: 'viejo', cmd: 'echo viejo' }], guardia: { secretos: ['viejo.key'] } } })
+  temporales.push(vieja)
+  const config = configDe(vieja)
+  assert.equal(config.nombre, '.claude/implementador.json')
+  assert.equal(config.archivo, path.join(vieja, '.claude', 'implementador.json'))
+  assert.deepEqual(config.secretos, ['viejo.key'])
+  assert.equal(pasosDe(vieja).origen, '.claude/implementador.json')
+
+  // Sin ninguna: sin archivo, y el nombre que se sugiere es el nuevo.
+  const ninguna = repo('config-ninguna', { 'a.txt': 'a\n' })
+  temporales.push(ninguna)
+  const sin = configDe(ninguna)
+  assert.equal(sin.archivo, null)
+  assert.equal(sin.invalido, false)
+  assert.equal(sin.nombre, '.claude/qcc-implementador.json')
 })
 
 test('verificar: resúmenes y detalle', () => {
@@ -720,20 +789,40 @@ test('estado: --reglas da las reglas del orquestador, sin avisos falsos', () => 
   assert.equal(reglas(carpeta({ 'clasificacion.md': 'C\n', 'planificar.md': 'P\n' })), `${carpetaUno}C\n\nP`)
   assert.match(reglas(carpeta({ 'ejecutor.md': 'E\n' })), /^REGLAS DEL PROYECTO: \.claude\/implementador\/\n\n\(no tiene clasificacion\.md, buscar\.md ni planificar\.md/)
   assert.equal(reglas({ '.claude/implementador.md': 'U\n' }), 'REGLAS DEL PROYECTO: .claude/implementador.md\n\nU')
-  assert.match(reglas({}), /^REGLAS DEL PROYECTO: ninguna\n\n\(Este proyecto no tiene \.claude\/implementador\/ ni \.claude\/implementador\.md/)
+  assert.match(reglas({}), /^REGLAS DEL PROYECTO: ninguna\n\n\(Este proyecto no tiene \.claude\/qcc-implementador\/ ni \.claude\/qcc-implementador\.md/)
 })
 
-test('estado: la autoprueba falla si el proyecto redefine ejecutor o revisor sin la guardia', (t) => {
-  const instalados = ['ejecutor', 'revisor'].every((a) => fs.existsSync(path.join(os.homedir(), '.claude', 'agents', `${a}.md`)))
-  if (!instalados) {
-    t.skip('sin los agentes instalados en ~/.claude/agents la autoprueba falla antes')
-    return
-  }
-  const guardia = (extra) => /^GUARDIA: (.*)$/m.exec(estadoCon({}, () => [], extra).salida)?.[1] ?? ''
+/** `CLAUDE_CONFIG_DIR` falso con esos agentes en `agents/` (`{ archivo: texto }`); devuelve la carpeta. */
+function claudeConAgentes(agentes) {
+  const dir = fs.mkdtempSync(path.join(PRUEBAS, 'claude-agentes-'))
+  fs.mkdirSync(path.join(dir, 'agents'))
+  for (const [archivo, texto] of Object.entries(agentes)) fs.writeFileSync(path.join(dir, 'agents', archivo), texto)
+  return dir
+}
 
-  assert.match(guardia({ '.claude/agents/ejecutor.md': '---\nname: ejecutor\n---\nsin hook\n' }), /^FALLA \(el proyecto redefine ejecutor en \.claude\/agents\/ejecutor\.md sin la guardia\)$/)
-  assert.match(guardia({ '.claude/agents/revisor.md': 'command: node "$HOME/.claude/flujos/guardia.mjs" revisor\n' }), /^OK con avisos: el proyecto redefine revisor /)
-  assert.match(guardia({ '.claude/agents/revisor-plan.md': 'x\n' }), /^OK con avisos: el proyecto redefine revisor-plan /)
+const AGENTES_CON_HOOK = {
+  'qcc-ejecutor.md': 'command: node "$HOME/.claude/flujos/guardia.mjs" ejecutor\n',
+  'qcc-revisor.md': 'command: node "$HOME/.claude/flujos/guardia.mjs" revisor\n',
+}
+
+test('estado: la autoprueba falla si el proyecto redefine ejecutor o revisor sin la guardia', () => {
+  const entorno = { CLAUDE_CONFIG_DIR: claudeConAgentes(AGENTES_CON_HOOK) }
+  const guardia = (extra) => /^GUARDIA: (.*)$/m.exec(estadoCon({}, () => [], extra, entorno).salida)?.[1] ?? ''
+
+  assert.match(guardia({ '.claude/agents/qcc-ejecutor.md': '---\nname: qcc-ejecutor\n---\nsin hook\n' }), /^FALLA \(el proyecto redefine qcc-ejecutor en \.claude\/agents\/qcc-ejecutor\.md sin la guardia\)$/)
+  assert.match(guardia({ '.claude/agents/qcc-revisor.md': 'command: node "$HOME/.claude/flujos/guardia.mjs" revisor\n' }), /^OK con avisos: el proyecto redefine qcc-revisor /)
+  assert.match(guardia({ '.claude/agents/qcc-revisor-plan.md': 'x\n' }), /^OK con avisos: el proyecto redefine qcc-revisor-plan /)
+})
+
+test('preflight: la autoprueba lee qcc-ejecutor.md y qcc-revisor.md', () => {
+  const guardia = (agentes, extra = {}) => /^GUARDIA: (.*)$/m.exec(estadoCon({}, () => [], extra, { CLAUDE_CONFIG_DIR: claudeConAgentes(agentes) }).salida)?.[1] ?? ''
+
+  assert.equal(guardia(AGENTES_CON_HOOK), 'OK')
+  // Con los nombres viejos (sin `qcc-`) no encuentra los agentes: la guardia no se puede comprobar.
+  assert.match(guardia({ 'ejecutor.md': 'command: guardia.mjs\n', 'revisor.md': 'command: guardia.mjs\n' }), /^FALLA \(.*qcc-ejecutor\.md/)
+  assert.match(guardia({ ...AGENTES_CON_HOOK, 'qcc-revisor.md': 'sin hook\n' }), /^FALLA \(~\/\.claude\/agents\/qcc-revisor\.md no declara el hook\)$/)
+  // Un `.claude/agents/<rol>.md` viejo en el proyecto ya no manda sobre nada: avisa.
+  assert.match(guardia(AGENTES_CON_HOOK, { '.claude/agents/ejecutor.md': 'x\n' }), /^OK con avisos: \.claude\/agents\/ejecutor\.md ya no redefine nada/)
 })
 
 const PLAN = `PREGUNTAS: ¿algo?
@@ -858,7 +947,7 @@ test('estado: decisionesDelPlan replica pasos.md y comun.md', () => {
   assert.equal(decisionesDelPlan({ clasificacion: 'CRÍTICO (#3) – uno — dos', subtareas: [sub(1, ['a.mjs'])] }).critico, 'CRÍTICO: #3 — uno — dos')
 
   // Tests entre los permitidos: `tests` en ASPECTOS (carpeta o sufijo, sin distinguir mayúsculas).
-  for (const ruta of ['flujos/herramientas/guardia.test.mjs', 'panel-uso/tests/panel.tsx', 'src/__tests__/a.ts', 'x/Foo.SPEC.ts', 'a_test.py']) {
+  for (const ruta of ['flujos/herramientas/guardia.test.mjs', 'qcc-panel/tests/panel.tsx', 'src/__tests__/a.ts', 'x/Foo.SPEC.ts', 'a_test.py']) {
     assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, [ruta])] }).aspectos, /, tests/, ruta)
   }
   assert.doesNotMatch(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['src/contest.ts', 'latest/a.ts'])] }).aspectos, /tests/)
@@ -1409,6 +1498,47 @@ test('costos: métricas del flujo desde transcripts armados', () => {
   // Sin sesión en ese repo, no hay métricas; el costo sigue siendo el mismo que con costoDelFlujo.
   assert.equal(metricasDelFlujo(path.join(os.tmpdir(), 'repo-sin-sesion'), en(0), opciones), null)
   assert.equal(costoDelFlujo(raiz, en(0), opciones).usd, m.costo.usd)
+})
+
+test('costos: reconoce /qcc-implementador y agentType qcc-ejecutor como rol ejecutor', () => {
+  const raiz = path.join(os.tmpdir(), 'repo-metricas-qcc')
+  const claude = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
+  temporales.push(claude)
+  const sesion = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  const subagentes = path.join(sesion, 's1', 'subagents')
+  fs.mkdirSync(subagentes, { recursive: true })
+  const inicio = Date.parse('2026-01-01T10:00:00.000Z')
+  const en = (s) => new Date(inicio + s * 1000).toISOString()
+  const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
+  const uso = { input_tokens: 10, cache_read_input_tokens: 1000, cache_creation_input_tokens: 500, output_tokens: 100 }
+  const turno = (id, s, bloques) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-sonnet-5-5', usage: uso, content: bloques } })
+  const agenteDe = (id, tipo, prompt) => ({ type: 'tool_use', id, name: 'Agent', input: { subagent_type: tipo, prompt } })
+  const texto = (t) => ({ type: 'text', text: t })
+  const E1 = 'SUBTAREA 1/1: crear x'
+
+  fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
+    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/qcc-implementador</command-name>\n<command-args> Probar el prefijo </command-args>' } },
+    turno('o1', 60, [agenteDe('a1', 'qcc-explorador', 'PEDIDO: x')]),
+    turno('o2', 200, [agenteDe('x1', 'qcc-ejecutor', E1)]),
+    turno('o3', 300, [agenteDe('x2', 'qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))')]),
+  ]))
+  const agente = (nombre, tipo, prompt, desde, filas) => {
+    fs.writeFileSync(path.join(subagentes, `${nombre}.meta.json`), JSON.stringify({ agentType: tipo }))
+    fs.writeFileSync(path.join(subagentes, `${nombre}.jsonl`), jsonl([{ type: 'user', timestamp: en(desde), message: { role: 'user', content: prompt } }, ...filas]))
+  }
+  agente('agent-e', 'qcc-explorador', 'PEDIDO: x', 62, [turno('e1', 100, [texto('ARCHIVOS')])])
+  agente('agent-x1', 'qcc-ejecutor', E1, 205, [turno('m1', 280, [texto('ESTADO: HECHO')])])
+  agente('agent-f', 'qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))', 305, [turno('f1', 340, [texto('VEREDICTO: APROBADO\nPROBLEMAS: ninguno\nOBSERVACIONES: ninguna')])])
+
+  const m = metricasDelFlujo(raiz, en(0), { proyectos: path.join(claude, 'projects'), hasta: en(500), base: null })
+  assert.equal(m.sesion, path.join(sesion, 's1.jsonl'))
+  assert.equal(m.pedido, 'Probar el prefijo')
+  assert.deepEqual(Object.keys(m.costo.roles).sort(), ['ejecutor', 'explorador', 'final', 'orquestador'])
+  assert.equal(m.costo.roles.ejecutor.agentes, 1)
+  assert.deepEqual(m.costo.veredictos.ejecutor, ['HECHO'])
+  assert.deepEqual(Object.keys(m.ejecutores), ['1'])
+  // El explorador lanzado como qcc-explorador marca la fase 1.
+  assert.ok('1' in m.tiempos.fases)
 })
 
 /** Corre costos.mjs con esos argumentos: `{ salida, codigo }`. */

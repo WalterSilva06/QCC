@@ -100,10 +100,10 @@ export type ActividadFila = {
 /** La actividad por id de fila (`Opus 5.5|high|principal`, igual al de las filas de `Semana`). */
 export type Actividad = Record<string, ActividadFila>
 
-/** El flujo `/implementador` de la sesión y dónde va. */
+/** El flujo `/qcc-implementador` de la sesión y dónde va. */
 export type Flujo = {
   /** La skill que lo inició. */
-  nombre: 'implementador'
+  nombre: 'qcc-implementador'
   /** Índice del paso actual dentro de los pasos de su flujo (0 es Preflight). */
   paso: number
   /** Ya salió algún agente `ejecutor`: distingue la verificación del Preflight de la final. */
@@ -118,7 +118,7 @@ export type Flujo = {
   totalExploradores?: number
   /** Algún explorador de la tanda en curso volvió sin error; si falta, `false`. */
   exploro?: boolean
-  /** Planificadores lanzados en todo el flujo, con los re-planes; solo `/implementador`. Si falta, 0. */
+  /** Planificadores lanzados en todo el flujo, con los re-planes; solo `/qcc-implementador`. Si falta, 0. */
   planes?: number
   /** Ejecutores lanzados en todo el flujo, con las correcciones. Si falta, 0, o 1 si `ejecuto`. */
   ejecuciones?: number
@@ -220,7 +220,7 @@ export type Freno = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'panel-uso': {
+    'qcc-panel': {
       medida: Medida | null
       esfuerzo: Esfuerzo | null
       ahora: number
@@ -233,7 +233,7 @@ declare module 'claude-code' {
       pestana?: Pestana
       /** Qué filas de «Esta sesión» tienen una petición en curso o esperan a otra; solo de esta terminal. */
       actividad: Actividad
-      /** El flujo `/implementador` en curso o ya terminado; `null` si la sesión no inició ninguno. */
+      /** El flujo `/qcc-implementador` en curso o ya terminado; `null` si la sesión no inició ninguno. */
       flujo: Flujo | null
       /** Ids de fila de subagente vistas mientras había exploradores o revisores en vuelo; solo de esta terminal; se vacía al iniciar un flujo, al abrir una tanda de exploradores o revisores y al cerrar la sesión. */
       filasExploradores: string[]

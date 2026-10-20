@@ -1,9 +1,9 @@
 {
   "verificar": [
-    { "nombre": "validate", "cmd": "claude plugin validate panel-uso" },
-    { "nombre": "test", "cmd": "claude plugin test panel-uso" },
+    { "nombre": "validate", "cmd": "claude plugin validate qcc-panel" },
+    { "nombre": "test", "cmd": "claude plugin test qcc-panel" },
     { "nombre": "test flujos", "cmd": "node --test flujos/herramientas/guardia.test.mjs" },
-    { "nombre": "test generar-commit", "cmd": "node --test flujos/herramientas/generar-commit/solo-git.test.mjs" }
+    { "nombre": "test qcc-commit", "cmd": "node --test flujos/herramientas/qcc-commit/solo-git.test.mjs" }
   ],
   "criticos": [
     {
@@ -19,17 +19,17 @@
       "motivo": "definición de los agentes del flujo"
     },
     {
-      "rutas": [".claude/implementador/", ".claude/implementador.json"],
+      "rutas": [".claude/qcc-implementador/", ".claude/qcc-implementador.json", ".claude/implementador/", ".claude/implementador.json"],
       "criterios": [1],
       "motivo": "reglas y config de este flujo: «guardia» afloja o aprieta la guardia"
     },
     {
-      "rutas": ["panel-uso/hooks/flujo.ts", "panel-uso/types/index.d.ts"],
+      "rutas": ["qcc-panel/hooks/flujo.ts", "qcc-panel/types/index.d.ts"],
       "criterios": [6],
       "motivo": "máquina de estado del flujo y forma de los atoms que sobreviven a /reload-plugins"
     },
     {
-      "rutas": ["panel-uso/hooks/register.tsx"],
+      "rutas": ["qcc-panel/hooks/register.tsx"],
       "criterios": [7],
       "motivo": "hooks que envuelven next: un fallo frena una petición al modelo o una herramienta"
     }
