@@ -487,7 +487,7 @@ export const register: Register = on => {
     // Cada paso va aparte: si uno falla, la semana, el tick y el panel igual arrancan.
     try {
       await $.command.register({
-        name: 'uso',
+        name: 'qcc-panel',
         description: 'Abre el panel de contexto, límites de uso y esfuerzo',
       })
     } catch {
@@ -555,8 +555,8 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'uso' }, async ($, e) => {
-    // `/uso carpeta` abre la carpeta sin depender del foco del panel ni del ratón.
+  on('command.run', { command: 'qcc-panel' }, async ($, e) => {
+    // `/qcc-panel carpeta` abre la carpeta sin depender del foco del panel ni del ratón.
     if (e.args.trim() === 'carpeta') return { text: await abrirCarpeta($) }
 
     const { isPlaced } = await abrir($)
