@@ -8,7 +8,7 @@ Son herramientas personales, en dos partes separadas.
 | Parte | Carpeta | Qué es | Documentación |
 |---|---|---|---|
 | Mod | `qcc-panel/` | Panel lateral con los límites de uso y cuatro pestañas: Inicio (contexto de la sesión, esfuerzo y tokens), Flujo (el paso del flujo en curso), Gasto semanal e Historial de flujos. Comandos `/qcc-panel` y `/qcc-panel carpeta`. | [MODS.md](MODS.md) |
-| Flujos | `flujos/` | `/qcc-implementador` (explora, planifica, ejecuta por subtareas y cierra con una revisión final independiente) y `/qcc-commit` (mensaje y commit automáticos, en Haiku high), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
+| Flujos | `flujos/` | `/qcc-implementador` (explora, planifica, ejecuta por subtareas y cierra con una revisión final independiente) y `/qcc-commit` (pregunta si hacer push o usar una rama nueva y hace un commit por grupo de cambios, en Haiku high), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
 
 ## Instalar
 
