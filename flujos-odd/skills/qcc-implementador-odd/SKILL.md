@@ -41,7 +41,7 @@ Todo agente va en primer plano (`run_in_background: false`): esperas su informe 
 
 | Agente | Modelo · esfuerzo | Solo cuando |
 |---|---|---|
-| `qcc-odd-explorador` | Haiku · high | entender pide más que una tanda de lectura (≤ 3 llamadas, ~10k tokens) o más de ~5 búsquedas seguidas |
+| `qcc-odd-explorador` | Haiku · high | `EXPLORAR: siempre`; o, con `auto` y un pedido que no nombra sus archivos: más de ~200 en `CÓDIGO`, más de ~8 reglas pedidas, más de ~5 archivos de código por leer, o entender pide más que una tanda de lectura (≤ 3 llamadas, ~10k tokens). Nunca con `EXPLORAR: nunca` |
 | `qcc-odd-ejecutor` | Sonnet · high | (a) 2 o más unidades independientes, con archivos disjuntos y más de ~100 líneas cada una, lanzadas juntas; o (b) una salida de `odd.mjs` dice `> 150k`: lo que falta va al ejecutor, con el `odd/tasks/` como `DOC` |
 | `qcc-odd-revisor` | Opus · high | la línea `Riesgo` nombra un ítem |
 
@@ -65,13 +65,13 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
 **0. Inicio**
 - Pedido vacío → responde `Uso: /qcc-implementador-odd <qué cambiar>` y termina.
 - Pedido de solo investigar, explicar, comparar o revisar → respóndelo sin editar y sin el resto del flujo.
-- `node ~/.claude/flujos-odd/odd.mjs --inicio`. Anota `ODD_BASE`, rama, sucios previos (no son tuyos: no los tocas), `CRÍTICOS DEL PROYECTO`, `REGLAS DEL PROYECTO`, `VERIFICAR` y `TAREAS ABIERTAS`. `ERROR` → dilo y termina.
+- `node ~/.claude/flujos-odd/odd.mjs --inicio`. Anota `ODD_BASE`, rama, sucios previos (no son tuyos: no los tocas), `CÓDIGO` y `EXPLORAR`, `CRÍTICOS DEL PROYECTO`, `REGLAS DEL PROYECTO`, `VERIFICAR` y `TAREAS ABIERTAS`. `ERROR` → dilo y termina.
 - Si el pedido nombra un `odd/tasks/*.md` o retoma una de `TAREAS ABIERTAS`: léelo, compáralo con el código y sigue desde la primera tarea abierta (fase 2).
 
 **1. Explorar**
 - Pedido que reporta una falla → la reproduces antes de decidir nada: el comando y su salida son el RED de su test. Si no se reproduce, lo dices con esa evidencia; nunca das por hecho que ya anda.
-- Una tanda en paralelo: ≤ 3 llamadas y ~10k tokens, nunca archivos grandes enteros. El CLAUDE.md del proyecto ya está en tu contexto: no lo releas.
-- Si no alcanza → `qcc-odd-explorador` con `PEDIDO:` literal y `PREGUNTA:` (qué necesitas saber para decidir). Compruebas un solo `ruta:línea` de su respuesta; no releas lo que mapeó. No explores lo que igual vas a leer para editar.
+- Sin explorador: una tanda en paralelo, ≤ 3 llamadas y ~10k tokens, nunca archivos grandes enteros. El CLAUDE.md del proyecto ya está en tu contexto: no lo releas.
+- Con explorador (tabla de agentes): `PEDIDO:` literal y `PREGUNTA:` (qué necesitas saber para decidir). Lees solo los tramos `ruta:inicio-fin` de su respuesta; un archivo que vas a editar, recién al editarlo. Cada `USOS:` es candidato al ítem 3 en `--plan`.
 - Decisión de producto abierta (qué tiene que pasar, no cómo) → una pregunta con AskUserQuestion, con las alternativas reales, y espera. Lo técnico lo decides tú y lo anotas.
 - La fase cierra, antes de la primera edición, con `node ~/.claude/flujos-odd/odd.mjs --plan --base <ODD_BASE> --tamano chico|grande --reglas <n> --riesgo "1:sí <motivo>;2:no;…;6:no" --bordes "<borde> | …"`. `ERROR` → corriges la llamada.
   - **Tamaño.** `grande` con más de ~8 reglas pedidas, más de ~5 archivos de código por tocar, un contexto previsto de más de 150k, varias sesiones, algo externo que esperar, entregas separadas que pidió el usuario o requisitos que no sobrevivirían una compactación. Si no, `chico`.

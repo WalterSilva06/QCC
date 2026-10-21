@@ -11,14 +11,14 @@ El orquestador trabaja inline. Un subagente se lanza solo por un motivo nombrado
 | Rol | Modelo · esfuerzo | Solo cuando |
 |---|---|---|
 | Orquestador (la skill), que también implementa | Sonnet · high | siempre |
-| `qcc-odd-explorador` | Haiku · high | entender pide más de una tanda de lectura (≤ 3 llamadas, ~10k tokens) o más de ~5 búsquedas seguidas |
-| `qcc-odd-ejecutor` | Sonnet · high | 2 o más unidades independientes de más de ~100 líneas, en paralelo; o el contexto pasa ~150k tokens |
+| `qcc-odd-explorador` | Haiku · high | `explorar: siempre`; o un pedido que no nombra sus archivos en un repo de más de ~200 archivos de código, con más de ~8 reglas, más de ~5 archivos por leer, o que pide más de una tanda de lectura (≤ 3 llamadas, ~10k tokens). Nunca con `explorar: nunca` |
+| `qcc-odd-ejecutor` | Sonnet · high | 2 o más unidades independientes de más de ~100 líneas, en paralelo; o una salida de `odd.mjs` dice `CONTEXTO` de más de 150k |
 | `qcc-odd-revisor` | Opus · high | el cambio toca un ítem de riesgo |
 
 ## Fases
 
 1. **Inicio:** `odd.mjs --inicio`. Un pedido de solo investigar o explicar se responde sin editar.
-2. **Explorar:** inline, o con el explorador. Una decisión de producto abierta se pregunta una vez. Termina con `odd.mjs --plan`, que deja visibles dos decisiones:
+2. **Explorar:** inline, o con el explorador, que responde en ≤ 15 líneas con tramos `ruta:inicio-fin`, `USOS:` (cada llamador de una función compartida, candidato al ítem 3) y `TESTS:`. El orquestador lee solo esos tramos. Una decisión de producto abierta se pregunta una vez. Termina con `odd.mjs --plan`, que deja visibles dos decisiones:
    - **Tamaño:** `chico` si se puede retomar solo con el pedido y el `git diff`; `grande` si no.
    - **Riesgo:** los 6 ítems de la skill (datos o irreversible, seguridad, contratos que otros consumen, concurrencia, entrega o entorno, sin tests), más los `criticos` del proyecto, cada uno con `sí <motivo>` o `no`, y los bordes si hay alguno.
 3. **Implementar:** inline, test-first cuando hay runner. Una tarea grande lleva primero `odd/tasks/<feature>.md` en el repo del proyecto:
@@ -47,7 +47,7 @@ No tiene aprobación del plan, ni planificador, ni revisor del plan, ni candado,
 Se instalan en `~/.claude/flujos-odd/`. La skill y los agentes las llaman por esa ruta.
 
 - **`odd.mjs`:**
-  - `--inicio` toma la foto base como commit suelto y la imprime como `ODD_BASE=<sha>`. Además muestra rama, sucios previos, `criticos`, las reglas de la guardia del proyecto, pasos de verificación y los `odd/tasks/*.md` con tareas abiertas. Deja la marca de corrida abierta (`registros/activas/`), que activa la guardia del orquestador.
+  - `--inicio` toma la foto base como commit suelto y la imprime como `ODD_BASE=<sha>`. Además muestra rama, sucios previos, cuántos archivos de código hay y `explorar`, `criticos`, las reglas de la guardia del proyecto, pasos de verificación y los `odd/tasks/*.md` con tareas abiertas. Deja la marca de corrida abierta (`registros/activas/`), que activa la guardia del orquestador.
   - `--plan --base <BASE> --tamano chico|grande --reglas <n> --riesgo "1:sí <motivo>;2:no;…;6:no" [--bordes "…"]` imprime `TAMAÑO`, `RIESGO PREVISTO` y `BORDES`. Falta un ítem, un `sí` sin motivo o los bordes con algún `sí`: `ERROR` y código 2. Con más de 8 reglas y `chico`, avisa `AVISO: <n> reglas → grande`.
   - `--diff <BASE> [-- <rutas>]` da el cambio contra una foto nueva, archivos nuevos incluidos, recortado a 400 líneas.
   - `--cierre` borra la marca, anota la corrida en `registros/odd.jsonl` con su costo e imprime `PROCESO`: `ok`, o los desvíos que lee en el transcript (sin `--plan` o después de editar, ediciones por Bash, una edición después del último `verificar.mjs`, del último `--diff` o del diferencial, contexto de más de 150k sin ejecutor, lecturas con `cat`/`head`/`sed -n`). Lo que negó la guardia no cuenta.
@@ -93,6 +93,8 @@ Todo es opcional. Sin config, `verificar.mjs` detecta los pasos y no hay crític
     { "nombre": "typecheck", "cmd": "pnpm run typecheck" },
     { "nombre": "test", "cmd": "pnpm run test", "timeoutSeg": 300 }
   ],
+  // Cuándo se lanza el explorador: "siempre", "nunca" o, sin la clave, según el pedido y el repo.
+  "explorar": "siempre",
   // Rutas que cuentan como riesgo. riesgo: ítems 1–6 de la skill; si: condición; excepto: rutas que no cuentan.
   "criticos": [
     { "rutas": ["src/auth/"], "excepto": ["src/auth/textos.ts"], "riesgo": [2], "motivo": "autorización" },

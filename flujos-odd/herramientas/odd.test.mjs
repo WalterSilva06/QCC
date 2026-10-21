@@ -13,7 +13,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, motivoComando, tramosDe, raizDe, marcaDe, reglasDelProyecto } from './guardia.mjs'
 import { pasosDe, colaDe } from './verificar.mjs'
-import { opcionesDe, criticosLegibles, tareasDe, sumaNumstat, recortar, filaDeCorrida, lineaDeCorrida, riesgoDe, lineasDePlan, lineaDeContexto } from './odd.mjs'
+import { opcionesDe, criticosLegibles, tareasDe, sumaNumstat, recortar, filaDeCorrida, lineaDeCorrida, riesgoDe, lineasDePlan, lineaDeContexto, cuentaCodigo, explorarDe } from './odd.mjs'
 import { costoDelFlujo, costoDePedido, hallazgosDe, contextoActual, finDeCorrida } from './costo.mjs'
 import { procesoDe, lineaDeProceso } from './proceso.mjs'
 
@@ -492,6 +492,9 @@ test('odd: --inicio, --diff, --cierre y --ultimos sobre un repo real', () => {
   const base = linea(ini.salida, 'ODD_BASE=')
   assert.match(base, /^[0-9a-f]{40}$/)
   assert.match(ini.salida, /sucios previos: 1 \(sucio\.txt\)/)
+  assert.match(ini.salida, /\nCÓDIGO: 0 archivos · EXPLORAR: auto\n/)
+  assert.equal(cuentaCodigo('src/a.js\nsrc/b.TS\nREADME.md\nx.mjs\nestilos.css\nmigra.sql\n'), 4)
+  assert.deepEqual([explorarDe({ explorar: 'siempre' }), explorarDe({ explorar: 'nunca' }), explorarDe({ explorar: 'a veces' }), explorarDe({})], ['siempre', 'nunca', 'auto', 'auto'])
   assert.match(ini.salida, /- src\/auth\/ · ítem 2 — auth/)
   assert.match(ini.salida, /VERIFICAR: test/)
   assert.match(ini.salida, /TAREAS ABIERTAS: odd\/tasks\/f\.md \(1 de 2 abiertas\)/)

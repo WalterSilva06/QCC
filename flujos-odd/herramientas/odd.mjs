@@ -13,7 +13,7 @@
 //
 // --inicio: toma una foto del árbol (versionados + nuevos no ignorados) como commit suelto, que es la BASE, y la
 // imprime como `ODD_BASE=<sha>`: con esa marca costo.mjs encuentra la sesión. Además: rama, sucios previos,
-// `criticos`, reglas de la guardia y pasos de `verificar` de `.claude/qcc-implementador-odd.json`, y los
+// archivos de código y `explorar`, `criticos`, reglas de la guardia y pasos de `verificar` de `.claude/qcc-implementador-odd.json`, y los
 // `odd/tasks/*.md` con tareas abiertas. Deja la marca de corrida abierta (`registros/activas/`), que activa la guardia
 // del orquestador; `--cierre` la borra.
 // --plan: el cierre de la exploración, visible: tamaño, los 6 ítems de riesgo (cada uno «sí <motivo>» o «no») y los
@@ -152,6 +152,14 @@ export function criticosLegibles(criticos) {
     })
 }
 
+const CODIGO = /\.(m?[jt]sx?|c[jt]s|py|go|rs|java|kts?|rb|php|cs|c|h|cc|cpp|hpp|swift|vue|svelte|sql|sh|ps1|lua|dart|scala|exs?)$/i
+
+/** Cuántas de las rutas (una por línea) son archivos de código, por su extensión. */
+export const cuentaCodigo = (lista) => String(lista).split('\n').filter((r) => CODIGO.test(r.trim())).length
+
+/** `explorar` de la config: `siempre`, `nunca` o `auto` (lo que no sea uno de los dos). */
+export const explorarDe = (config) => (['siempre', 'nunca'].includes(config?.explorar) ? config.explorar : 'auto')
+
 /** Las reglas de la guardia del proyecto como líneas legibles: `- protegido: <ruta> — <motivo> (<config>)`… */
 export function reglasLegibles({ protegidos, inmutables, scriptsNegados, origen }) {
   const de = (clave) => ` (${origen[clave]})`
@@ -284,6 +292,7 @@ function inicio() {
   fs.writeFileSync(marca, JSON.stringify({ base, t: new Date().toISOString() }) + '\n')
   console.log(`ODD_BASE=${base}`)
   console.log(`RAMA: ${rama}@${head} · sucios previos: ${sucios.length ? `${sucios.length} (${lista})` : 'ninguno'}`)
+  console.log(`CÓDIGO: ${cuentaCodigo(git(['ls-files', '-co', '--exclude-standard'], { opcional: true }) ?? '')} archivos · EXPLORAR: ${explorarDe(config)}`)
   console.log(`CRÍTICOS DEL PROYECTO: ${criticos.length ? `\n${criticos.join('\n')}` : 'ninguno'}`)
   console.log(`REGLAS DEL PROYECTO: ${reglas.length ? `\n${reglas.join('\n')}` : 'ninguna'}`)
   console.log(`VERIFICAR: ${pasos.length ? pasos.join(' → ') : 'detección automática de verificar.mjs'}`)
