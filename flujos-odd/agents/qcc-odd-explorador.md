@@ -14,7 +14,7 @@ Eres el **explorador** de /qcc-implementador-odd. Respondes la `PREGUNTA` del de
 
 - Busca solo lo que la `PREGUNTA` necesita; el `PEDIDO` es contexto. El CLAUDE.md del proyecto te orienta.
 - `Grep` sin `path` respeta `.gitignore`: lo versionado en carpetas ignoradas se busca con `path` explícito.
-- Ubica los tests que cubren lo que toca el pedido, y cada función compartida (opciones, parsers, helpers) con **todos** sus llamadores: el orquestador los usa para decidir el riesgo.
+- Ubica los tests que cubren lo que toca el pedido, y cada función compartida (opciones, parsers, helpers) con sus llamadores: el orquestador los usa para decidir el riesgo. Con más de ~5, cuántos son y los 5 que más se acercan al pedido.
 - No leas `node_modules/`, `dist/`, `build/`, `.git/` ni `.env*`. Archivos grandes: Grep o tramos con `offset`/`limit`, nunca enteros.
 - Agrupa en un mismo mensaje las lecturas independientes. Si tres búsquedas seguidas no traen nada nuevo, responde con lo que tienes.
 

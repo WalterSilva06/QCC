@@ -210,7 +210,7 @@ export function riesgoDe(texto) {
   const items = {}
   for (const parte of String(texto ?? '').split(';').map((p) => p.trim()).filter(Boolean)) {
     const m = /^(\d+)\s*:\s*(sí|si|no)(?=[\s,:—-]|$)[\s,:—-]*(.*)$/i.exec(parte)
-    if (!m || m[1] < 1 || m[1] > 6) throw errorDePlan(`--riesgo: «${parte}» no es «N:sí <motivo>» ni «N:no», con N de 1 a 6`)
+    if (!m || m[1] < 1 || m[1] > 6) throw errorDePlan(`--riesgo: «${parte}» no es «N:sí <motivo>» ni «N:no», con N de 1 a 6 (los ítems van separados por «;», que no va en un motivo)`)
     if (m[1] in items) throw errorDePlan(`--riesgo: el ítem ${m[1]} está dos veces`)
     const si = m[2].toLowerCase() !== 'no'
     if (si && !m[3].trim()) throw errorDePlan(`--riesgo: el ítem ${m[1]} dice sí sin motivo`)
@@ -310,7 +310,9 @@ function contexto(base, sesion) {
 
 function plan(o) {
   if (!o.base) throw errorDePlan('falta la BASE: --base <ODD_BASE>')
-  for (const l of lineasDePlan(o)) console.log(l)
+  const lineas = lineasDePlan(o)
+  exigirBase(o.base)
+  for (const l of lineas) console.log(l)
   console.log(lineaDeContexto(contexto(o.base)))
 }
 

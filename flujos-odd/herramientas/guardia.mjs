@@ -41,14 +41,20 @@ const DEPENDENCIAS_OTROS = { pip: ['install', 'uninstall', 'download'], pip3: ['
 const RED = new Set(['curl', 'wget', 'ssh', 'scp', 'sftp', 'rsync', 'ftp', 'telnet', 'nc', 'ncat', 'gh', 'invoke-webrequest', 'iwr', 'invoke-restmethod', 'irm', 'start-bitstransfer'])
 const SERVIDORES = new Set(['vite', 'nodemon', 'live-server', 'http-server', 'serve'])
 const SCRIPTS_SIN_FIN = /^(dev|start|serve|watch|preview)(:|$)/
-const ESCRIBEN = new Set(['cp', 'mv', 'mkdir', 'touch', 'tee', 'rm', 'rmdir', 'ln', 'install', 'copy-item', 'move-item', 'new-item', 'set-content', 'add-content', 'out-file', 'remove-item', 'cpi', 'mi', 'ni', 'sc', 'ac'])
+const ESCRIBEN = new Set(['cp', 'mv', 'touch', 'tee', 'ln', 'install'])
+// Cmdlets de PowerShell (y `copy`/`move` de cmd) que escriben: la ruta va en -Path, -FilePath, -Destination o suelta.
+const PS_ESCRIBEN = new Set(['set-content', 'add-content', 'out-file', 'new-item', 'tee-object', 'clear-content', 'copy-item', 'move-item', 'rename-item', 'sc', 'ac', 'ni', 'cpi', 'mi', 'rni', 'copy', 'move'])
+const PS_RUTA = /^-(path|filepath|literalpath|destination)$/i
+const PS_CON_VALOR = /^-(value|encoding|inputobject|itemtype|name|newname|width|delimiter|variable)$/i
 const BORRAN = new Set(['rm', 'remove-item', 'ri', 'del', 'erase', 'rmdir', 'rd'])
+const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
+const HERRAMIENTAS = new Set(['odd.mjs', 'verificar.mjs', 'guardia.mjs', 'costo.mjs', 'proceso.mjs'])
 const LEEN = new Set(['cat', 'head', 'tail', 'less', 'more', 'get-content', 'gc', 'type'])
 const LOCKFILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock', 'cargo.lock', 'go.sum', 'poetry.lock', 'uv.lock', 'composer.lock', 'gemfile.lock'])
 const INTERPRETES = new Set(['node', 'python', 'python3', 'py', 'deno', 'bun', 'ruby', 'perl'])
-const CODIGO_EN_LINEA = new Set(['-e', '-p', '-c', '--eval', '--print', '-'])
+const CODIGO_EN_LINEA = new Set(['-e', '-p', '-c', '--eval', '--print'])
 /** Un script que escribe archivos: `writeFileSync`, `open(…, 'w')`… */
-export const ESCRIBE_FS = /\b(writeFileSync|appendFileSync|writeFile|appendFile|renameSync|copyFileSync)\s*\(|\bopen\([^)]*,\s*['"][wa]|\.write_text\(/
+export const ESCRIBE_FS = /\b(writeFileSync|appendFileSync|writeFile|appendFile|renameSync|copyFileSync|createWriteStream)\s*\(|\bopen\([^)]*,\s*(mode\s*=\s*)?['"][wax][bt]?\+?['"]|\.write_(text|bytes)\(/
 
 // ── Reglas del proyecto ─────────────────────────────────────────────────────
 
@@ -125,7 +131,7 @@ function versionado(rel, raiz) {
 // ── Marca de corrida ────────────────────────────────────────────────────────
 
 /** El archivo que marca una corrida abierta de odd en `raiz`: lo crea `--inicio` y lo borra `--cierre`. */
-export const marcaDe = (raiz) => path.join(process.env.ODD_REGISTROS || path.join(DIR, 'registros'), 'activas', `${path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-')}.json`)
+export const marcaDe = (raiz) => path.join(process.env.ODD_REGISTROS || path.join(DIR, 'registros'), 'activas', `${normal(raiz).replace(/[^a-zA-Z0-9]/g, '-')}.json`)
 
 /** Si hay una corrida abierta en `raiz` con menos de 12 h. */
 export function corridaAbierta(raiz) {
@@ -202,7 +208,20 @@ function palabrasDe(texto) {
 }
 
 const SUSTITUCION = /\$\(([^()]*)\)|`([^`]*)`/g
-const HEREDOC = /^<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|(\\?)([A-Za-z0-9_.-]+))/
+// El delimitador sin comillas empieza con letra o `_`: `$((1<<2))` no es un heredoc.
+const HEREDOC = /^<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|(\\?)([A-Za-z_][A-Za-z0-9_.-]*))/
+
+/**
+ * Si en `texto[k]` hay un escape de barra invertida, que se salta entero: `\'` fuera de comillas, `\"` dentro de dobles.
+ * Un `\"` seguido de espacio, `;`, `|`, `&`, `>` o el final cierra la comilla: es una ruta de Windows (`"C:\dir\"`),
+ * donde la barra no escapa.
+ */
+const escape = (texto, k, comilla) => {
+  if (texto[k] !== '\\' || k + 1 >= texto.length) return false
+  if (!comilla) return true
+  if (comilla !== '"' || !/["\\$`]/.test(texto[k + 1])) return false
+  return texto[k + 1] !== '"' || !/^([\s;|&>]|$)/.test(texto.slice(k + 2, k + 3))
+}
 
 /**
  * El comando sin el cuerpo de sus heredocs (`<<WORD`, `<<'WORD'`, `<<"WORD"`, `<<-WORD`) ni su operador: el cuerpo
@@ -212,10 +231,15 @@ const HEREDOC = /^<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|(\\?)([A-Za-z0-9_.-]+))
 function sinHeredocs(cmd) {
   let texto = ''
   const sustituciones = []
+  const cuerpos = []
   const pendientes = []
   let comilla = null
   for (let k = 0; k < cmd.length; k++) {
     const c = cmd[k]
+    if (escape(cmd, k, comilla)) {
+      texto += c + cmd[++k]
+      continue
+    }
     if (comilla) {
       texto += c
       if (c === comilla) comilla = null
@@ -246,10 +270,14 @@ function sinHeredocs(cmd) {
         cuerpo.push(linea)
       }
       if (h.expande) for (const m of cuerpo.join('\n').matchAll(SUSTITUCION)) sustituciones.push(m[1] ?? m[2])
+      cuerpos.push(cuerpo.join('\n'))
     }
   }
-  return { texto, sustituciones }
+  return { texto, sustituciones, cuerpos }
 }
+
+/** El texto de los cuerpos de los heredocs de `cmd`, juntos. */
+export const cuerposDe = (cmd) => sinHeredocs(String(cmd)).cuerpos.join('\n')
 
 /**
  * Los tramos de un comando: lo de `$(…)` y de comillas invertidas va como tramo propio, y el resto se parte por
@@ -266,6 +294,10 @@ export function tramosDe(cmd) {
   let comilla = null
   for (let k = 0; k < sinSustituciones.length; k++) {
     const c = sinSustituciones[k]
+    if (escape(sinSustituciones, k, comilla)) {
+      actual += c + sinSustituciones[++k]
+      continue
+    }
     if (comilla) {
       actual += c
       if (c === comilla) comilla = null
@@ -276,7 +308,8 @@ export function tramosDe(cmd) {
       actual += c
       continue
     }
-    if (c === ';' || c === '\n' || c === '|' || c === '&') {
+    // `>|` y `>&` son redirecciones, no separadores.
+    if (c === ';' || c === '\n' || ((c === '|' || c === '&') && sinSustituciones[k - 1] !== '>')) {
       tramos.push(actual)
       actual = ''
       continue
@@ -299,6 +332,10 @@ function redireccionesDe(tramo) {
   let comilla = null
   for (let k = 0; k < tramo.length; k++) {
     const c = tramo[k]
+    if (escape(tramo, k, comilla)) {
+      resto += c + tramo[++k]
+      continue
+    }
     if (comilla) {
       resto += c
       if (c === comilla) comilla = null
@@ -316,6 +353,8 @@ function redireccionesDe(tramo) {
     // El descriptor (`2>`) es parte de la redirección.
     resto = resto.replace(/(^|\s)\d$/, '$1')
     let j = k + (tramo[k + 1] === '>' ? 2 : 1)
+    // `>|` fuerza la escritura; `>&` con un archivo (no `>&1` ni `>&-`) también escribe.
+    if (tramo[j] === '|' || (tramo[j] === '&' && !/[\d-]/.test(tramo[j + 1] ?? ''))) j++
     while (j < tramo.length && /\s/.test(tramo[j])) j++
     let destino
     if (tramo[j] === '"' || tramo[j] === "'") {
@@ -348,18 +387,84 @@ export function partesDe(tramo) {
   return { destinos, prog, args, libres: args.filter((a) => !a.startsWith('-')) }
 }
 
-/** Las rutas que escribe un tramo ya expandido: redirecciones, `sed -i`, `git … --output`, `cp`, `mv`, `tee`, `Set-Content`… (no los borrados ni `mkdir`). */
-export function rutasEscritas(tramo) {
-  const { destinos, prog, args, libres } = partesDe(tramo)
-  const rutas = [...destinos]
-  if (prog === 'sed' && args.some((a) => /^-[a-zA-Z]*i/.test(a) || a === '--in-place')) rutas.push(...libres.slice(1))
-  const salida = prog === 'git' ? args.findIndex((a) => a === '--output' || a === '-o') : -1
-  if (salida >= 0 && args[salida + 1]) rutas.push(args[salida + 1])
-  if (ESCRIBEN.has(prog) && !BORRAN.has(prog) && prog !== 'mkdir') {
-    const valores = libres.filter((a) => !/^-(path|destination|literalpath|value|encoding)$/i.test(a))
-    rutas.push(...(['cp', 'mv', 'ln', 'install', 'copy-item', 'move-item', 'cpi', 'mi'].includes(prog) ? valores.slice(-1) : valores))
+/** El comando de un shell anidado (`bash -c "…"`, `cmd /c …`, `powershell -Command …`); null si no es uno. */
+function comandoAnidado({ prog, args }) {
+  let k = -1
+  if (SHELLS.has(prog)) k = args.findIndex((a) => /^-[a-z]*c$/.test(a))
+  else if (prog === 'cmd') k = args.findIndex((a) => /^\/[ck]$/i.test(a))
+  else if (prog === 'powershell' || prog === 'pwsh') k = args.findIndex((a) => /^-(c|command)$/i.test(a))
+  return k >= 0 ? args.slice(k + 1).join(' ') : null
+}
+
+/** Las rutas que escribe un cmdlet de PowerShell: `-Path`, `-FilePath`, `-Destination`… o el argumento suelto que va ahí. */
+function rutasDePowerShell(prog, args) {
+  const nombradas = {}
+  const sueltas = []
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k]
+    if (PS_RUTA.test(a)) nombradas[a.slice(1).toLowerCase()] = args[++k]
+    else if (PS_CON_VALOR.test(a)) k++
+    else if (!a.startsWith('-')) sueltas.push(a)
   }
+  const origen = nombradas.path ?? nombradas.literalpath
+  if (['copy-item', 'move-item', 'cpi', 'mi', 'copy', 'move'].includes(prog)) return [nombradas.destination ?? sueltas[origen ? 0 : 1]].filter(Boolean)
+  return [origen ?? nombradas.filepath ?? sueltas[0]].filter(Boolean)
+}
+
+/**
+ * Las rutas que escribe un tramo ya expandido: redirecciones, `sed -i`, `perl -i`, `git … --output`, `dd of=`, `cp`,
+ * `mv`, `tee`, `Set-Content`, `Out-File`… y lo de un shell anidado. `conBorrados`: también `rm`, `Remove-Item` y `mkdir`.
+ */
+export function rutasEscritas(tramo, { conBorrados = false, profundidad = 0 } = {}) {
+  const partes = partesDe(tramo)
+  const { destinos, prog, args, libres } = partes
+  const rutas = [...destinos]
+  const anidado = profundidad < 3 ? comandoAnidado(partes) : null
+  if (anidado) for (const t of tramosExpandidos(anidado)) rutas.push(...rutasEscritas(t, { conBorrados, profundidad: profundidad + 1 }))
+  if (prog === 'sed' && args.some((a) => /^-[a-zA-Z]*i/.test(a) || a === '--in-place')) rutas.push(...libres.slice(1))
+  // `perl -pi -e 's/a/b/' x` y `perl -i -pe …`: con -e, el primer argumento suelto es el script.
+  if ((prog === 'perl' || prog === 'ruby') && args.some((a) => /^-[a-zA-Z]*i/.test(a))) rutas.push(...libres.slice(args.some((a) => /^-[a-zA-Z]*e$/.test(a)) ? 1 : 0))
+  if (prog === 'patch' && !args.includes('--dry-run')) {
+    const k = args.findIndex((a) => a === '-o' || a === '--output')
+    rutas.push(k >= 0 && args[k + 1] ? args[k + 1] : '.')
+  }
+  const io = /\[(?:system\.)?io\.file\]::(?:write|append)all\w*\(\s*['"]([^'"]+)['"]/i.exec(tramo)
+  if (io) rutas.push(io[1])
+  if (prog === 'git') {
+    const k = args.findIndex((a) => a === '--output' || a === '-o')
+    if (k >= 0 && args[k + 1]) rutas.push(args[k + 1])
+    for (const a of args) if (a.startsWith('--output=')) rutas.push(a.slice('--output='.length))
+  }
+  if (prog === 'dd') for (const a of libres) if (a.startsWith('of=')) rutas.push(a.slice(3))
+  const carpeta = prog === 'mkdir' || ((prog === 'new-item' || prog === 'ni') && /^directory$/i.test(args[args.findIndex((a) => /^-itemtype$/i.test(a)) + 1] ?? ''))
+  if (BORRAN.has(prog) || carpeta) {
+    if (conBorrados) rutas.push(...libres)
+  } else if (PS_ESCRIBEN.has(prog)) rutas.push(...rutasDePowerShell(prog, args))
+  else if (ESCRIBEN.has(prog)) rutas.push(...(['cp', 'mv', 'ln', 'install'].includes(prog) ? libres.slice(-1) : libres))
   return rutas
+}
+
+/**
+ * Si el tramo corre un script que escribe archivos: código en línea (`node -e`, un heredoc por stdin) con
+ * `writeFileSync`… o un script de fuera del repo que lo tiene (ya escrito, o escrito por un heredoc del mismo
+ * comando). Los scripts del proyecto, los de este flujo y los de una copia de la BASE no cuentan.
+ */
+export function scriptQueEscribe(tramo, { raiz, cwd = raiz, cmd = tramo }) {
+  const { prog, args, libres } = partesDe(tramo)
+  if (!INTERPRETES.has(prog)) return false
+  if (args.some((a) => CODIGO_EN_LINEA.has(a))) return ESCRIBE_FS.test(tramo)
+  const cuerpos = cuerposDe(cmd)
+  if (args.includes('-') || !libres.length) return ESCRIBE_FS.test(cuerpos)
+  if (/qcc-odd-base-/.test(libres[0])) return false
+  const abs = path.resolve(cwd, rutaNativa(libres[0]))
+  // Las herramientas de este flujo, instaladas en cualquier cuenta (`~/.claude*/flujos-odd/`), escriben lo suyo.
+  const herramienta = HERRAMIENTAS.has(path.basename(abs).toLowerCase()) && (dentro(path.dirname(abs), DIR) || /[\\/]\.claude[^\\/]*[\\/]flujos-odd$/i.test(path.dirname(abs)))
+  if (dentro(abs, raiz) || herramienta) return false
+  try {
+    return fs.statSync(abs).size < 1e6 && ESCRIBE_FS.test(fs.readFileSync(abs, 'utf8'))
+  } catch {
+    return ESCRIBE_FS.test(cuerpos) && cmd.includes(path.basename(abs))
+  }
 }
 
 /** Si el tramo lee archivos del repo con `cat`, `head`, `tail`, `sed -n`, `Get-Content` o `type`, en vez de con Read. */
@@ -385,26 +490,9 @@ function escrituraDelOrquestador(ruta, { raiz, cwd }) {
   return `edita con Edit o Write, no por Bash (${path.relative(raiz, abs).split(path.sep).join('/') || ruta})`
 }
 
-/** Por qué el orquestador no corre `prog`: un script que escribe archivos, en línea o fuera del repo. */
-function scriptDelOrquestador({ prog, args, libres }, { raiz, cwd, cmd }) {
-  if (!INTERPRETES.has(prog)) return null
-  const motivo = 'edita con Edit o Write, no con un script que escribe archivos (writeFileSync…); para el temporal, redirige la salida'
-  const enLinea = args.some((a) => CODIGO_EN_LINEA.has(a)) || (!libres.length && /<</.test(cmd))
-  if (enLinea) return ESCRIBE_FS.test(cmd) ? motivo : null
-  if (!libres[0] || /qcc-odd-base-/.test(libres[0])) return null
-  // Los scripts del proyecto corren; uno escrito fuera del repo (como en el temporal) se lee antes.
-  const abs = path.resolve(cwd, rutaNativa(libres[0]))
-  if (dentro(abs, raiz)) return null
-  try {
-    return fs.statSync(abs).size < 1e6 && ESCRIBE_FS.test(fs.readFileSync(abs, 'utf8')) ? motivo : null
-  } catch {
-    return null
-  }
-}
-
 /** Por qué se niega un tramo ya expandido; null si pasa. `cmd`: el comando entero, con los cuerpos de los heredocs. */
 function motivoTramo(tramo, ctx) {
-  const { rol, raiz, cwd } = ctx
+  const { rol, raiz, cwd, profundidad = 0 } = ctx
   const revisor = rol === 'revisor'
   const orquestador = rol === 'orquestador'
   const escritura = (ruta) =>
@@ -416,16 +504,21 @@ function motivoTramo(tramo, ctx) {
           : null
         : motivoRuta(ruta, { raiz, cwd, soloTemporal: revisor })
   const partes = partesDe(tramo)
-  const { destinos, prog, args, libres } = partes
-  for (const destino of orquestador ? rutasEscritas(tramo) : destinos) {
-    const m = escritura(destino)
+  const { prog, args, libres } = partes
+  // El orquestador puede borrar archivos sueltos y crear carpetas: Edit y Write no lo hacen.
+  for (const ruta of rutasEscritas(tramo, { conBorrados: !orquestador, profundidad: 3 })) {
+    const m = escritura(ruta)
     if (m) return m
   }
   if (!prog) return null
+  const anidado = profundidad < 3 ? comandoAnidado(partes) : null
+  if (anidado) {
+    const m = motivoComando(anidado, { rol, raiz, cwd, profundidad: profundidad + 1 })
+    if (m) return m
+  }
   if (orquestador) {
     if (leeDelRepo(tramo, { raiz, cwd })) return `lee con Read (offset/limit) o Grep, no con ${prog}`
-    const m = scriptDelOrquestador(partes, ctx)
-    if (m) return m
+    if (scriptQueEscribe(tramo, ctx)) return 'edita con Edit o Write, no con un script que escribe archivos (writeFileSync…); para el temporal, redirige la salida'
   }
   if (tramo.match(/(^|[\s"'=/\\])\.env(\.[\w-]+)?(?=$|[\s"'/\\])/m) && !/\.env\.(example|sample|template)\b/.test(tramo)) return 'secretos: .env no se lee ni se escribe'
   if (prog === 'git') {
@@ -435,8 +528,6 @@ function motivoTramo(tramo, ctx) {
     if (!sub) return null
     if (!GIT_LECTURA.has(sub)) return `git ${sub} modifica el repositorio o habla con el remoto: git es solo de lectura`
     if (sub === 'archive' && args.some((a) => a.startsWith('--remote'))) return 'git archive --remote habla con el remoto: red'
-    const salida = args.findIndex((a) => a === '--output' || a === '-o')
-    if (salida >= 0 && args[salida + 1]) return escritura(args[salida + 1])
     return null
   }
   if (RED.has(prog)) return `${prog}: red, los subagentes no llaman servicios`
@@ -459,26 +550,9 @@ function motivoTramo(tramo, ctx) {
   // Banderas cortas combinadas (`-r`, `-rf`, `-Rf`), no las de PowerShell que solo contienen una r (`-Force`).
   const recursivo = args.some((a) => (/^-[a-zA-Z]{1,3}$/.test(a) && /[rR]/.test(a)) || /^--recursive$/i.test(a) || /^-recurse$/i.test(a) || /^\/s$/i.test(a))
   if (BORRAN.has(prog) && recursivo) return `${prog} recursivo: los borrados en bloque quedan para el usuario`
-  // Las escrituras del orquestador ya se miraron arriba, con rutasEscritas (que deja borrar y crear carpetas).
-  if (orquestador) return null
-  if (prog === 'sed' && args.some((a) => /^-[a-zA-Z]*i/.test(a) || a === '--in-place')) {
-    for (const archivo of libres.slice(1)) {
-      const m = escritura(archivo)
-      if (m) return m
-    }
-    return null
-  }
   if (prog === 'tar' && revisor) {
     const k = args.findIndex((a) => a === '-C' || a === '--directory')
     if (args.some((a) => /^-?[a-zA-Z]*x/.test(a))) return k >= 0 && args[k + 1] ? escritura(args[k + 1]) : 'tar -x sin -C escribe en el directorio actual'
-  }
-  if (ESCRIBEN.has(prog)) {
-    const valores = libres.filter((a) => !/^-(path|destination|literalpath|value|encoding)$/i.test(a))
-    const destinos = ['cp', 'mv', 'ln', 'install', 'copy-item', 'move-item', 'cpi', 'mi'].includes(prog) ? valores.slice(-1) : valores
-    for (const d of destinos) {
-      const m = escritura(d)
-      if (m) return m
-    }
   }
   return null
 }
@@ -497,9 +571,9 @@ export function tramosExpandidos(cmd) {
 }
 
 /** Por qué se niega `cmd` para `rol`; null si pasa. */
-export function motivoComando(cmd, { rol, raiz, cwd = raiz }) {
+export function motivoComando(cmd, { rol, raiz, cwd = raiz, profundidad = 0 }) {
   for (const tramo of tramosExpandidos(cmd)) {
-    const motivo = motivoTramo(tramo, { rol, raiz, cwd, cmd: String(cmd) })
+    const motivo = motivoTramo(tramo, { rol, raiz, cwd, cmd: String(cmd), profundidad })
     if (motivo) return motivo
   }
   return null

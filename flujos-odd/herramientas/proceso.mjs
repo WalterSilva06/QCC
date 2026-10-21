@@ -6,7 +6,7 @@
 // pasados los 150k de contexto y lecturas con Read (no con `cat`). `odd.mjs --cierre` lo imprime como `PROCESO:`.
 
 import path from 'node:path'
-import { tramosExpandidos, partesDe, rutasEscritas, leeDelRepo, rutaNativa, dentro, ESCRIBE_FS } from './guardia.mjs'
+import { tramosExpandidos, partesDe, rutasEscritas, leeDelRepo, scriptQueEscribe, cuerposDe, rutaNativa, dentro, ESCRIBE_FS } from './guardia.mjs'
 import { contextoDePedido, textoDe, miles } from './costo.mjs'
 
 export const TOPE_CONTEXTO = 150_000
@@ -67,20 +67,21 @@ export function procesoDe(filas, { raiz, inicio, hasta }) {
     let edita = false
     if (EDITAN.has(u.nombre)) {
       const ruta = String(u.entrada.file_path ?? u.entrada.notebook_path ?? '')
-      if (ESCRIBE_FS.test(String(u.entrada.content ?? ''))) scripts.add(path.basename(ruta).toLowerCase())
       edita = enRepo(ruta)
+      // Un script que escribe archivos, guardado fuera del repo para correrlo después (los del repo son del proyecto).
+      if (!edita && ESCRIBE_FS.test(String(u.entrada.content ?? ''))) scripts.add(path.basename(ruta).toLowerCase())
     } else if (u.nombre === 'Agent' || u.nombre === 'Task') {
       if (u.entrada.subagent_type === 'qcc-odd-ejecutor') ejecutor = true
     } else if (u.nombre === 'Bash' || u.nombre === 'PowerShell') {
       const cmd = String(u.entrada.command ?? '')
       const tramos = tramosExpandidos(cmd)
-      const partes = tramos.map(partesDe)
-      const escritas = tramos.flatMap(rutasEscritas)
-      const escribeFs = ESCRIBE_FS.test(cmd)
-      // Un script que escribe archivos, guardado con un heredoc para correrlo después.
-      if (escribeFs) for (const r of escritas) if (/\.(c|m)?(js|ts)$|\.py$/.test(r)) scripts.add(path.basename(r).toLowerCase())
-      const corre = partes.filter((p) => INTERPRETES.has(p.prog))
-      const porScript = corre.length > 0 && (escribeFs || corre.some((p) => p.libres.some((a) => scripts.has(path.basename(a.replaceAll('\\', '/')).toLowerCase()))))
+      const escritas = tramos.flatMap((t) => rutasEscritas(t))
+      // Un script que escribe archivos, guardado con un heredoc fuera del repo para correrlo después.
+      if (ESCRIBE_FS.test(cuerposDe(cmd))) for (const r of escritas) if (!enRepo(r) && /\.[cm]?[jt]s$|\.py$/.test(r)) scripts.add(path.basename(r).toLowerCase())
+      const porScript = tramos.some((t) => {
+        const { prog, libres } = partesDe(t)
+        return scriptQueEscribe(t, { raiz, cwd, cmd }) || (INTERPRETES.has(prog) && scripts.has(path.basename(String(libres[0] ?? '').replaceAll('\\', '/')).toLowerCase()))
+      })
       if (escritas.some(enRepo) || porScript) {
         edita = true
         porBash++

@@ -196,9 +196,42 @@ const PASAN = {
     'mkdir -p flujos-odd/nuevo',
     `echo x > ${TMP}/a && sed -i s/a/b/ ${TMP}/a && cat ${TMP}/a`,
     `node ${TMP.replace('odd-x', 'qcc-odd-base-AbC')}/src/cli.js semilla`,
+    // Las herramientas del flujo, por su ruta absoluta (PowerShell no expande `~`), aunque escriban archivos.
+    `node "${ODD.replaceAll('\\', '/')}" --cierre --base abc --resultado COMPLETO`,
+    `node ${path.join(os.homedir(), '.claude', 'flujos-odd', 'odd.mjs').replaceAll('\\', '/')} --diff abc`,
+    `node ${path.join(os.homedir(), '.claude-cuenta1', 'flujos-odd', 'odd.mjs').replaceAll('\\', '/')} --inicio`,
+    'patch --dry-run -p1 < x.diff',
+    'New-Item -ItemType Directory -Force odd/tasks',
+    `python -c "print(open('a').read())"`,
+    `node -e "console.log(\\"x > y\\")"`,
+    `Set-Content -Path ${TMP}/x.txt -Value 'hola'`,
+    `"hola" | Out-File -FilePath ${TMP}/x.txt -Encoding utf8`,
+    'grep -rn "writeFileSync(" flujos-odd/herramientas && node -e "console.log(1)"',
+    'echo $((1<<2))',
+    'echo x 2>&1 | tail -1',
     ...SIN_REDIRECCION,
   ],
 }
+
+// Revisión independiente: escrituras al repo que se escapaban.
+const ESCAPES = [
+  'bash -c "echo x > AGENTS.md"',
+  'sh -c \'sed -i s/a/b/ AGENTS.md\'',
+  'cmd /c "echo x > AGENTS.md"',
+  'powershell -Command "Set-Content AGENTS.md hola"',
+  'echo x >| AGENTS.md',
+  'echo x >& AGENTS.md',
+  `echo it\\'s > ${TMP}/x; echo x > AGENTS.md`,
+  'echo $((1<<2))\necho x > AGENTS.md',
+  'Set-Content -Path AGENTS.md -Value hola',
+  "perl -pi -e 's/a/b/' AGENTS.md",
+  "perl -i -pe 's/a/b/' AGENTS.md",
+  'git diff --output=AGENTS.md',
+  "[IO.File]::WriteAllText('AGENTS.md', 'x')",
+  'patch -p1 -o AGENTS.md < x.diff',
+  // En PowerShell la barra no escapa: una ruta entre comillas que termina en `\` cierra la comilla.
+  'Get-ChildItem "C:\\Users\\x\\AppData\\Local\\Temp\\" ; echo x > AGENTS.md',
+]
 
 const NIEGAN = {
   ejecutor: [
@@ -254,8 +287,20 @@ const NIEGAN = {
     ['rm -rf dist', /recursivo/],
     ['cat .env', /secretos/],
     ['npm run dev', /no termina/],
+    ...ESCAPES.map((cmd) => [cmd, /edita con Edit o Write/]),
+    [`cat > ${TMP}/s.mjs <<'EOF'\nrequire('fs').writeFileSync('AGENTS.md', 'x')\nEOF\nnode ${TMP}/s.mjs`, /script que escribe archivos/],
+    [`node -e "require('fs').createWriteStream('AGENTS.md')"`, /script que escribe archivos/],
+    [`python -c "open('AGENTS.md', 'w').write('x')"`, /script que escribe archivos/],
+    // Solo las herramientas del flujo se libran, no cualquier script de su carpeta.
+    [`node ${path.join(os.homedir(), '.claude', 'flujos-odd', 'z.mjs').replaceAll('\\', '/')} <<'EOF'\nrequire('fs').writeFileSync('AGENTS.md', 'x')\nEOF`, /script que escribe archivos/],
   ],
 }
+
+test('guardia: el revisor tampoco escribe por un shell anidado, escapes ni >| / >&', () => {
+  for (const cmd of ESCAPES) assert.match(motivoComando(cmd, { rol: 'revisor', raiz: RAIZ }) ?? 'pasó', /solo escribe en el temporal/, cmd)
+  assert.equal(motivoComando(`Set-Content -Path ${TMP}/x.txt -Value 'hola'`, { rol: 'revisor', raiz: RAIZ }), null)
+  assert.match(motivoComando('bash -c "git push"', { rol: 'ejecutor', raiz: RAIZ }) ?? 'pasó', /git push/)
+})
 
 test('guardia: el orquestador no corre un script del temporal que escribe archivos', () => {
   const escribe = path.join(PRUEBAS, 'aplicar.cjs')
@@ -592,13 +637,15 @@ test('odd: --plan exige los 6 ítems de riesgo, un motivo por cada sí y bordes 
   assert.throws(() => lineasDePlan({ tamano: 'chico', riesgo, bordes: 'x' }), /--reglas/)
 
   const raiz = repo('plan', { 'a.txt': 'x\n' })
-  const ok = correr(ODD, raiz, '--plan', '--base', 'b0de', '--tamano', 'chico', '--reglas', '2', '--riesgo', riesgo, '--bordes', 'ausente')
+  const base = linea(correr(ODD, raiz, '--inicio').salida, 'ODD_BASE=')
+  const ok = correr(ODD, raiz, '--plan', '--base', base, '--tamano', 'chico', '--reglas', '2', '--riesgo', riesgo, '--bordes', 'ausente')
   assert.equal(ok.codigo, 0, ok.salida)
   assert.match(ok.salida, /^TAMAÑO: chico · 2 reglas\nRIESGO PREVISTO: ítems 1, 2 \(1: migración · 2: permisos\)\nBORDES: ausente\nCONTEXTO: sin datos\n$/)
   const sinItem = correr(ODD, raiz, '--plan', '--base', 'b0de', '--tamano', 'chico', '--reglas', '2', '--riesgo', '1:no;2:no;3:no;4:no;5:no', '--bordes', 'x')
   assert.equal(sinItem.codigo, 2)
   assert.match(sinItem.salida, /^ERROR: --riesgo: faltan los ítems 6/)
   assert.equal(correr(ODD, raiz, '--plan', '--tamano', 'chico', '--reglas', '2', '--riesgo', riesgo).codigo, 2)
+  assert.match(correr(ODD, raiz, '--plan', '--base', 'basura', '--tamano', 'chico', '--reglas', '2', '--riesgo', riesgo, '--bordes', 'x').salida, /ERROR: BASE desconocida/)
 })
 
 test('odd: CONTEXTO, PROCESO y costo real con un transcript de juguete', () => {
@@ -757,6 +804,18 @@ test('proceso: una corrida limpia da ok', () => {
   assert.deepEqual(p.desvios, [])
   assert.equal(lineaDeProceso(p), 'ok')
   assert.equal(p.contextoMax, 170_000)
+
+  // Revisión independiente: un test del repo que escribe en el temporal, un grep de writeFileSync y Set-Content al temporal.
+  const despues = transcript([
+    PLAN,
+    ['Write', { file_path: path.join(raiz, 'test', 'x.test.mjs'), content: "fs.writeFileSync(tmp, 'x')" }],
+    VERIFICAR_ODD,
+    DIFF,
+    ['Bash', { command: 'node --test test/x.test.mjs' }],
+    ['Bash', { command: 'grep -rn "writeFileSync(" src ; node -p "1+1"' }],
+    ['PowerShell', { command: `Set-Content -Path ${TMP}/x.txt -Value 'hola'` }],
+  ])
+  assert.deepEqual(procesoDe(despues.filas, { raiz, inicio: despues.inicio, hasta: despues.hasta }).desvios, [])
 })
 
 test('proceso: marca cada desvío', () => {
