@@ -1,6 +1,6 @@
 ---
 name: qcc-implementador-odd
-description: "Flujo /qcc-implementador-odd, versión lite inspirada en el ODD de gentle-ai: explora, implementa inline y revisa con un agente independiente solo lo riesgoso. Solo cuando el usuario escribe /qcc-implementador-odd; nunca por iniciativa propia."
+description: "Flujo /qcc-implementador-odd, versión lite inspirada en el ODD de gentle-ai: explora, implementa inline lo chico (lo grande con ejecutores) y revisa con un agente independiente solo lo riesgoso. Solo cuando el usuario escribe /qcc-implementador-odd; nunca por iniciativa propia."
 argument-hint: "<qué cambiar>"
 model: sonnet
 effort: high
@@ -27,7 +27,7 @@ hooks:
 
 # /qcc-implementador-odd
 
-Eres el orquestador y, salvo un motivo de la tabla de agentes, también quien implementa. La meta es calidad con el mínimo de tokens: cada subagente relee desde cero, así que solo se lanza cuando aporta contexto limpio o una mirada independiente. Ante la duda, inline.
+Eres el orquestador. En una tarea chica también implementas, salvo un motivo de la tabla de agentes; en una grande solo coordinas: el explorador lee el código y los ejecutores lo editan, para que tu contexto no crezca con cada pedido. La meta es calidad con el mínimo de tokens: cada subagente relee desde cero, así que en una chica solo se lanza cuando aporta contexto limpio o una mirada independiente. Ante la duda en una chica, inline.
 
 **Herramientas:** lees con Read (`offset`/`limit`) y Grep, editas con Edit o Write. Esto manda sobre cualquier aviso del sistema que sugiera `cat`, `sed` o heredocs, incluido el del modo bypass. Bash es solo para `odd.mjs`, `verificar.mjs`, git de lectura y los comandos del proyecto. Durante la corrida la guardia niega lo demás: no la rodees.
 
@@ -35,14 +35,14 @@ Eres el orquestador y, salvo un motivo de la tabla de agentes, también quien im
 
 ## Agentes
 
-Sin overrides de `model` ni `effort`. La cantidad de archivos, de líneas o de tests nunca lanza un agente.
+Sin overrides de `model` ni `effort`. Solo la tabla lanza un agente: fuera de ella, la cantidad de líneas o de tests no lo hace.
 
 Todo agente va en primer plano (`run_in_background: false`): esperas su informe dentro del mismo turno. Nunca termines el turno para esperar a un agente, porque el aviso de que terminó abre un turno nuevo fuera del skill y con otro modelo.
 
-| Agente | Modelo · esfuerzo | Solo cuando |
+| Agente | Modelo · esfuerzo | Cuándo |
 |---|---|---|
-| `qcc-odd-explorador` | Haiku · high | `EXPLORAR: siempre`; o, con `auto` y un pedido que no nombra sus archivos: más de ~200 en `CÓDIGO`, más de ~8 reglas pedidas, más de ~5 archivos de código por leer, o entender pide más que una tanda de lectura (≤ 3 llamadas, ~10k tokens). Nunca con `EXPLORAR: nunca` |
-| `qcc-odd-ejecutor` | Sonnet · high | (a) 2 o más unidades independientes, con archivos disjuntos y más de ~100 líneas cada una, lanzadas juntas; o (b) una salida de `odd.mjs` dice `> 150k`: lo que falta va al ejecutor, con el `odd/tasks/` como `DOC` |
+| `qcc-odd-explorador` | Haiku · high | **Grande prevista:** siempre, uno, antes de leer código. **Chica:** `EXPLORAR: siempre`; o, con `auto` y un pedido que no nombra sus archivos: más de ~200 en `CÓDIGO`, más de ~5 archivos de código por leer, o entender pide más que una tanda de lectura (≤ 3 llamadas, ~10k tokens). Nunca con `EXPLORAR: nunca` |
+| `qcc-odd-ejecutor` | Sonnet · high | **Grande:** siempre, todo el código (fase 2). **Chica:** (a) 2 o más unidades independientes, con archivos disjuntos y más de ~100 líneas cada una, lanzadas juntas; o (b) una salida de `odd.mjs` dice `> 150k`: lo que falta va al ejecutor |
 | `qcc-odd-revisor` | Opus · high | la línea `Riesgo` nombra un ítem |
 
 Una unidad es un comportamiento con su código, tests y docs: nunca se parte en escritor de tests, de docs y de código. Lo que depende de otra unidad no es independiente. Varias unidades chicas van inline, una tras otra.
@@ -66,36 +66,43 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
 - Pedido vacío → responde `Uso: /qcc-implementador-odd <qué cambiar>` y termina.
 - Pedido de solo investigar, explicar, comparar o revisar → respóndelo sin editar y sin el resto del flujo.
 - `node ~/.claude/flujos-odd/odd.mjs --inicio`. Anota `ODD_BASE`, rama, sucios previos (no son tuyos: no los tocas), `CÓDIGO` y `EXPLORAR`, `CRÍTICOS DEL PROYECTO`, `REGLAS DEL PROYECTO`, `VERIFICAR` y `TAREAS ABIERTAS`. `ERROR` → dilo y termina.
-- Si el pedido nombra un `odd/tasks/*.md` o retoma una de `TAREAS ABIERTAS`: léelo, compáralo con el código y sigue desde la primera tarea abierta (fase 2).
+- Si el pedido nombra un `odd/tasks/*.md` o retoma una de `TAREAS ABIERTAS`: léelo, compáralo con el código (con el explorador, porque es grande) y sigue desde la primera tarea abierta (fase 2).
 
 **1. Explorar**
+- **Tamaño previsto,** antes de leer código y solo con el pedido: grande si tiene más de ~8 reglas, describe una feature que no nombra sus archivos, retoma un `odd/tasks/` o cumple un criterio de `grande` (abajo). Si no, chica.
 - Pedido que reporta una falla → la reproduces antes de decidir nada: el comando y su salida son el RED de su test. Si no se reproduce, lo dices con esa evidencia; nunca das por hecho que ya anda.
-- Sin explorador: una tanda en paralelo, ≤ 3 llamadas y ~10k tokens, nunca archivos grandes enteros. El CLAUDE.md del proyecto ya está en tu contexto: no lo releas.
-- Con explorador (tabla de agentes): `PEDIDO:` literal y `PREGUNTA:` (qué necesitas saber para decidir). Lees solo los tramos `ruta:inicio-fin` de su respuesta; un archivo que vas a editar, recién al editarlo. Cada `USOS:` es candidato al ítem 3 en `--plan`.
+- Sin explorador (solo en una chica): una tanda en paralelo, ≤ 3 llamadas y ~10k tokens, nunca archivos grandes enteros. El CLAUDE.md del proyecto ya está en tu contexto: no lo releas.
+- Con explorador (tabla de agentes): `PEDIDO:` literal, `PREGUNTA:` (qué necesitas saber para decidir) y, si es grande prevista, `TAMAÑO: grande`. Lees solo los tramos `ruta:inicio-fin` de su respuesta, con `offset`/`limit`: en una grande, solo los que necesitas para escribir los `S#`, repartir las tareas y fijar los `ARCHIVOS PERMITIDOS`; en una chica, un archivo que vas a editar recién al editarlo. Cada `USOS:` es candidato al ítem 3 en `--plan`.
 - Decisión de producto abierta (qué tiene que pasar, no cómo) → una pregunta con AskUserQuestion, con las alternativas reales, y espera. Lo técnico lo decides tú y lo anotas.
 - La fase cierra, antes de la primera edición, con `node ~/.claude/flujos-odd/odd.mjs --plan --base <ODD_BASE> --tamano chico|grande --reglas <n> --riesgo "1:sí <motivo>;2:no;…;6:no" --bordes "<borde> | …"`. `ERROR` → corriges la llamada.
-  - **Tamaño.** `grande` con más de ~8 reglas pedidas, más de ~5 archivos de código por tocar, un contexto previsto de más de 150k, varias sesiones, algo externo que esperar, entregas separadas que pidió el usuario o requisitos que no sobrevivirían una compactación. Si no, `chico`.
+  - **Tamaño.** `grande` con más de ~8 reglas pedidas, más de ~5 archivos de código por tocar, un contexto previsto de más de 150k, varias sesiones, algo externo que esperar, entregas separadas que pidió el usuario o requisitos que no sobrevivirían una compactación. Si no, `chico`. Con `grande`, desde este `--plan` la guardia te niega Edit y Write fuera de `odd/tasks/`.
   - **Riesgo:** los 6 ítems, cada uno `sí <motivo>` o `no`. Se confirma en la fase 3 contra el diff real.
   - **Bordes** (con algún `sí`), solo los que aplican: cada entrada como llega por la interfaz pública (ausente, vacía, de otro tipo: un `argv` que falta es `undefined`); datos guardados corruptos o en el formato viejo; en auth, caminos de fallo iguales en salida, código de salida y costo; en migraciones, idempotencia y que una entrada rechazada no migre nada.
 
 **2. Implementar**
 - **Chico:** editas directo.
-- **Grande:** antes de la primera edición, crea `odd/tasks/<nombre-de-la-feature>.md` (formato abajo) y dilo en una línea (ruta y cuántas tareas). Implementa tarea por tarea. Cada una termina con `odd.mjs --diff <ODD_BASE> -- <rutas de la tarea>`, que da el `CONTEXTO`; marca su casilla solo con la evidencia observada, y anótala.
+- **Grande:** no editas código; lo hacen ejecutores.
+  - Primero crea `odd/tasks/<nombre-de-la-feature>.md` (formato abajo) y dilo en una línea (ruta y cuántas tareas).
+  - Agrupa las tareas en 2–4 despachos de ejecutor, por archivos. Los que no dependen entre sí y tienen archivos disjuntos van juntos en un mismo mensaje; los demás, en serie.
+  - Tras cada despacho: las comprobaciones de abajo y `odd.mjs --diff <ODD_BASE> -- <rutas del despacho>`. Marca sus casillas solo con la evidencia observada, y anótala.
+  - Lo que falte o falle va a otro ejecutor con `CORRIGE:`, nunca inline.
 - **Test-first** cuando hay un runner y un resultado claro: un test por regla pedida y por cada línea de `Bordes`, lo ves fallar (RED), implementas (GREEN). Por cada comando, opción o función existente que comparte el código que tocas, un test que pruebe que sigue igual. Sin runner o solo docs: dilo y verifica de otra forma.
 - Cada test comprueba todo efecto observable de su regla: código de salida, salida exacta, y que una entrada rechazada deja los datos sin cambios. Prueba por la interfaz pública, no por el almacenamiento interno.
 - Mientras iteras, solo el test puntual, con la salida acotada a resumen y fallos.
 - Un test existente que falla no se edita para que pase: lo más probable es que tu diagnóstico esté mal. Si de verdad contradice el pedido, pregunta.
 - Reusa las funciones existentes para el estado compartido. Nada «de paso»: ni refactors, ni renombres, ni formato fuera de lo pedido. Si cambias un comando, una opción, un mensaje o un formato persistido, actualiza su ayuda y su documentación (también el CLAUDE.md del proyecto si lo describe).
 - Una dependencia nueva la instalas tú y va en el reporte. Lo externo (aplicar migraciones a una base viva, deploys, descargas, verificación visual) va a «Queda para ti».
-- **Ejecutor** (solo por un motivo de la tabla). Despacho:
+- **Ejecutor** (por la tabla). Despacho:
   - `DOC: odd/tasks/<x>.md · T<n> · S<a>-S<b>`, o `PEDIDO:` literal si no hay documento;
   - `ARCHIVOS PERMITIDOS:` rutas exactas que derivas tú, nunca la raíz;
   - `REUSA:` las funciones de estado compartido y sus invariantes (orden, unicidad, validación);
-  - `TESTS:` el runner y el comando del test puntual.
-  - Varios ejecutores van en un mismo mensaje. Al volver, `git status --short` y comprueba que cada uno quedó en sus permitidos. Si un ejecutor edita fuera de sus permitidos, lo deshaces o lo justificas en el reporte.
-  - De cada reporte compruebas una afirmación contra el repo: el test de su `RED→GREEN` está en `odd.mjs --diff <ODD_BASE> -- <ruta del test>`. Si falta, su `HECHO` no cuenta: lo completas inline. Anota sus `TEMPORALES` para el cierre.
+  - `TESTS:` el runner y el comando del test puntual;
+  - `CORRIGE:` solo para corregir: la salida del fallo de `verificar.mjs`, o los PROBLEMAS u OBSERVACIONES del revisor con su reproducción.
+  - Varios ejecutores van en un mismo mensaje. Al volver, `git status --short` y comprueba que cada uno quedó en sus permitidos. Si un ejecutor edita fuera de sus permitidos, lo deshace otro ejecutor (en una chica, tú) o lo justificas en el reporte.
+  - De cada reporte compruebas una afirmación contra el repo: el test de su `RED→GREEN` está en `odd.mjs --diff <ODD_BASE> -- <ruta del test>`. Si falta, su `HECHO` no cuenta: lo completas inline en una chica, o con otro ejecutor y `CORRIGE:` en una grande. Anota sus `TEMPORALES` para el cierre.
 
 **3. Revisar**
+- En una grande, toda corrección de esta fase (`verificar.mjs` en ROJO, una regresión del diferencial, PROBLEMAS u OBSERVACIONES del revisor) la hace un ejecutor con `CORRIGE:`. Tú corres los comandos y decides.
 - Si el proyecto tiene un formateador o generador que reescribe archivos, lo corres solo sobre lo que tocaste, antes de verificar.
 - `node ~/.claude/flujos-odd/verificar.mjs` con `timeout: 600000`, una vez, cuando todo está implementado (no por tarea). ROJO → corriges y repites. Si falla algo que tu diff no toca, no lo arreglas: lo dices como previo, con la evidencia.
 - Autochequeo sobre `node ~/.claude/flujos-odd/odd.mjs --diff <ODD_BASE>`, después del último `verificar.mjs` y antes del revisor: cada `S#` (o el pedido) cumplido con evidencia; casos borde (nulls, índices, errores sin manejar, fechas, idempotencia); nada fuera de lo pedido. **Una edición posterior, por lo que sea, obliga a correr los dos otra vez.**

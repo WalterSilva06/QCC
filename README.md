@@ -9,7 +9,7 @@ Son herramientas personales, en tres partes separadas.
 |---|---|---|---|
 | Mod | `qcc-panel/` | Panel lateral con los límites de uso y cuatro pestañas: Inicio (contexto de la sesión, esfuerzo y tokens), Flujo (el paso del flujo en curso), Gasto semanal e Historial de flujos. Comandos `/qcc-panel` y `/qcc-panel carpeta`. | [MODS.md](MODS.md) |
 | Flujos | `flujos/` | `/qcc-implementador` (explora, planifica, ejecuta por subtareas y cierra con una revisión final independiente) y `/qcc-commit` (pregunta si hacer push o usar una rama nueva y hace un commit por grupo de cambios, en Haiku high), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
-| Flujo odd | `flujos-odd/` | `/qcc-implementador-odd`, en prueba: versión lite inspirada en el ODD de gentle-ai. Implementa inline y revisa con un agente independiente solo lo riesgoso. Separado de `flujos/`: skill, agentes, herramientas e instalador propios. | [FLUJOS-ODD.md](FLUJOS-ODD.md) |
+| Flujo odd | `flujos-odd/` | `/qcc-implementador-odd`, en prueba: versión lite inspirada en el ODD de gentle-ai. Implementa inline las tareas chicas, delega las grandes en ejecutores y revisa con un agente independiente solo lo riesgoso. Separado de `flujos/`: skill, agentes, herramientas e instalador propios. | [FLUJOS-ODD.md](FLUJOS-ODD.md) |
 
 ## Instalar
 

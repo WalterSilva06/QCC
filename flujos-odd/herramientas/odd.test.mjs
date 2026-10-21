@@ -339,6 +339,54 @@ test('guardia: el orquestador solo se guarda con una corrida abierta y fuera de 
   }
 })
 
+test('guardia: en una tarea grande el orquestador solo edita odd/tasks/', () => {
+  const raiz = repo('grande', { 'src/a.js': 'x\n', 'odd/tasks/.gitkeep': '' })
+  const editar = (ruta, extra = {}) => evaluar({ tool_name: 'Edit', tool_input: { file_path: path.join(raiz, ruta) }, ...extra }, 'orquestador', raiz)
+  const escribir = (rol, ruta) => evaluar({ tool_name: 'Write', tool_input: { file_path: path.join(raiz, ruta) } }, rol, raiz)
+  const base = linea(correr(ODD, raiz, '--inicio').salida, 'ODD_BASE=')
+  const plan = (tamano) => correr(ODD, raiz, '--plan', '--base', base, '--tamano', tamano, '--reglas', '9', '--riesgo', '1:no;2:no;3:no;4:no;5:no;6:no')
+  try {
+    // Sin --plan, ni chico: edita como siempre.
+    assert.equal(editar('src/a.js'), null)
+    assert.equal(plan('chico').codigo, 0)
+    assert.equal(editar('src/a.js'), null)
+
+    const grande = plan('grande')
+    assert.equal(grande.codigo, 0, grande.salida)
+    assert.match(grande.salida, /^TAMAÑO: grande · 9 reglas\nGRANDE: el código lo edita qcc-odd-ejecutor/)
+    assert.equal(JSON.parse(fs.readFileSync(marcaDe(raiz), 'utf8')).tamano, 'grande')
+    assert.match(editar('src/a.js') ?? 'pasó', /tarea grande: el código lo edita qcc-odd-ejecutor, tú solo odd\/tasks\/ \(src\/a\.js\)/)
+    assert.match(escribir('orquestador', 'test/nuevo.test.js') ?? 'pasó', /tarea grande/)
+    assert.equal(escribir('orquestador', 'odd/tasks/sena.md'), null)
+    // Fuera del repo (el temporal) sigue pudiendo, y las reglas de siempre mandan primero.
+    assert.equal(escribir('orquestador', path.relative(raiz, path.join(os.tmpdir(), 'odd-x.txt'))), null)
+    assert.match(escribir('orquestador', '.env') ?? 'pasó', /secretos/)
+    // Los subagentes no: el ejecutor edita el código, y dentro de un subagente el hook del orquestador no niega.
+    assert.equal(escribir('ejecutor', 'src/a.js'), null)
+    assert.equal(editar('src/a.js', { agent_type: 'qcc-odd-ejecutor', agent_id: 'a1' }), null)
+    // Por Bash ya lo negaba antes.
+    assert.match(motivoComando('echo x > src/a.js', { rol: 'orquestador', raiz }) ?? 'pasó', /edita con Edit o Write/)
+    // Un --plan posterior con chico lo vuelve a habilitar; --cierre borra la marca.
+    plan('chico')
+    assert.equal(editar('src/a.js'), null)
+    plan('grande')
+    correr(ODD, raiz, '--cierre', '--base', base, '--resultado', 'COMPLETO')
+    assert.equal(editar('src/a.js'), null)
+  } finally {
+    fs.rmSync(marcaDe(raiz), { force: true })
+  }
+  // Una marca sin tamaño o ilegible no niega.
+  fs.mkdirSync(path.dirname(marcaDe(raiz)), { recursive: true })
+  try {
+    for (const contenido of ['{}', 'no es json']) {
+      fs.writeFileSync(marcaDe(raiz), contenido)
+      assert.equal(editar('src/a.js'), null, contenido)
+    }
+  } finally {
+    fs.rmSync(marcaDe(raiz), { force: true })
+  }
+})
+
 test('guardia: reglas del proyecto para los tres roles, con respaldo en la config de /qcc-implementador', () => {
   const raiz = repo('reglas', {
     '.claude/qcc-implementador-odd.json': JSON.stringify({ guardia: { protegidos: { 'src/gen.ts': 'lo genera el build' }, scriptsNegados: ['db:*'] } }),
@@ -630,7 +678,12 @@ test('odd: --plan exige los 6 ítems de riesgo, un motivo por cada sí y bordes 
     'RIESGO PREVISTO: ítems 1, 2 (1: migración · 2: permisos)',
     'BORDES: ausente | v3',
   ])
-  assert.deepEqual(lineasDePlan({ tamano: 'grande', reglas: '3', riesgo: '1:no;2:no;3:sí parser;4:no;5:no;6:no', bordes: 'vacío' }).slice(1), ['RIESGO PREVISTO: ítem 3 (3: parser)', 'BORDES: vacío'])
+  assert.deepEqual(lineasDePlan({ tamano: 'grande', reglas: '3', riesgo: '1:no;2:no;3:sí parser;4:no;5:no;6:no', bordes: 'vacío' }), [
+    'TAMAÑO: grande · 3 reglas',
+    'GRANDE: el código lo edita qcc-odd-ejecutor; tú solo odd/tasks/ (la guardia niega lo demás)',
+    'RIESGO PREVISTO: ítem 3 (3: parser)',
+    'BORDES: vacío',
+  ])
   assert.deepEqual(lineasDePlan({ tamano: 'chico', reglas: '8', riesgo: '1:no;2:no;3:no;4:no;5:no;6:no' }), ['TAMAÑO: chico · 8 reglas', 'RIESGO PREVISTO: ninguno', 'BORDES: no aplica'])
   assert.throws(() => lineasDePlan({ tamano: 'chico', reglas: '2', riesgo }), /--bordes es obligatorio/)
   assert.throws(() => lineasDePlan({ tamano: 'mediano', reglas: '2', riesgo, bordes: 'x' }), /--tamano/)
@@ -664,10 +717,12 @@ test('odd: CONTEXTO, PROCESO y costo real con un transcript de juguete', () => {
 
   const c = correr(ODD, raiz, '--cierre', '--base', base, '--resultado', 'COMPLETO', '--tamano', 'grande', '--riesgo', 'ninguno', '--revision', 'omitida')
   assert.equal(c.codigo, 0, c.salida)
-  assert.match(c.salida, /PROCESO: sin verificar\.mjs · sin --diff · contexto máx\. 160k sin ejecutor\n/)
+  // --cierre le pasa el tamaño a proceso.mjs: con grande, también los desvíos de una tarea grande.
+  const esperado = 'sin verificar.mjs · sin --diff · contexto máx. 160k sin ejecutor · grande sin explorador · grande sin ejecutor · grande: editó código inline: 1'
+  assert.match(c.salida, new RegExp(`PROCESO: ${esperado.replaceAll('.', '\\.')}\n`))
   assert.match(c.salida, /CONTEXTO: 160k/)
   const fila = JSON.parse(fs.readFileSync(path.join(PRUEBAS, 'registros', 'odd.jsonl'), 'utf8').trim().split('\n').at(-1))
-  assert.equal(fila.proceso, 'sin verificar.mjs · sin --diff · contexto máx. 160k sin ejecutor')
+  assert.equal(fila.proceso, esperado)
   assert.equal(path.resolve(fila.sesion), path.resolve(archivo))
 
   // El reporte, después de --cierre y antes del siguiente mensaje del usuario, entra en el costo real.
@@ -795,9 +850,9 @@ test('proceso: una corrida limpia da ok', () => {
     ['Bash', { command: `cat ${TMP}/salida.txt && echo x > ${TMP}/y` }],
     // Lo que negó la guardia no corrió.
     ['Bash', { command: 'sed -i s/a/b/ src/a.js && cat src/a.js' }, 50_000, 'PreToolUse:Bash hook error: Guardia /qcc-implementador-odd: edita con Edit o Write, no por Bash (src/a.js).'],
+    ['Agent', { subagent_type: 'qcc-odd-ejecutor', prompt: 'DOC: x' }, 170_000],
     VERIFICAR_ODD,
     DIFF,
-    ['Agent', { subagent_type: 'qcc-odd-ejecutor', prompt: 'DOC: x' }, 170_000],
     ['Agent', { subagent_type: 'qcc-odd-revisor', prompt: 'BASE: b0de' }],
   ])
   const p = procesoDe(filas, { raiz, inicio, hasta })
@@ -862,6 +917,52 @@ test('proceso: sin --plan, ediciones por script y --diff viejo', () => {
   // Sin ediciones, nada que verificar.
   const vacio = transcript([PLAN])
   assert.deepEqual(procesoDe(vacio.filas, { raiz, inicio: vacio.inicio, hasta: vacio.hasta }).desvios, [])
+})
+
+test('proceso: una tarea grande pide explorador y ejecutor, y nada de código inline', () => {
+  const raiz = repo('proceso-grande', { 'src/a.js': 'x\n', 'src/b.js': 'y\n', 'src/c.js': 'z\n' })
+  const leer = (ruta, extra = {}) => ['Read', { file_path: path.join(raiz, ruta), ...extra }]
+  const doc = ['Write', { file_path: path.join(raiz, 'odd', 'tasks', 'sena.md'), content: '# Seña' }]
+  const ejecutor = ['Agent', { subagent_type: 'qcc-odd-ejecutor', prompt: 'DOC: odd/tasks/sena.md · T1' }]
+  const limpia = transcript([
+    ['Agent', { subagent_type: 'qcc-odd-explorador', prompt: 'PEDIDO: x' }],
+    leer('src/a.js', { offset: 10, limit: 30 }),
+    leer('src/b.js'),
+    PLAN,
+    doc,
+    ejecutor,
+    VERIFICAR_ODD,
+    DIFF,
+    // Cerrar las casillas del documento después de verificar no es editar el cambio.
+    ['Edit', { file_path: path.join(raiz, 'odd', 'tasks', 'sena.md') }],
+  ])
+  assert.deepEqual(procesoDe(limpia.filas, { raiz, inicio: limpia.inicio, hasta: limpia.hasta, tamano: 'grande' }).desvios, [])
+
+  const desvios = transcript([
+    leer('src/a.js'),
+    leer('src/b.js'),
+    leer('src/c.js'),
+    leer('src/a.js'),
+    PLAN,
+    ['Edit', { file_path: path.join(raiz, 'src', 'a.js') }],
+    ['Write', { file_path: path.join(raiz, 'test', 'a.test.js'), content: 'test()' }],
+    VERIFICAR_ODD,
+    DIFF,
+  ])
+  const opciones = { raiz, inicio: desvios.inicio, hasta: desvios.hasta }
+  assert.deepEqual(procesoDe(desvios.filas, { ...opciones, tamano: 'grande' }).desvios, [
+    'grande sin explorador',
+    'grande sin ejecutor',
+    'grande: editó código inline: 2',
+    'leyó 3 archivos enteros antes de --plan',
+  ])
+  // Con explorar: nunca no se pide explorador; en una chica, nada de esto.
+  assert.deepEqual(procesoDe(desvios.filas, { ...opciones, tamano: 'grande', explorar: 'nunca' }).desvios, ['grande sin ejecutor', 'grande: editó código inline: 2', 'leyó 3 archivos enteros antes de --plan'])
+  assert.deepEqual(procesoDe(desvios.filas, { ...opciones, tamano: 'chico' }).desvios, [])
+
+  // Un ejecutor despachado después del último verificar.mjs y --diff deja su cambio sin verificar.
+  const tarde = transcript([PLAN, VERIFICAR_ODD, DIFF, ejecutor])
+  assert.deepEqual(procesoDe(tarde.filas, { raiz, inicio: tarde.inicio, hasta: tarde.hasta }).desvios, ['editó después del último verificar.mjs', 'editó después del último --diff'])
 })
 
 // ── instalar ────────────────────────────────────────────────────────────────

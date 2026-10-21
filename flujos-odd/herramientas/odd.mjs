@@ -17,7 +17,8 @@
 // `odd/tasks/*.md` con tareas abiertas. Deja la marca de corrida abierta (`registros/activas/`), que activa la guardia
 // del orquestador; `--cierre` la borra.
 // --plan: el cierre de la exploración, visible: tamaño, los 6 ítems de riesgo (cada uno «sí <motivo>» o «no») y los
-// bordes. Un ítem que falta, un «sí» sin motivo o un riesgo sin bordes salen con ERROR y código 2.
+// bordes. Un ítem que falta, un «sí» sin motivo o un riesgo sin bordes salen con ERROR y código 2. Anota el tamaño en
+// la marca de corrida: con `grande`, la guardia niega al orquestador editar fuera de `odd/tasks/`.
 // --diff: el cambio desde la BASE contra una foto nueva (incluye archivos nuevos), con --stat y recortado a TOPE_DIFF líneas.
 // --cierre: anota una fila en `registros/odd.jsonl` con el costo y el control de proceso, e imprime CAMBIOS, COSTO y PROCESO.
 // --plan, --diff y --cierre imprimen `CONTEXTO: <n>k`, el del último pedido del orquestador, leído del transcript.
@@ -231,6 +232,7 @@ export function lineasDePlan({ tamano, reglas, riesgo, bordes }) {
   const lineas = []
   if (tamano === 'chico' && Number(reglas) > REGLAS_CHICO) lineas.push(`AVISO: ${reglas} reglas → grande`)
   lineas.push(`TAMAÑO: ${tamano} · ${reglas} reglas`)
+  if (tamano === 'grande') lineas.push(`GRANDE: el código lo edita qcc-odd-ejecutor; tú solo ${TAREAS}/ (la guardia niega lo demás)`)
   const motivos = si.map(([n, motivo]) => `${n}: ${motivo}`).join(' · ')
   lineas.push(`RIESGO PREVISTO: ${si.length ? `ítem${si.length > 1 ? 's' : ''} ${si.map(([n]) => n).join(', ')} (${motivos})` : 'ninguno'}`)
   lineas.push(`BORDES: ${bordes?.trim() || 'no aplica'}`)
@@ -308,10 +310,23 @@ function contexto(base, sesion) {
   }
 }
 
+/** Anota el tamaño en la marca de la corrida abierta, para la guardia; sin marca (sin `--inicio`) no hace nada. */
+function anotarTamano(tamano) {
+  const marca = marcaDe(RAIZ)
+  let datos
+  try {
+    datos = JSON.parse(fs.readFileSync(marca, 'utf8'))
+  } catch {
+    return
+  }
+  fs.writeFileSync(marca, JSON.stringify({ ...datos, tamano }) + '\n')
+}
+
 function plan(o) {
   if (!o.base) throw errorDePlan('falta la BASE: --base <ODD_BASE>')
   const lineas = lineasDePlan(o)
   exigirBase(o.base)
+  anotarTamano(o.tamano)
   for (const l of lineas) console.log(l)
   console.log(lineaDeContexto(contexto(o.base)))
 }
@@ -344,7 +359,7 @@ function cierre({ base, resultado, tamano, riesgo, revision, titulo }) {
   try {
     sesion = sesionDe(RAIZ, base)
     costo = sesion && costoDelFlujo(RAIZ, base, { hasta: t, sesion })
-    proceso = sesion && lineaDeProceso(procesoDe(filasDe(sesion.archivo), { raiz: RAIZ, inicio: sesion.inicio, hasta: t }))
+    proceso = sesion && lineaDeProceso(procesoDe(filasDe(sesion.archivo), { raiz: RAIZ, inicio: sesion.inicio, hasta: t, tamano, explorar: explorarDe(configDelProyecto()) }))
   } catch {
     // Sin transcripts legibles: la fila va sin costo ni proceso.
   }

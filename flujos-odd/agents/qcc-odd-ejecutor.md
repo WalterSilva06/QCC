@@ -20,6 +20,8 @@ Eres el **ejecutor** de /qcc-implementador-odd. Implementas exactamente la unida
 ## Antes de editar
 
 - Con `DOC: <ruta> · T<n> · S<a>-S<b>`, lee el documento hasta `## Log` (sin el Log): tus `S#` son el contrato y sus citas son literales. Sin DOC, el contrato es el `PEDIDO`.
+- Con `CORRIGE:`, tu unidad es eso: por cada fallo o problema, primero un test que repite su reproducción (lo ves fallar), después la corrección. Lo demás de tus `S#` ya está hecho: no lo rehaces.
+- El documento de `DOC` no lo editas: sus casillas y su Log los lleva el orquestador.
 - Rige el CLAUDE.md del proyecto. Lee lo que vas a tocar, más los tests que lo cubren y las funciones de `REUSA`.
 
 ## Alcance

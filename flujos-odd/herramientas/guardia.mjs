@@ -10,7 +10,8 @@
 // este rol solo niega mientras hay una corrida abierta en el repo (la marca que deja `odd.mjs --inicio` y borra
 // `--cierre`, que vence a las 12 h) y nunca dentro de un subagente. Niega escribir en el repo por Bash o PowerShell
 // (que edite con Edit o Write) y leer archivos del repo con `cat`, `head`, `sed -n`… (que lea con Read o Grep), más
-// lo del ejecutor salvo las dependencias, que las instala el orquestador.
+// lo del ejecutor salvo las dependencias, que las instala el orquestador. Si `--plan` anotó `grande` en la marca,
+// además niega Edit y Write en el repo fuera de `odd/tasks/`: el código lo editan los ejecutores.
 //
 // Las reglas del proyecto (`guardia.protegidos`, `guardia.inmutables` y `guardia.scriptsNegados` de la config) valen
 // para los tres roles.
@@ -33,6 +34,7 @@ const CONFIG_ODD = '.claude/qcc-implementador-odd.json'
 // La config de /qcc-implementador: la nueva y, si no existe, la vieja.
 const CONFIGS_NORMALES = ['.claude/qcc-implementador.json', '.claude/implementador.json']
 const VIDA_MARCA = 12 * 3600_000
+const TAREAS = 'odd/tasks'
 
 const GIT_LECTURA = new Set(['status', 'diff', 'log', 'show', 'blame', 'grep', 'ls-files', 'ls-tree', 'rev-parse', 'rev-list', 'cat-file', 'archive', 'describe', 'shortlog', 'merge-base', 'name-rev', 'version', 'help'])
 const GESTORES = new Set(['npm', 'pnpm', 'yarn', 'bun'])
@@ -140,6 +142,12 @@ export function corridaAbierta(raiz) {
   } catch {
     return false
   }
+}
+
+/** El tamaño que `--plan` anotó en la marca de la corrida abierta: `chico`, `grande` o null. */
+export function tamanoDeCorrida(raiz) {
+  if (!corridaAbierta(raiz)) return null
+  return leerJson(marcaDe(raiz))?.tamano ?? null
 }
 
 /** Raíz del repo git que contiene `dir`, o `dir` si no está en uno. */
@@ -490,6 +498,13 @@ function escrituraDelOrquestador(ruta, { raiz, cwd }) {
   return `edita con Edit o Write, no por Bash (${path.relative(raiz, abs).split(path.sep).join('/') || ruta})`
 }
 
+/** En una tarea grande el orquestador solo escribe el documento de la feature; el código lo editan los ejecutores. */
+function edicionEnGrande(ruta, { raiz, cwd }) {
+  const abs = path.resolve(cwd, rutaNativa(ruta))
+  if (!dentro(abs, raiz) || dentro(abs, path.join(raiz, TAREAS))) return null
+  return `tarea grande: el código lo edita qcc-odd-ejecutor, tú solo ${TAREAS}/ (${path.relative(raiz, abs).split(path.sep).join('/')})`
+}
+
 /** Por qué se niega un tramo ya expandido; null si pasa. `cmd`: el comando entero, con los cuerpos de los heredocs. */
 function motivoTramo(tramo, ctx) {
   const { rol, raiz, cwd, profundidad = 0 } = ctx
@@ -590,7 +605,10 @@ export function evaluar(evento, rol, raiz = raizDe(process.env.CLAUDE_PROJECT_DI
     if (herramienta === 'Bash' || herramienta === 'PowerShell') return motivoComando(String(entrada.command ?? ''), { rol, raiz, cwd })
     if (['Edit', 'Write', 'NotebookEdit', 'MultiEdit'].includes(herramienta)) {
       if (rol === 'revisor') return 'el revisor no edita archivos'
-      return motivoRuta(String(entrada.file_path ?? entrada.notebook_path ?? ''), { raiz, cwd, orquestador: rol === 'orquestador' })
+      const ruta = String(entrada.file_path ?? entrada.notebook_path ?? '')
+      const motivo = motivoRuta(ruta, { raiz, cwd, orquestador: rol === 'orquestador' })
+      if (motivo || rol !== 'orquestador') return motivo
+      return tamanoDeCorrida(raiz) === 'grande' ? edicionEnGrande(ruta, { raiz, cwd }) : null
     }
     return null
   } catch {
