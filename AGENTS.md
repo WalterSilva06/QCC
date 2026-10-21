@@ -1,9 +1,10 @@
 # QCC (Quorum Claude Code)
 
-Herramientas personales para Claude Code, en dos partes separadas:
+Herramientas personales para Claude Code, en tres partes separadas:
 
 - **`qcc-panel/`**: mod (plugin) con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Ver [MODS.md](MODS.md).
 - **`flujos/`**: los flujos `/qcc-implementador` (con un solo modo) y `/qcc-commit`, con sus agentes y herramientas. Se instalan copiándolos a `~/.claude`. Ver [FLUJOS.md](FLUJOS.md).
+- **`flujos-odd/`**: el flujo `/qcc-implementador-odd`, en prueba, separado por completo de `flujos/`. Tiene su skill, sus agentes, sus herramientas, su instalador, su config (`.claude/qcc-implementador-odd.json`) y su registro. Ninguno de los dos flujos usa archivos del otro. Ver [FLUJOS-ODD.md](FLUJOS-ODD.md).
 
 [README.md](README.md) es la entrada al repo: resume la instalación y enlaza a todo.
 
@@ -14,6 +15,8 @@ README.md                         entrada al repo e índice
 AGENTS.md                         reglas generales (este archivo)
 MODS.md                           documentación del mod qcc-panel
 FLUJOS.md                         documentación de los flujos
+FLUJOS-ODD.md                     documentación de /qcc-implementador-odd
+.claude/qcc-implementador-odd.json verificación y críticos para /qcc-implementador-odd
 .claude/qcc-implementador.json    pasos de verificación para /qcc-implementador
 .claude/qcc-implementador/        reglas de /qcc-implementador para este repo (un archivo por sección)
 flujos/
@@ -26,6 +29,11 @@ flujos/
   agents/qcc-generador-commit.md  agente Haiku high de /qcc-commit
   herramientas/                   → ~/.claude/flujos/ (estado, verificar, guardia, costos, guardia.test, comun.md, plan.md, pasos.md, config.ejemplo.md)
   herramientas/qcc-commit/        → ~/.claude/flujos/qcc-commit/ (solo-git.mjs y su test)
+flujos-odd/
+  instalar.mjs                    copia el flujo odd a ~/.claude (o lo trae con --traer)
+  skills/qcc-implementador-odd/SKILL.md → ~/.claude/skills/qcc-implementador-odd/SKILL.md (todas sus reglas)
+  agents/qcc-odd-*.md             → ~/.claude/agents/ (explorador, ejecutor, revisor)
+  herramientas/                   → ~/.claude/flujos-odd/ (odd, verificar, guardia, costo, odd.test)
 qcc-panel/
   .claude-plugin/plugin.json      manifiesto (nombre, versión, types)
   .claude-plugin/marketplace.json marketplace «mods-locales»
@@ -48,14 +56,15 @@ claude plugin validate qcc-panel
 claude plugin test qcc-panel
 node --test flujos/herramientas/guardia.test.mjs
 node --test flujos/herramientas/qcc-commit/solo-git.test.mjs
+node --test flujos-odd/herramientas/odd.test.mjs
 ```
 
-Los cuatro tienen que terminar sin errores antes de dar algo por hecho. Qué no prueban los tests del panel está en [MODS.md](MODS.md#verificar).
+Los cinco tienen que terminar sin errores antes de dar algo por hecho. Qué no prueban los tests del panel está en [MODS.md](MODS.md#verificar).
 
 ## Convenciones
 
 - Código, comentarios, nombres y textos de UI en **español** (`medida`, `releerSemana`, «sin respuestas anotadas todavía»). Los términos técnicos y los niveles de esfuerzo quedan en inglés.
-- Estilo: sin punto y coma, comillas simples y JSDoc breve en español. La línea en blanco antes de `return` rige solo en `qcc-panel/`; `flujos/` no la usa.
+- Estilo: sin punto y coma, comillas simples y JSDoc breve en español. La línea en blanco antes de `return` rige solo en `qcc-panel/`; `flujos/` y `flujos-odd/` no la usan.
 - Las del panel (atoms, hotkeys, versión) están en [MODS.md](MODS.md#convenciones-del-panel).
 
 ## Flujo con /qcc-implementador

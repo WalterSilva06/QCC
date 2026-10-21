@@ -3,12 +3,13 @@
 **Q**uorum **C**laude **C**ode: flujos multi-agente y panel de uso para Claude Code.
 Un cambio no se da por hecho hasta que varios agentes lo aprueban: el quórum.
 
-Son herramientas personales, en dos partes separadas.
+Son herramientas personales, en tres partes separadas.
 
 | Parte | Carpeta | Qué es | Documentación |
 |---|---|---|---|
 | Mod | `qcc-panel/` | Panel lateral con los límites de uso y cuatro pestañas: Inicio (contexto de la sesión, esfuerzo y tokens), Flujo (el paso del flujo en curso), Gasto semanal e Historial de flujos. Comandos `/qcc-panel` y `/qcc-panel carpeta`. | [MODS.md](MODS.md) |
 | Flujos | `flujos/` | `/qcc-implementador` (explora, planifica, ejecuta por subtareas y cierra con una revisión final independiente) y `/qcc-commit` (pregunta si hacer push o usar una rama nueva y hace un commit por grupo de cambios, en Haiku high), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
+| Flujo odd | `flujos-odd/` | `/qcc-implementador-odd`, en prueba: versión lite inspirada en el ODD de gentle-ai. Implementa inline y revisa con un agente independiente solo lo riesgoso. Separado de `flujos/`: skill, agentes, herramientas e instalador propios. | [FLUJOS-ODD.md](FLUJOS-ODD.md) |
 
 ## Instalar
 
@@ -40,6 +41,12 @@ node flujos/instalar.mjs
 
 Los flujos corren desde la copia instalada en `~/.claude`: un cambio en `flujos/` no rige hasta volver a instalarlo. Lo que se edite directo en `~/.claude` se trae al repo con `node flujos/instalar.mjs --traer`.
 
+Flujo odd, con su propio instalador (detalles en [FLUJOS-ODD.md](FLUJOS-ODD.md#instalación)):
+
+```
+node flujos-odd/instalar.mjs
+```
+
 ## Verificar
 
 ```
@@ -47,12 +54,14 @@ claude plugin validate qcc-panel
 claude plugin test qcc-panel
 node --test flujos/herramientas/guardia.test.mjs
 node --test flujos/herramientas/qcc-commit/solo-git.test.mjs
+node --test flujos-odd/herramientas/odd.test.mjs
 ```
 
-Los cuatro tienen que terminar sin errores antes de dar algo por hecho (ver [AGENTS.md](AGENTS.md#verificar)).
+Los cinco tienen que terminar sin errores antes de dar algo por hecho (ver [AGENTS.md](AGENTS.md#verificar)).
 
 ## Índice
 
 - [AGENTS.md](AGENTS.md): reglas generales del repo para Claude (estructura, verificación y convenciones).
 - [MODS.md](MODS.md): el panel de uso.
 - [FLUJOS.md](FLUJOS.md): los flujos (`/qcc-implementador` y `/qcc-commit`).
+- [FLUJOS-ODD.md](FLUJOS-ODD.md): el flujo `/qcc-implementador-odd`.

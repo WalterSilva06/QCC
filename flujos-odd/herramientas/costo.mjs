@@ -1,0 +1,168 @@
+// Costo real de una corrida de /qcc-implementador-odd, leído de los transcripts de Claude Code.
+//
+// La sesión es la que recibió `ODD_BASE=<sha>` de `odd.mjs --inicio`; el tramo va desde el `/qcc-implementador-odd`
+// anterior a esa marca (o desde la marca, si no se encuentra) hasta el cierre. Suma el hilo principal (orquestador)
+// y cada subagente que empezó en el tramo, por rol (`qcc-odd-` quitado), con el veredicto de su último informe.
+//
+// Precios por millón de tokens de la página oficial de Anthropic (octubre de 2026): entrada, salida, lectura de
+// caché y escritura de caché de 5 min y de 1 h. El hilo principal escribe con 1 h; los subagentes, con 5 min.
+
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+const PRECIOS = {
+  'claude-opus-5-5': { entrada: 4, salida: 20, lectura: 0.2, escritura5m: 5, escritura1h: 8 },
+  'claude-sonnet-5-5': { entrada: 2, salida: 10, lectura: 0.1, escritura5m: 2.5, escritura1h: 4 },
+  'claude-haiku-5-5': { entrada: 0.1, salida: 0.5, lectura: 0.01, escritura5m: 0.125, escritura1h: 0.2 },
+}
+// Haiku 5.5 cobra más con prompts de más de 100.000 tokens.
+const HAIKU_LARGO = { entrada: 0.5, salida: 2.5, lectura: 0.05, escritura5m: 0.625, escritura1h: 1 }
+const VEREDICTO_POR_ROL = { revisor: 'VEREDICTO', ejecutor: 'ESTADO' }
+const COMANDO = /<command-name>\/qcc-implementador-odd</
+
+export const proyectosDe = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')
+export const dolares = (n) => `$${n.toFixed(2).replace('.', ',')}`
+const textoDe = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x?.type === 'text' ? x.text : typeof x?.content === 'string' ? x.content : textoDe(x?.content))).join('') : '')
+
+/** Precio por millón del modelo (id con o sin sufijos), según el tamaño del prompt; null si no se conoce. */
+export function precioDe(modelo, prompt = 0) {
+  const clave = Object.keys(PRECIOS).find((k) => String(modelo ?? '').startsWith(k))
+  if (!clave) return null
+  return clave === 'claude-haiku-5-5' && prompt > 100_000 ? HAIKU_LARGO : PRECIOS[clave]
+}
+
+/** Costo en USD de un pedido según su `usage`; null si el modelo no tiene precio. */
+export function costoDePedido(uso, modelo) {
+  const u = uso ?? {}
+  const prompt = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+  const p = precioDe(modelo, prompt)
+  if (!p) return null
+  const w1h = u.cache_creation?.ephemeral_1h_input_tokens ?? 0
+  const w5m = u.cache_creation ? (u.cache_creation.ephemeral_5m_input_tokens ?? 0) : (u.cache_creation_input_tokens ?? 0)
+  return ((u.input_tokens ?? 0) * p.entrada + (u.cache_read_input_tokens ?? 0) * p.lectura + w5m * p.escritura5m + w1h * p.escritura1h + (u.output_tokens ?? 0) * p.salida) / 1e6
+}
+
+function filasDe(archivo) {
+  let texto
+  try {
+    texto = fs.readFileSync(archivo, 'utf8')
+  } catch {
+    return []
+  }
+  const filas = []
+  for (const linea of texto.split('\n')) {
+    if (!linea.trim()) continue
+    try {
+      filas.push(JSON.parse(linea))
+    } catch {
+      // Línea cortada: se ignora.
+    }
+  }
+  return filas
+}
+
+/** Pedidos al modelo de esas filas, cada mensaje una vez y con su uso final: `{ pedidos, usd, sinPrecio }`. */
+export function usoDe(filas) {
+  const porMensaje = new Map()
+  for (const f of filas) {
+    const m = f?.type === 'assistant' ? f.message : null
+    if (!m?.id) continue
+    const previo = porMensaje.get(m.id)
+    if (!previo || (m.usage?.output_tokens ?? 0) >= (previo.uso?.output_tokens ?? 0)) porMensaje.set(m.id, { uso: m.usage, modelo: m.model })
+  }
+  let usd = 0
+  let sinPrecio = 0
+  for (const { uso, modelo } of porMensaje.values()) {
+    const c = costoDePedido(uso, modelo)
+    if (c === null) sinPrecio++
+    else usd += c
+  }
+  return { pedidos: porMensaje.size, usd, sinPrecio }
+}
+
+/** La sesión de `raiz` que recibió `ODD_BASE=<base>`: `{ archivo, inicio }`, o null. */
+export function sesionDe(raiz, base, proyectos = proyectosDe()) {
+  const carpeta = path.join(proyectos, path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  let archivos = []
+  try {
+    archivos = fs.readdirSync(carpeta).filter((a) => a.endsWith('.jsonl')).map((a) => path.join(carpeta, a))
+  } catch {
+    return null
+  }
+  const marca = `ODD_BASE=${base}`
+  for (const archivo of archivos.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)) {
+    let texto = ''
+    try {
+      texto = fs.readFileSync(archivo, 'utf8')
+    } catch {
+      continue
+    }
+    if (!texto.includes(marca)) continue
+    const filas = filasDe(archivo)
+    const k = filas.findIndex((f) => !f.isSidechain && JSON.stringify(f?.message?.content ?? '').includes(marca))
+    if (k < 0) continue
+    const comando = filas.slice(0, k).reverse().find((f) => f?.type === 'user' && !f.isSidechain && f.timestamp && COMANDO.test(textoDe(f.message?.content)))
+    return { archivo, inicio: comando?.timestamp ?? filas[k].timestamp }
+  }
+  return null
+}
+
+/** Veredicto del último informe del agente (`APROBADO`, `HECHO`…); null si su rol no da uno o no lo trae. */
+function veredictoDe(filas, rol) {
+  const campo = VEREDICTO_POR_ROL[rol]
+  if (!campo) return null
+  const textos = filas.filter((f) => f?.type === 'assistant').flatMap((f) => (f.message?.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text))
+  return new RegExp(`^[\\s*_>\`-]*${campo}:\\s*\\**\\s*([A-ZÁÉÍÓÚ]+)`, 'm').exec(textos.at(-1) ?? '')?.[1] ?? null
+}
+
+/**
+ * Costo de la corrida de `raiz` con BASE `base`, hasta `hasta`: `{ inicio, minutos, usd, roles, veredictos }`, con
+ * `roles` como `{ rol: { pedidos, usd, agentes } }`. null si no se encuentra la sesión.
+ */
+export function costoDelFlujo(raiz, base, { proyectos = proyectosDe(), hasta = new Date().toISOString() } = {}) {
+  const sesion = sesionDe(raiz, base, proyectos)
+  if (!sesion) return null
+  const enTramo = (t) => t && t >= sesion.inicio && t <= hasta
+  const principal = usoDe(filasDe(sesion.archivo).filter((f) => !f.isSidechain && enTramo(f.timestamp)))
+  const roles = { orquestador: { pedidos: principal.pedidos, usd: principal.usd, agentes: 0 } }
+  const veredictos = {}
+  let sinPrecio = principal.sinPrecio
+  const carpeta = path.join(path.dirname(sesion.archivo), path.basename(sesion.archivo, '.jsonl'), 'subagents')
+  let nombres = []
+  try {
+    nombres = fs.readdirSync(carpeta).filter((a) => a.endsWith('.jsonl')).sort()
+  } catch {
+    // Sin subagentes.
+  }
+  for (const a of nombres) {
+    const filas = filasDe(path.join(carpeta, a))
+    if (!enTramo(filas.find((f) => f.timestamp)?.timestamp)) continue
+    let rol = '?'
+    try {
+      rol = String(JSON.parse(fs.readFileSync(path.join(carpeta, a.replace(/\.jsonl$/, '.meta.json')), 'utf8')).agentType ?? '?').replace(/^qcc-odd-/, '')
+    } catch {
+      // Sin meta: rol desconocido.
+    }
+    const u = usoDe(filas)
+    roles[rol] ??= { pedidos: 0, usd: 0, agentes: 0 }
+    roles[rol].pedidos += u.pedidos
+    roles[rol].usd += u.usd
+    roles[rol].agentes++
+    sinPrecio += u.sinPrecio
+    const v = veredictoDe(filas, rol)
+    if (v) (veredictos[rol] ??= []).push(v)
+  }
+  const usd = Object.values(roles).reduce((s, r) => s + r.usd, 0)
+  const minutos = Math.max(0, Date.parse(hasta) - Date.parse(sesion.inicio)) / 60_000
+  return { inicio: sesion.inicio, minutos, usd, roles, veredictos, ...(sinPrecio ? { sinPrecio } : {}) }
+}
+
+/** «$0,42 · 6,1 min · orquestador $0,30 (12 pedidos) · revisor $0,12». */
+export function resumenDeCosto(c) {
+  const partes = Object.entries(c.roles)
+    .filter(([, r]) => r.pedidos > 0)
+    .sort((a, b) => b[1].usd - a[1].usd)
+    .map(([rol, r]) => `${rol} ${dolares(r.usd)}${rol === 'orquestador' ? ` (${r.pedidos} pedidos)` : r.agentes > 1 ? ` (×${r.agentes})` : ''}`)
+  return `${dolares(c.usd)} · ${c.minutos.toFixed(1).replace('.', ',')} min${partes.length ? ` · ${partes.join(' · ')}` : ''}${c.sinPrecio ? ` · ${c.sinPrecio} pedido(s) sin precio` : ''}`
+}

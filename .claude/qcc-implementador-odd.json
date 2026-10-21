@@ -1,0 +1,19 @@
+{
+  "verificar": [
+    { "nombre": "validate", "cmd": "claude plugin validate qcc-panel" },
+    { "nombre": "test", "cmd": "claude plugin test qcc-panel" },
+    { "nombre": "test flujos", "cmd": "node --test flujos/herramientas/guardia.test.mjs" },
+    { "nombre": "test qcc-commit", "cmd": "node --test flujos/herramientas/qcc-commit/solo-git.test.mjs" },
+    { "nombre": "test odd", "cmd": "node --test flujos-odd/herramientas/odd.test.mjs" }
+  ],
+  "criticos": [
+    { "rutas": ["flujos-odd/herramientas/guardia.mjs"], "riesgo": [2], "motivo": "seguridad de los subagentes de /qcc-implementador-odd" },
+    { "rutas": ["flujos-odd/"], "excepto": ["flujos-odd/agents/*.md", "flujos-odd/herramientas/guardia.mjs"], "riesgo": [3, 5], "motivo": "herramientas, prompts e instalador de /qcc-implementador-odd, que usan todos los proyectos del usuario" },
+    { "rutas": ["flujos-odd/agents/*.md"], "si": "cambia su frontmatter (herramientas, modelo, hooks)", "riesgo": [2, 3], "motivo": "definición de los agentes de /qcc-implementador-odd" },
+    { "rutas": ["flujos/"], "excepto": ["flujos/agents/*.md", "flujos/herramientas/config.ejemplo.md"], "riesgo": [2, 3], "motivo": "/qcc-implementador y su guardia, que usan todos los proyectos del usuario" },
+    { "rutas": ["flujos/agents/*.md"], "si": "cambia su frontmatter (herramientas, modelo)", "riesgo": [2, 3], "motivo": "definición de los agentes de /qcc-implementador" },
+    { "rutas": [".claude/"], "riesgo": [2], "motivo": "reglas y config de los flujos en este repo" },
+    { "rutas": ["qcc-panel/hooks/flujo.ts", "qcc-panel/types/index.d.ts"], "riesgo": [4], "motivo": "máquina de estado del flujo y forma de los atoms que sobreviven a /reload-plugins" },
+    { "rutas": ["qcc-panel/hooks/register.tsx"], "riesgo": [3], "motivo": "hooks que envuelven next: un fallo frena una petición al modelo o una herramienta" }
+  ]
+}
