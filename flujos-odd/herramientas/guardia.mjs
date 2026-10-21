@@ -87,13 +87,63 @@ function palabrasDe(texto) {
   return palabras
 }
 
+const SUSTITUCION = /\$\(([^()]*)\)|`([^`]*)`/g
+const HEREDOC = /^<<(-?)[ \t]*(?:'([^'\n]+)'|"([^"\n]+)"|(\\?)([A-Za-z0-9_.-]+))/
+
+/**
+ * El comando sin el cuerpo de sus heredocs (`<<WORD`, `<<'WORD'`, `<<"WORD"`, `<<-WORD`) ni su operador: el cuerpo
+ * son datos, no comandos. `sustituciones`: lo de `$(…)` y comillas invertidas de los cuerpos sin comillas, que el
+ * shell sí corre.
+ */
+function sinHeredocs(cmd) {
+  let texto = ''
+  const sustituciones = []
+  const pendientes = []
+  let comilla = null
+  for (let k = 0; k < cmd.length; k++) {
+    const c = cmd[k]
+    if (comilla) {
+      texto += c
+      if (c === comilla) comilla = null
+      continue
+    }
+    if (c === '"' || c === "'") {
+      comilla = c
+      texto += c
+      continue
+    }
+    const op = c === '<' && cmd[k - 1] !== '<' && cmd[k + 2] !== '<' ? HEREDOC.exec(cmd.slice(k)) : null
+    if (op) {
+      pendientes.push({ fin: op[2] ?? op[3] ?? op[5], tabs: op[1] === '-', expande: op[5] !== undefined && !op[4] })
+      texto += ' '
+      k += op[0].length - 1
+      continue
+    }
+    texto += c
+    if (c !== '\n') continue
+    // Los cuerpos empiezan en la línea que sigue a la cabecera, uno tras otro.
+    for (const h of pendientes.splice(0)) {
+      const cuerpo = []
+      while (k + 1 < cmd.length) {
+        const salto = cmd.indexOf('\n', k + 1)
+        const linea = cmd.slice(k + 1, salto < 0 ? cmd.length : salto)
+        k = salto < 0 ? cmd.length : salto
+        if ((h.tabs ? linea.replace(/^\t+/, '') : linea).replace(/\r$/, '') === h.fin) break
+        cuerpo.push(linea)
+      }
+      if (h.expande) for (const m of cuerpo.join('\n').matchAll(SUSTITUCION)) sustituciones.push(m[1] ?? m[2])
+    }
+  }
+  return { texto, sustituciones }
+}
+
 /**
  * Los tramos de un comando: lo de `$(…)` y de comillas invertidas va como tramo propio, y el resto se parte por
- * `&&`, `||`, `;`, `|`, `&` y saltos de línea, fuera de comillas.
+ * `&&`, `||`, `;`, `|`, `&` y saltos de línea, fuera de comillas. El cuerpo de un heredoc no cuenta.
  */
 export function tramosDe(cmd) {
-  const internos = []
-  const sinSustituciones = String(cmd).replace(/\$\(([^()]*)\)|`([^`]*)`/g, (_, a, b) => {
+  const { texto, sustituciones: internos } = sinHeredocs(String(cmd))
+  const sinSustituciones = texto.replace(SUSTITUCION, (_, a, b) => {
     internos.push(a ?? b)
     return ' __SUST__ '
   })
@@ -125,15 +175,49 @@ export function tramosDe(cmd) {
 
 const SUST = '__SUST__'
 
-/** Destinos de redirección de un tramo (`> x`, `>> x`, `2> x`, `>x`), sin `/dev/null`, `&1` ni `$null`. */
+/**
+ * Redirecciones de un tramo: `destinos` (`> x`, `>> x`, `2> x`, `>x`, `> "x"`), sin `/dev/null`, `&1` ni `$null`, y
+ * `resto`, el tramo sin ellas. Solo cuenta un `>` fuera de comillas que no sea parte de `=>`, `->` ni `>=`.
+ */
 function redireccionesDe(tramo) {
   const destinos = []
-  for (const m of tramo.matchAll(/\d?>>?\s*("[^"]*"|'[^']*'|[^\s;&|]+)/g)) {
-    const d = m[1].replace(/^["']|["']$/g, '')
-    if (!d || d.startsWith('&') || /^(\/dev\/null|nul|\$null)$/i.test(d)) continue
-    destinos.push(d)
+  let resto = ''
+  let comilla = null
+  for (let k = 0; k < tramo.length; k++) {
+    const c = tramo[k]
+    if (comilla) {
+      resto += c
+      if (c === comilla) comilla = null
+      continue
+    }
+    if (c === '"' || c === "'") {
+      comilla = c
+      resto += c
+      continue
+    }
+    if (c !== '>' || tramo[k - 1] === '=' || tramo[k - 1] === '-' || tramo[k + 1] === '=') {
+      resto += c
+      continue
+    }
+    // El descriptor (`2>`) es parte de la redirección.
+    resto = resto.replace(/(^|\s)\d$/, '$1')
+    let j = k + (tramo[k + 1] === '>' ? 2 : 1)
+    while (j < tramo.length && /\s/.test(tramo[j])) j++
+    let destino
+    if (tramo[j] === '"' || tramo[j] === "'") {
+      const cierre = tramo.indexOf(tramo[j], j + 1)
+      destino = tramo.slice(j + 1, cierre < 0 ? tramo.length : cierre)
+      k = cierre < 0 ? tramo.length : cierre
+    } else {
+      let fin = j
+      while (fin < tramo.length && !/[\s;|<>]/.test(tramo[fin])) fin++
+      destino = tramo.slice(j, fin)
+      k = fin - 1
+    }
+    resto += ' '
+    if (destino && !destino.startsWith('&') && !/^(\/dev\/null|nul|\$null)$/i.test(destino)) destinos.push(destino)
   }
-  return destinos
+  return { destinos, resto }
 }
 
 /** Por qué se niega un tramo ya expandido; null si pasa. */
@@ -141,11 +225,12 @@ function motivoTramo(tramo, ctx) {
   const { rol, raiz, cwd } = ctx
   const revisor = rol === 'revisor'
   const escritura = (ruta) => (ruta.includes(SUST) || /\$/.test(ruta) ? (revisor ? `no se ve a dónde escribe (${ruta}): usa una ruta escrita a mano` : null) : motivoRuta(ruta, { raiz, cwd, soloTemporal: revisor }))
-  for (const destino of redireccionesDe(tramo)) {
+  const { destinos, resto } = redireccionesDe(tramo)
+  for (const destino of destinos) {
     const m = escritura(destino)
     if (m) return m
   }
-  const palabras = palabrasDe(tramo.replace(/\d?>>?\s*("[^"]*"|'[^']*'|[^\s;&|]+)/g, ' '))
+  const palabras = palabrasDe(resto)
   while (palabras.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(palabras[0])) palabras.shift()
   while (['sudo', 'env', 'command', 'exec', 'time', 'nohup', '&'].includes(palabras[0])) palabras.shift()
   if (!palabras.length) return null
