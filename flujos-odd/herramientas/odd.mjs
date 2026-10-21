@@ -13,7 +13,9 @@
 //
 // --inicio: toma una foto del árbol (versionados + nuevos no ignorados) como commit suelto, que es la BASE, y la
 // imprime como `ODD_BASE=<sha>`: con esa marca costo.mjs encuentra la sesión. Además: rama, sucios previos,
-// `criticos` y pasos de `verificar` de `.claude/qcc-implementador-odd.json`, y los `odd/tasks/*.md` con tareas abiertas.
+// `criticos`, reglas de la guardia y pasos de `verificar` de `.claude/qcc-implementador-odd.json`, y los
+// `odd/tasks/*.md` con tareas abiertas. Deja la marca de corrida abierta (`registros/activas/`), que activa la guardia
+// del orquestador; `--cierre` la borra.
 // --plan: el cierre de la exploración, visible: tamaño, los 6 ítems de riesgo (cada uno «sí <motivo>» o «no») y los
 // bordes. Un ítem que falta, un «sí» sin motivo o un riesgo sin bordes salen con ERROR y código 2.
 // --diff: el cambio desde la BASE contra una foto nueva (incluye archivos nuevos), con --stat y recortado a TOPE_DIFF líneas.
@@ -30,7 +32,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { raizDe, rutaNativa, enTemporal } from './guardia.mjs'
+import { raizDe, rutaNativa, enTemporal, reglasDelProyecto, marcaDe } from './guardia.mjs'
 import { costoDelFlujo, contextoActual, finDeCorrida, filasDe, sesionDe, resumenDeCosto, resumenDeTokens, dolares, miles } from './costo.mjs'
 import { procesoDe, lineaDeProceso, TOPE_CONTEXTO } from './proceso.mjs'
 
@@ -150,6 +152,16 @@ export function criticosLegibles(criticos) {
     })
 }
 
+/** Las reglas de la guardia del proyecto como líneas legibles: `- protegido: <ruta> — <motivo> (<config>)`… */
+export function reglasLegibles({ protegidos, inmutables, scriptsNegados, origen }) {
+  const de = (clave) => ` (${origen[clave]})`
+  return [
+    ...Object.entries(protegidos).map(([ruta, motivo]) => `- protegido: ${ruta} — ${motivo}${de('protegidos')}`),
+    ...(inmutables.length ? [`- inmutables (los versionados): ${inmutables.join(', ')}${de('inmutables')}`] : []),
+    ...(scriptsNegados.length ? [`- scripts negados: ${scriptsNegados.join(', ')}${de('scriptsNegados')}`] : []),
+  ]
+}
+
 /** Tareas del documento de una feature: `{ abiertas, total }`, contando los `- [ ]` y `- [x]` de `## Tasks`. */
 export function tareasDe(texto) {
   const seccion = /^## Tasks[^\n]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(String(texto))?.[1] ?? ''
@@ -265,9 +277,15 @@ function inicio() {
     // Sin odd/tasks/.
   }
   const lista = sucios.slice(0, TOPE_SUCIOS).join(', ') + (sucios.length > TOPE_SUCIOS ? `, … ${sucios.length - TOPE_SUCIOS} más` : '')
+  const reglas = reglasLegibles(reglasDelProyecto(RAIZ))
+  // La marca de corrida abierta: con ella la guardia del orquestador se activa; --cierre la borra.
+  const marca = marcaDe(RAIZ)
+  fs.mkdirSync(path.dirname(marca), { recursive: true })
+  fs.writeFileSync(marca, JSON.stringify({ base, t: new Date().toISOString() }) + '\n')
   console.log(`ODD_BASE=${base}`)
   console.log(`RAMA: ${rama}@${head} · sucios previos: ${sucios.length ? `${sucios.length} (${lista})` : 'ninguno'}`)
   console.log(`CRÍTICOS DEL PROYECTO: ${criticos.length ? `\n${criticos.join('\n')}` : 'ninguno'}`)
+  console.log(`REGLAS DEL PROYECTO: ${reglas.length ? `\n${reglas.join('\n')}` : 'ninguna'}`)
   console.log(`VERIFICAR: ${pasos.length ? pasos.join(' → ') : 'detección automática de verificar.mjs'}`)
   console.log(`TAREAS ABIERTAS: ${abiertas.length ? abiertas.join(' · ') : 'ninguna'}`)
 }
@@ -319,6 +337,7 @@ function cierre({ base, resultado, tamano, riesgo, revision, titulo }) {
   } catch {
     // Sin transcripts legibles: la fila va sin costo ni proceso.
   }
+  fs.rmSync(marcaDe(RAIZ), { force: true })
   const archivo = registroDe()
   fs.mkdirSync(path.dirname(archivo), { recursive: true })
   fs.appendFileSync(archivo, JSON.stringify(filaDeCorrida({ t, raiz: RAIZ, base, resultado, tamano, riesgo, revision, titulo, proceso, costo, cambios, sesion: sesion?.archivo })) + '\n')

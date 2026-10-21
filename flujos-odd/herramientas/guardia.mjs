@@ -1,23 +1,38 @@
 #!/usr/bin/env node
-// Guardia lite de los subagentes de /qcc-implementador-odd (nivel usuario: sirve para cualquier proyecto).
+// Guardia lite de /qcc-implementador-odd (nivel usuario: sirve para cualquier proyecto).
 //
 // Hook PreToolUse que declaran en su frontmatter `qcc-odd-ejecutor` (argumento `ejecutor`) y `qcc-odd-revisor`
 // (argumento `revisor`): Claude Code lo corre solo mientras ese agente trabaja. Niega lo que un subagente odd
 // no hace nunca: git que modifica, instalar o quitar dependencias, red, borrados recursivos, secretos (`.env*`),
 // servidores y modos watch que no terminan, y archivos protegidos. Al revisor, además, escribir fuera del temporal.
 //
+// El skill lo declara con el argumento `orquestador`. Un hook de skill sigue activo el resto de la sesión, así que
+// este rol solo niega mientras hay una corrida abierta en el repo (la marca que deja `odd.mjs --inicio` y borra
+// `--cierre`, que vence a las 12 h) y nunca dentro de un subagente. Niega escribir en el repo por Bash o PowerShell
+// (que edite con Edit o Write) y leer archivos del repo con `cat`, `head`, `sed -n`… (que lea con Read o Grep), más
+// lo del ejecutor salvo las dependencias, que las instala el orquestador.
+//
+// Las reglas del proyecto (`guardia.protegidos`, `guardia.inmutables` y `guardia.scriptsNegados` de la config) valen
+// para los tres roles.
+//
 // Lite a propósito: parte el comando en tramos (`&&`, `||`, `;`, `|`, saltos de línea y `$(…)`), expande las
 // variables asignadas en el mismo comando y mira el programa de cada tramo. Ante la duda deja pasar, y un error
 // propio nunca niega: un guardia que castra al ejecutor cuesta la tarea entera.
 //
-//   echo '<evento JSON>' | node ~/.claude/flujos-odd/guardia.mjs ejecutor|revisor
+//   echo '<evento JSON>' | node ~/.claude/flujos-odd/guardia.mjs ejecutor|revisor|orquestador
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const WIN = process.platform === 'win32'
+const DIR = path.dirname(fileURLToPath(import.meta.url))
+const CONFIG_ODD = '.claude/qcc-implementador-odd.json'
+// La config de /qcc-implementador: la nueva y, si no existe, la vieja.
+const CONFIGS_NORMALES = ['.claude/qcc-implementador.json', '.claude/implementador.json']
+const VIDA_MARCA = 12 * 3600_000
 
 const GIT_LECTURA = new Set(['status', 'diff', 'log', 'show', 'blame', 'grep', 'ls-files', 'ls-tree', 'rev-parse', 'rev-list', 'cat-file', 'archive', 'describe', 'shortlog', 'merge-base', 'name-rev', 'version', 'help'])
 const GESTORES = new Set(['npm', 'pnpm', 'yarn', 'bun'])
@@ -30,6 +45,96 @@ const ESCRIBEN = new Set(['cp', 'mv', 'mkdir', 'touch', 'tee', 'rm', 'rmdir', 'l
 const BORRAN = new Set(['rm', 'remove-item', 'ri', 'del', 'erase', 'rmdir', 'rd'])
 const LEEN = new Set(['cat', 'head', 'tail', 'less', 'more', 'get-content', 'gc', 'type'])
 const LOCKFILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock', 'cargo.lock', 'go.sum', 'poetry.lock', 'uv.lock', 'composer.lock', 'gemfile.lock'])
+const INTERPRETES = new Set(['node', 'python', 'python3', 'py', 'deno', 'bun', 'ruby', 'perl'])
+const CODIGO_EN_LINEA = new Set(['-e', '-p', '-c', '--eval', '--print', '-'])
+/** Un script que escribe archivos: `writeFileSync`, `open(…, 'w')`… */
+export const ESCRIBE_FS = /\b(writeFileSync|appendFileSync|writeFile|appendFile|renameSync|copyFileSync)\s*\(|\bopen\([^)]*,\s*['"][wa]|\.write_text\(/
+
+// ── Reglas del proyecto ─────────────────────────────────────────────────────
+
+function leerJson(archivo) {
+  try {
+    const j = JSON.parse(fs.readFileSync(archivo, 'utf8'))
+    return j && typeof j === 'object' && !Array.isArray(j) ? j : null
+  } catch {
+    return null
+  }
+}
+
+const cacheReglas = new Map()
+
+/**
+ * Las reglas del proyecto, de `guardia` en `.claude/qcc-implementador-odd.json`: `protegidos` ({ ruta, carpeta/ o
+ * glob: motivo }), `inmutables` (carpetas o globs cuyos archivos versionados no se editan) y `scriptsNegados` (globs de
+ * scripts del gestor JS). Una clave que no está ahí se toma de la config de /qcc-implementador, si existe. `origen`
+ * dice de qué archivo salió cada una.
+ */
+export function reglasDelProyecto(raiz) {
+  if (cacheReglas.has(raiz)) return cacheReglas.get(raiz)
+  const odd = leerJson(path.join(raiz, CONFIG_ODD))?.guardia ?? {}
+  const nombreNormal = CONFIGS_NORMALES.find((n) => fs.existsSync(path.join(raiz, n)))
+  const normal = (nombreNormal && leerJson(path.join(raiz, nombreNormal))?.guardia) || {}
+  const esMapa = (v) => v && typeof v === 'object' && !Array.isArray(v)
+  const tomar = (clave, valida) => (valida(odd[clave]) ? [odd[clave], CONFIG_ODD] : valida(normal[clave]) ? [normal[clave], nombreNormal] : [null, null])
+  const [protegidos, deProtegidos] = tomar('protegidos', esMapa)
+  const [inmutables, deInmutables] = tomar('inmutables', Array.isArray)
+  const [negados, deNegados] = tomar('scriptsNegados', Array.isArray)
+  const reglas = {
+    protegidos: Object.fromEntries(Object.entries(protegidos ?? {}).map(([k, v]) => [String(k), String(v)])),
+    inmutables: (inmutables ?? []).map(String),
+    scriptsNegados: (negados ?? []).map(String),
+    origen: { protegidos: deProtegidos, inmutables: deInmutables, scriptsNegados: deNegados },
+  }
+  cacheReglas.set(raiz, reglas)
+  return reglas
+}
+
+/** Glob → RegExp: `**` cruza carpetas, `*` y `?` no; un patrón que termina en `/` es la carpeta entera. */
+function aRegex(patron) {
+  let p = String(patron).replace(/\\/g, '/').replace(/^\.\//, '')
+  if (p.endsWith('/')) p += '**'
+  let re = ''
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i]
+    if (c === '*' && p[i + 1] === '*') {
+      i++
+      if (p[i + 1] === '/') {
+        i++
+        re += '(?:.*/)?'
+      } else re += '.*'
+    } else if (c === '*') re += '[^/]*'
+    else if (c === '?') re += '[^/]'
+    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(`^${re}$`, WIN ? 'i' : '')
+}
+
+/** Si `ruta` (posix) coincide con alguno de los globs. */
+export const coincide = (ruta, patrones) => patrones.some((p) => aRegex(p).test(String(ruta).replace(/\\/g, '/')))
+
+/** Si `rel` está versionado en el repo; ante la duda (git no responde), no. */
+function versionado(rel, raiz) {
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', rel], { cwd: raiz, stdio: 'ignore', windowsHide: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// ── Marca de corrida ────────────────────────────────────────────────────────
+
+/** El archivo que marca una corrida abierta de odd en `raiz`: lo crea `--inicio` y lo borra `--cierre`. */
+export const marcaDe = (raiz) => path.join(process.env.ODD_REGISTROS || path.join(DIR, 'registros'), 'activas', `${path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-')}.json`)
+
+/** Si hay una corrida abierta en `raiz` con menos de 12 h. */
+export function corridaAbierta(raiz) {
+  try {
+    return Date.now() - fs.statSync(marcaDe(raiz)).mtimeMs < VIDA_MARCA
+  } catch {
+    return false
+  }
+}
 
 /** Raíz del repo git que contiene `dir`, o `dir` si no está en uno. */
 export function raizDe(dir) {
@@ -66,18 +171,25 @@ export function enTemporal(abs) {
   return temporales.some((t) => dentro(abs, t))
 }
 
-/** Por qué no se escribe en `ruta` (relativa a `cwd`); null si se puede. `soloTemporal`: el revisor. */
-export function motivoRuta(ruta, { raiz, cwd = raiz, soloTemporal = false }) {
+/**
+ * Por qué no se escribe en `ruta` (relativa a `cwd`) con Edit o Write; null si se puede. `soloTemporal`: el revisor.
+ * `orquestador`: fuera del repo puede, y los lockfiles los escribe su gestor de paquetes.
+ */
+export function motivoRuta(ruta, { raiz, cwd = raiz, soloTemporal = false, orquestador = false }) {
   const abs = path.resolve(cwd, rutaNativa(ruta))
-  if (enTemporal(abs)) return null
+  // Lo del repo se mira aunque el repo esté en el temporal.
+  if (!dentro(abs, raiz) && enTemporal(abs)) return null
   if (soloTemporal) return `el revisor solo escribe en el temporal (${ruta})`
-  if (!dentro(abs, raiz)) return `fuera del repo (${ruta})`
+  if (!dentro(abs, raiz)) return orquestador ? null : `fuera del repo (${ruta})`
   const rel = path.relative(raiz, abs).split(path.sep).join('/')
   const nombre = path.basename(abs).toLowerCase()
   if (/^\.env(\.|$)/.test(nombre) && !/\.(example|sample|template)$/.test(nombre)) return `secretos (${rel})`
   if (rel === '.git' || rel.startsWith('.git/')) return `.git (${rel})`
   if (/^\.claude\/(settings[^/]*\.json|agents\/)/.test(rel)) return `configuración de Claude Code (${rel})`
-  if (LOCKFILES.has(nombre)) return `lockfile (${rel}): las dependencias las cambia el orquestador`
+  if (LOCKFILES.has(nombre) && !orquestador) return `lockfile (${rel}): las dependencias las cambia el orquestador`
+  const reglas = reglasDelProyecto(raiz)
+  for (const [patron, motivo] of Object.entries(reglas.protegidos)) if (coincide(rel, [patron])) return `protegido por el proyecto (${rel}): ${motivo}`
+  if (coincide(rel, reglas.inmutables) && versionado(rel, raiz)) return `inmutable en el proyecto (${rel}): crea uno nuevo en vez de editar el versionado`
   return null
 }
 
@@ -265,17 +377,56 @@ export function leeDelRepo(tramo, { raiz, cwd = raiz }) {
   })
 }
 
-/** Por qué se niega un tramo ya expandido; null si pasa. */
+/** Por qué el orquestador no escribe en `ruta` por Bash: dentro del repo, edita con Edit o Write. */
+function escrituraDelOrquestador(ruta, { raiz, cwd }) {
+  if (ruta.includes(SUST) || /\$/.test(ruta)) return null
+  const abs = path.resolve(cwd, rutaNativa(ruta))
+  if (!dentro(abs, raiz)) return null
+  return `edita con Edit o Write, no por Bash (${path.relative(raiz, abs).split(path.sep).join('/') || ruta})`
+}
+
+/** Por qué el orquestador no corre `prog`: un script que escribe archivos, en línea o fuera del repo. */
+function scriptDelOrquestador({ prog, args, libres }, { raiz, cwd, cmd }) {
+  if (!INTERPRETES.has(prog)) return null
+  const motivo = 'edita con Edit o Write, no con un script que escribe archivos (writeFileSync…); para el temporal, redirige la salida'
+  const enLinea = args.some((a) => CODIGO_EN_LINEA.has(a)) || (!libres.length && /<</.test(cmd))
+  if (enLinea) return ESCRIBE_FS.test(cmd) ? motivo : null
+  if (!libres[0] || /qcc-odd-base-/.test(libres[0])) return null
+  // Los scripts del proyecto corren; uno escrito fuera del repo (como en el temporal) se lee antes.
+  const abs = path.resolve(cwd, rutaNativa(libres[0]))
+  if (dentro(abs, raiz)) return null
+  try {
+    return fs.statSync(abs).size < 1e6 && ESCRIBE_FS.test(fs.readFileSync(abs, 'utf8')) ? motivo : null
+  } catch {
+    return null
+  }
+}
+
+/** Por qué se niega un tramo ya expandido; null si pasa. `cmd`: el comando entero, con los cuerpos de los heredocs. */
 function motivoTramo(tramo, ctx) {
   const { rol, raiz, cwd } = ctx
   const revisor = rol === 'revisor'
-  const escritura = (ruta) => (ruta.includes(SUST) || /\$/.test(ruta) ? (revisor ? `no se ve a dónde escribe (${ruta}): usa una ruta escrita a mano` : null) : motivoRuta(ruta, { raiz, cwd, soloTemporal: revisor }))
-  const { destinos, prog, args, libres } = partesDe(tramo)
-  for (const destino of destinos) {
+  const orquestador = rol === 'orquestador'
+  const escritura = (ruta) =>
+    orquestador
+      ? escrituraDelOrquestador(ruta, ctx)
+      : ruta.includes(SUST) || /\$/.test(ruta)
+        ? revisor
+          ? `no se ve a dónde escribe (${ruta}): usa una ruta escrita a mano`
+          : null
+        : motivoRuta(ruta, { raiz, cwd, soloTemporal: revisor })
+  const partes = partesDe(tramo)
+  const { destinos, prog, args, libres } = partes
+  for (const destino of orquestador ? rutasEscritas(tramo) : destinos) {
     const m = escritura(destino)
     if (m) return m
   }
   if (!prog) return null
+  if (orquestador) {
+    if (leeDelRepo(tramo, { raiz, cwd })) return `lee con Read (offset/limit) o Grep, no con ${prog}`
+    const m = scriptDelOrquestador(partes, ctx)
+    if (m) return m
+  }
   if (tramo.match(/(^|[\s"'=/\\])\.env(\.[\w-]+)?(?=$|[\s"'/\\])/m) && !/\.env\.(example|sample|template)\b/.test(tramo)) return 'secretos: .env no se lee ni se escribe'
   if (prog === 'git') {
     let k = 0
@@ -291,18 +442,25 @@ function motivoTramo(tramo, ctx) {
   if (RED.has(prog)) return `${prog}: red, los subagentes no llaman servicios`
   if (GESTORES.has(prog)) {
     const sub = libres[0]
-    if (DEPENDENCIAS.has(sub)) return `${prog} ${sub}: las dependencias las cambia el orquestador`
-    const script = sub === 'run' ? libres[1] : sub
-    if (script && SCRIPTS_SIN_FIN.test(script)) return `${prog} ${script}: no termina, no en un subagente`
+    if (DEPENDENCIAS.has(sub)) {
+      if (!orquestador) return `${prog} ${sub}: las dependencias las cambia el orquestador`
+    } else {
+      const script = sub === 'run' ? libres[1] : sub
+      if (script && SCRIPTS_SIN_FIN.test(script)) return `${prog} ${script}: no termina, no en un subagente`
+      const reglas = reglasDelProyecto(raiz)
+      if (script && coincide(script, reglas.scriptsNegados)) return `${prog} ${script}: script negado por el proyecto (${reglas.origen.scriptsNegados})`
+    }
   }
-  if (prog === 'npx' && args.includes('-y')) return 'npx -y descarga paquetes: dependencias'
-  if (DEPENDENCIAS_OTROS[prog]?.includes(libres[0])) return `${prog} ${libres[0]}: las dependencias las cambia el orquestador`
+  if (!orquestador && prog === 'npx' && args.includes('-y')) return 'npx -y descarga paquetes: dependencias'
+  if (!orquestador && DEPENDENCIAS_OTROS[prog]?.includes(libres[0])) return `${prog} ${libres[0]}: las dependencias las cambia el orquestador`
   if (SERVIDORES.has(prog) && !['build', 'preview'].includes(libres[0])) return `${prog}: levanta un servidor que no termina`
   if (prog === 'next' && libres[0] === 'dev') return 'next dev: levanta un servidor que no termina'
   if (args.some((a) => a === '--watch' || a === '--watchAll') || (['vitest', 'jest'].includes(prog) && libres[0] === 'watch')) return 'modo watch: no termina, no en un subagente'
   // Banderas cortas combinadas (`-r`, `-rf`, `-Rf`), no las de PowerShell que solo contienen una r (`-Force`).
   const recursivo = args.some((a) => (/^-[a-zA-Z]{1,3}$/.test(a) && /[rR]/.test(a)) || /^--recursive$/i.test(a) || /^-recurse$/i.test(a) || /^\/s$/i.test(a))
   if (BORRAN.has(prog) && recursivo) return `${prog} recursivo: los borrados en bloque quedan para el usuario`
+  // Las escrituras del orquestador ya se miraron arriba, con rutasEscritas (que deja borrar y crear carpetas).
+  if (orquestador) return null
   if (prog === 'sed' && args.some((a) => /^-[a-zA-Z]*i/.test(a) || a === '--in-place')) {
     for (const archivo of libres.slice(1)) {
       const m = escritura(archivo)
@@ -341,7 +499,7 @@ export function tramosExpandidos(cmd) {
 /** Por qué se niega `cmd` para `rol`; null si pasa. */
 export function motivoComando(cmd, { rol, raiz, cwd = raiz }) {
   for (const tramo of tramosExpandidos(cmd)) {
-    const motivo = motivoTramo(tramo, { rol, raiz, cwd })
+    const motivo = motivoTramo(tramo, { rol, raiz, cwd, cmd: String(cmd) })
     if (motivo) return motivo
   }
   return null
@@ -353,10 +511,12 @@ export function evaluar(evento, rol, raiz = raizDe(process.env.CLAUDE_PROJECT_DI
     const herramienta = evento?.tool_name ?? ''
     const entrada = evento?.tool_input ?? {}
     const cwd = typeof evento?.cwd === 'string' && evento.cwd ? path.resolve(rutaNativa(evento.cwd)) : raiz
+    // El hook del skill sigue activo toda la sesión: el orquestador solo se guarda durante una corrida y fuera de los subagentes.
+    if (rol === 'orquestador' && (evento?.agent_type || evento?.agent_id || !corridaAbierta(raiz))) return null
     if (herramienta === 'Bash' || herramienta === 'PowerShell') return motivoComando(String(entrada.command ?? ''), { rol, raiz, cwd })
     if (['Edit', 'Write', 'NotebookEdit', 'MultiEdit'].includes(herramienta)) {
       if (rol === 'revisor') return 'el revisor no edita archivos'
-      return motivoRuta(String(entrada.file_path ?? entrada.notebook_path ?? ''), { raiz, cwd })
+      return motivoRuta(String(entrada.file_path ?? entrada.notebook_path ?? ''), { raiz, cwd, orquestador: rol === 'orquestador' })
     }
     return null
   } catch {
@@ -365,7 +525,7 @@ export function evaluar(evento, rol, raiz = raizDe(process.env.CLAUDE_PROJECT_DI
 }
 
 function main() {
-  const rol = process.argv[2] === 'revisor' ? 'revisor' : 'ejecutor'
+  const rol = ['revisor', 'orquestador'].includes(process.argv[2]) ? process.argv[2] : 'ejecutor'
   let texto = ''
   try {
     texto = fs.readFileSync(0, 'utf8')
@@ -384,7 +544,7 @@ function main() {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
-      permissionDecisionReason: `Guardia /qcc-implementador-odd: ${motivo}. No lo rodees: anótalo en BLOQUEOS de tu reporte.`,
+      permissionDecisionReason: `Guardia /qcc-implementador-odd: ${motivo}. No lo rodees: ${rol === 'orquestador' ? 'usa la herramienta que dice, o anótalo en «Para decidir»' : 'anótalo en BLOQUEOS de tu reporte'}.`,
     },
   }))
 }

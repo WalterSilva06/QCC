@@ -18,9 +18,9 @@ El orquestador trabaja inline. Un subagente se lanza solo por un motivo nombrado
 ## Fases
 
 1. **Inicio:** `odd.mjs --inicio`. Un pedido de solo investigar o explicar se responde sin editar.
-2. **Explorar:** inline, o con el explorador. Una decisión de producto abierta se pregunta una vez. Termina con dos decisiones:
+2. **Explorar:** inline, o con el explorador. Una decisión de producto abierta se pregunta una vez. Termina con `odd.mjs --plan`, que deja visibles dos decisiones:
    - **Tamaño:** `chico` si se puede retomar solo con el pedido y el `git diff`; `grande` si no.
-   - **Riesgo:** los 6 ítems de la skill (datos o irreversible, seguridad, contratos que otros consumen, concurrencia, entrega o entorno, sin tests), más los `criticos` del proyecto.
+   - **Riesgo:** los 6 ítems de la skill (datos o irreversible, seguridad, contratos que otros consumen, concurrencia, entrega o entorno, sin tests), más los `criticos` del proyecto, cada uno con `sí <motivo>` o `no`, y los bordes si hay alguno.
 3. **Implementar:** inline, test-first cuando hay runner. Una tarea grande lleva primero `odd/tasks/<feature>.md` en el repo del proyecto:
    - `## Specs` con `S#` que citan literal el pedido;
    - `## Tasks`;
@@ -38,7 +38,7 @@ El orquestador trabaja inline. Un subagente se lanza solo por un motivo nombrado
    - una segunda corrección, solo si el mismo problema sigue fallando.
 
    Lo nuevo que aparezca, y lo que siga abierto, va a «Para decidir».
-5. **Cierre:** `odd.mjs --limpiar` con los temporales de la corrida, `odd.mjs --cierre` y el reporte. No hace commits (para eso, `/qcc-commit`).
+5. **Cierre:** `odd.mjs --limpiar` con los temporales de la corrida, `odd.mjs --cierre` y el reporte, con su línea `PROCESO`. No hace commits (para eso, `/qcc-commit`).
 
 No tiene aprobación del plan, ni planificador, ni revisor del plan, ni candado, ni fotos por subtarea.
 
@@ -47,10 +47,12 @@ No tiene aprobación del plan, ni planificador, ni revisor del plan, ni candado,
 Se instalan en `~/.claude/flujos-odd/`. La skill y los agentes las llaman por esa ruta.
 
 - **`odd.mjs`:**
-  - `--inicio` toma la foto base como commit suelto y la imprime como `ODD_BASE=<sha>`. Además muestra rama, sucios previos, `criticos`, pasos de verificación y los `odd/tasks/*.md` con tareas abiertas.
+  - `--inicio` toma la foto base como commit suelto y la imprime como `ODD_BASE=<sha>`. Además muestra rama, sucios previos, `criticos`, las reglas de la guardia del proyecto, pasos de verificación y los `odd/tasks/*.md` con tareas abiertas. Deja la marca de corrida abierta (`registros/activas/`), que activa la guardia del orquestador.
+  - `--plan --base <BASE> --tamano chico|grande --reglas <n> --riesgo "1:sí <motivo>;2:no;…;6:no" [--bordes "…"]` imprime `TAMAÑO`, `RIESGO PREVISTO` y `BORDES`. Falta un ítem, un `sí` sin motivo o los bordes con algún `sí`: `ERROR` y código 2. Con más de 8 reglas y `chico`, avisa `AVISO: <n> reglas → grande`.
   - `--diff <BASE> [-- <rutas>]` da el cambio contra una foto nueva, archivos nuevos incluidos, recortado a 400 líneas.
-  - `--cierre` anota la corrida en `registros/odd.jsonl` con su costo.
-  - `--ultimos [n]` lista las últimas corridas con el promedio de costo y de minutos.
+  - `--cierre` borra la marca, anota la corrida en `registros/odd.jsonl` con su costo e imprime `PROCESO`: `ok`, o los desvíos que lee en el transcript (sin `--plan` o después de editar, ediciones por Bash, una edición después del último `verificar.mjs`, del último `--diff` o del diferencial, contexto de más de 150k sin ejecutor, lecturas con `cat`/`head`/`sed -n`). Lo que negó la guardia no cuenta.
+  - `--plan`, `--diff` y `--cierre` imprimen `CONTEXTO: <n>k`, el del último pedido del orquestador. Pasados los 150k agregan `> 150k: lo que falta va a qcc-odd-ejecutor`.
+  - `--ultimos [n]` lista las últimas corridas con el promedio de costo y de minutos. El costo es el real, hasta el siguiente mensaje del usuario (incluye el reporte), junto al anotado al cierre.
   - `--copia-base <BASE>` copia el árbol de la BASE en un temporal nuevo, sin tocar el índice del usuario, y lo imprime como `ODD_COPIA=<ruta>`. No trae lo ignorado (como `node_modules`).
   - `--limpiar -- <rutas>` borra las rutas que están dentro de un temporal, también en la forma `/tmp/…` de Git Bash. No borra el temporal mismo ni nada fuera de él: lo lista en `NO BORRADOS`.
 - **`verificar.mjs`:**
@@ -58,7 +60,7 @@ Se instalan en `~/.claude/flujos-odd/`. La skill y los agentes las llaman por es
   - corre todos aunque uno falle, con CI=1 y un tope por paso;
   - muestra una línea por paso y, solo de los que fallan, las últimas 60 líneas;
   - no tiene caché.
-- **`guardia.mjs`:** hook `PreToolUse` de `qcc-odd-ejecutor` y `qcc-odd-revisor`.
+- **`guardia.mjs`:** hook `PreToolUse` de `qcc-odd-ejecutor`, `qcc-odd-revisor` y la skill (rol `orquestador`).
   - **Niega:**
     - git que modifica o habla con el remoto;
     - instalar o quitar dependencias;
@@ -66,11 +68,14 @@ Se instalan en `~/.claude/flujos-odd/`. La skill y los agentes las llaman por es
     - borrados recursivos;
     - secretos (`.env*`, salvo `.example`, `.sample` y `.template`);
     - servidores y modos watch;
-    - escribir `.git/`, `.claude/settings*.json`, `.claude/agents/`, lockfiles o fuera del repo.
+    - escribir `.git/`, `.claude/settings*.json`, `.claude/agents/`, lockfiles o fuera del repo;
+    - las reglas del proyecto: escribir un `protegido`, editar un `inmutable` versionado y correr un `scriptsNegados`.
   - **Al revisor,** además, escribir fuera del temporal. No expande `$(…)`, así que pide rutas temporales escritas a mano.
+  - **Al orquestador:** escribir en el repo por Bash o PowerShell (redirección, `sed -i`, `tee`, `cp`/`mv`, `Set-Content`, `Out-File`, o un script en línea o del temporal que escribe archivos), con el motivo `edita con Edit o Write`; y leer archivos del repo con `cat`, `head`, `tail`, `sed -n`, `Get-Content` o `type`, con el motivo `lee con Read (offset/limit) o Grep`. Las dependencias sí las instala, borra archivos sueltos y corre los scripts del proyecto. Un hook de skill sigue activo el resto de la sesión, así que este rol solo niega con una corrida abierta (la marca de `--inicio`, que borra `--cierre` y vence a las 12 h) y nunca dentro de un subagente.
+  - **El cuerpo de un heredoc** es datos: no se evalúa como comandos. `=>`, `->` y `>=` no son redirecciones, ni un `>` entre comillas.
   - **Es lite a propósito:** ante la duda deja pasar, y un error propio nunca niega.
-  - Lo que el orquestador edita inline no pasa por la guardia: queda bajo el modo de permisos del usuario.
-- **`costo.mjs`:** busca en los transcripts la sesión que recibió `ODD_BASE=<sha>` y suma el costo del orquestador y de cada agente, por rol, con los precios oficiales de octubre de 2026.
+- **`costo.mjs`:** busca en los transcripts la sesión que recibió `ODD_BASE=<sha>` y suma el costo del orquestador y de cada agente, por rol, con los precios oficiales de octubre de 2026. Da también el contexto actual del orquestador.
+- **`proceso.mjs`:** lee las herramientas del orquestador en el transcript y arma la línea `PROCESO` de `--cierre`.
 
 Los tests de todo están en `flujos-odd/herramientas/odd.test.mjs`.
 
@@ -92,7 +97,17 @@ Todo es opcional. Sin config, `verificar.mjs` detecta los pasos y no hay crític
   "criticos": [
     { "rutas": ["src/auth/"], "excepto": ["src/auth/textos.ts"], "riesgo": [2], "motivo": "autorización" },
     { "rutas": ["supabase/migrations/"], "riesgo": [1], "motivo": "esquema de la base" }
-  ]
+  ],
+  // Reglas de la guardia, para los tres roles. Mismo significado que en la config de /qcc-implementador:
+  // una clave que falta acá se toma de .claude/qcc-implementador.json (o .claude/implementador.json).
+  "guardia": {
+    // Archivos, carpetas (con / final) o globs que no se escriben, con el motivo.
+    "protegidos": { "src/routeTree.gen.ts": "lo regenera el build" },
+    // Carpetas o globs cuyos archivos versionados no se editan (los nuevos sí).
+    "inmutables": ["supabase/migrations/"],
+    // Scripts del gestor JS que no se corren.
+    "scriptsNegados": ["db:*", "flow:*"]
+  }
 }
 ```
 

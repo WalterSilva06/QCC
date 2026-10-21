@@ -16,6 +16,13 @@ allowed-tools:
   - Bash(git status*)
   - Bash(git diff*)
   - Bash(git log*)
+hooks:
+  PreToolUse:
+    - matcher: "Bash|PowerShell|Edit|Write|NotebookEdit"
+      hooks:
+        - type: command
+          command: 'node "$HOME/.claude/flujos-odd/guardia.mjs" orquestador'
+          timeout: 15
 ---
 
 # /qcc-implementador-odd

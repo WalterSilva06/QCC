@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { evaluar, motivoComando, tramosDe, raizDe } from './guardia.mjs'
+import { evaluar, motivoComando, tramosDe, raizDe, marcaDe, reglasDelProyecto } from './guardia.mjs'
 import { pasosDe, colaDe } from './verificar.mjs'
 import { opcionesDe, criticosLegibles, tareasDe, sumaNumstat, recortar, filaDeCorrida, lineaDeCorrida, riesgoDe, lineasDePlan, lineaDeContexto } from './odd.mjs'
 import { costoDelFlujo, costoDePedido, hallazgosDe, contextoActual, finDeCorrida } from './costo.mjs'
@@ -27,6 +27,8 @@ const GIT_ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_N
 const TMP = path.join(os.tmpdir(), 'odd-x').replaceAll('\\', '/')
 
 test.after(() => fs.rmSync(PRUEBAS, { recursive: true, force: true }))
+// La marca de corrida abierta que mira la guardia del orquestador va a los registros de prueba, como en `correr`.
+process.env.ODD_REGISTROS = path.join(PRUEBAS, 'registros')
 
 /** Repo de prueba con un commit; `archivos` es `{ ruta: contenido }`. */
 function repo(nombre, archivos) {
@@ -175,6 +177,27 @@ const PASAN = {
     `tee ${TMP}/x <<'EOF'\nhola\nEOF`,
     ...SIN_REDIRECCION,
   ],
+  orquestador: [
+    'npm test',
+    'npm install lodash',
+    'pnpm add -D vitest',
+    'npx -y cowsay',
+    'pip install requests',
+    'node ~/.claude/flujos-odd/verificar.mjs',
+    'node ~/.claude/flujos-odd/odd.mjs --diff abc123',
+    'node --test flujos-odd/herramientas/odd.test.mjs 2>&1 | tail -5',
+    'node -e "console.log(1)"',
+    'git diff abc123 -- AGENTS.md',
+    'git show HEAD:AGENTS.md | head -20',
+    'git ls-files | head -100',
+    'grep -n "x" AGENTS.md',
+    'wc -l AGENTS.md',
+    'rm flujos-odd/viejo.txt',
+    'mkdir -p flujos-odd/nuevo',
+    `echo x > ${TMP}/a && sed -i s/a/b/ ${TMP}/a && cat ${TMP}/a`,
+    `node ${TMP.replace('odd-x', 'qcc-odd-base-AbC')}/src/cli.js semilla`,
+    ...SIN_REDIRECCION,
+  ],
 }
 
 const NIEGAN = {
@@ -211,7 +234,103 @@ const NIEGAN = {
     ['cp a.js b.js', /solo escribe en el temporal/],
     ['git checkout -- a.js', /git checkout/],
   ],
+  orquestador: [
+    ['echo x > flujos-odd/nota.txt', /edita con Edit o Write, no por Bash \(flujos-odd\/nota\.txt\)/],
+    ['sed -i s/a/b/ AGENTS.md', /edita con Edit o Write/],
+    ['echo x | tee AGENTS.md', /edita con Edit o Write/],
+    ['cp a.js flujos-odd/b.js', /edita con Edit o Write/],
+    ['Set-Content -Path AGENTS.md -Value x', /edita con Edit o Write/],
+    ['"x" | Out-File AGENTS.md', /edita con Edit o Write/],
+    ["cat >> AGENTS.md <<'EOF'\nx\nEOF", /edita con Edit o Write/],
+    ["node - <<'EOF'\nrequire('fs').writeFileSync('AGENTS.md', 'x')\nEOF", /script que escribe archivos/],
+    [`python3 - <<'EOF'\nopen('AGENTS.md', 'w').write('x')\nEOF`, /script que escribe archivos/],
+    [`node -e "require('fs').appendFileSync('a', 'b')"`, /script que escribe archivos/],
+    ['cat AGENTS.md', /lee con Read \(offset\/limit\) o Grep, no con cat/],
+    ['head -50 flujos-odd/herramientas/odd.mjs', /lee con Read/],
+    ['git status && sed -n 1,20p AGENTS.md', /lee con Read/],
+    ['Get-Content AGENTS.md', /lee con Read/],
+    ['git push', /git push/],
+    ['curl https://x.dev', /red/],
+    ['rm -rf dist', /recursivo/],
+    ['cat .env', /secretos/],
+    ['npm run dev', /no termina/],
+  ],
 }
+
+test('guardia: el orquestador no corre un script del temporal que escribe archivos', () => {
+  const escribe = path.join(PRUEBAS, 'aplicar.cjs')
+  fs.writeFileSync(escribe, "require('fs').writeFileSync('src/a.js', t)")
+  const lee = path.join(PRUEBAS, 'leer.mjs')
+  fs.writeFileSync(lee, 'console.log(1)')
+  assert.match(motivoComando(`node "${escribe.replaceAll('\\', '/')}" && npm test`, { rol: 'orquestador', raiz: RAIZ }) ?? 'pasó', /script que escribe archivos/)
+  assert.equal(motivoComando(`node "${lee.replaceAll('\\', '/')}"`, { rol: 'orquestador', raiz: RAIZ }), null)
+  // Un script del proyecto corre, escriba o no: es un comando del proyecto.
+  assert.equal(motivoComando('node flujos-odd/instalar.mjs --revisar', { rol: 'orquestador', raiz: RAIZ }), null)
+})
+
+test('guardia: el orquestador solo se guarda con una corrida abierta y fuera de los subagentes', () => {
+  const bash = (command, extra = {}) => evaluar({ tool_name: 'Bash', tool_input: { command }, ...extra }, 'orquestador', RAIZ)
+  const editar = (ruta) => evaluar({ tool_name: 'Edit', tool_input: { file_path: ruta } }, 'orquestador', RAIZ)
+  const marca = marcaDe(RAIZ)
+  fs.rmSync(marca, { force: true })
+  assert.equal(bash('cat AGENTS.md'), null)
+  fs.mkdirSync(path.dirname(marca), { recursive: true })
+  fs.writeFileSync(marca, '{}')
+  try {
+    assert.match(bash('cat AGENTS.md') ?? 'pasó', /lee con Read/)
+    assert.equal(bash('cat AGENTS.md', { agent_type: 'qcc-odd-revisor', agent_id: 'a1' }), null)
+    assert.equal(editar(path.join(RAIZ, 'flujos-odd', 'x.js')), null)
+    assert.equal(editar(path.join(RAIZ, 'package-lock.json')), null)
+    assert.equal(editar(path.join(path.dirname(RAIZ), 'otro.js')), null)
+    assert.match(editar(path.join(RAIZ, '.env')) ?? 'pasó', /secretos/)
+    const hook = spawnSync(process.execPath, [GUARDIA, 'orquestador'], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'sed -i s/a/b/ AGENTS.md' } }), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: RAIZ } }).stdout
+    assert.match(JSON.parse(hook).hookSpecificOutput.permissionDecisionReason, /edita con Edit o Write.*usa la herramienta que dice/)
+    // Una marca de más de 12 h ya no cuenta.
+    const viejo = new Date(Date.now() - 13 * 3600_000)
+    fs.utimesSync(marca, viejo, viejo)
+    assert.equal(bash('cat AGENTS.md'), null)
+  } finally {
+    fs.rmSync(marca, { force: true })
+  }
+})
+
+test('guardia: reglas del proyecto para los tres roles, con respaldo en la config de /qcc-implementador', () => {
+  const raiz = repo('reglas', {
+    '.claude/qcc-implementador-odd.json': JSON.stringify({ guardia: { protegidos: { 'src/gen.ts': 'lo genera el build' }, scriptsNegados: ['db:*'] } }),
+    '.claude/qcc-implementador.json': JSON.stringify({ guardia: { inmutables: ['migraciones/'], scriptsNegados: ['otro'] } }),
+    'migraciones/001.sql': 'x',
+    'src/gen.ts': 'x',
+    'package.json': '{}',
+  })
+  const reglas = reglasDelProyecto(raiz)
+  assert.deepEqual(reglas.scriptsNegados, ['db:*'])
+  assert.deepEqual(reglas.inmutables, ['migraciones/'])
+  assert.deepEqual(reglas.origen, { protegidos: '.claude/qcc-implementador-odd.json', inmutables: '.claude/qcc-implementador.json', scriptsNegados: '.claude/qcc-implementador-odd.json' })
+  const editar = (rol, ruta) => evaluar({ tool_name: 'Write', tool_input: { file_path: path.join(raiz, ruta) } }, rol, raiz)
+  fs.mkdirSync(path.dirname(marcaDe(raiz)), { recursive: true })
+  fs.writeFileSync(marcaDe(raiz), '{}')
+  try {
+    for (const rol of ['ejecutor', 'orquestador']) {
+      assert.match(editar(rol, 'src/gen.ts') ?? 'pasó', /protegido por el proyecto \(src\/gen\.ts\): lo genera el build/, rol)
+      assert.match(editar(rol, 'migraciones/001.sql') ?? 'pasó', /inmutable en el proyecto/, rol)
+      // Una migración nueva, sin versionar, sí se escribe.
+      assert.equal(editar(rol, 'migraciones/002.sql'), null, rol)
+    }
+    for (const rol of ['ejecutor', 'revisor', 'orquestador']) {
+      assert.match(motivoComando('pnpm run db:push', { rol, raiz }) ?? 'pasó', /script negado por el proyecto \(\.claude\/qcc-implementador-odd\.json\)/, rol)
+      assert.equal(motivoComando('npm run otro', { rol, raiz }), null, rol)
+    }
+  } finally {
+    fs.rmSync(marcaDe(raiz), { force: true })
+  }
+
+  const ini = correr(ODD, raiz, '--inicio')
+  assert.match(ini.salida, /REGLAS DEL PROYECTO: \n- protegido: src\/gen\.ts — lo genera el build \(\.claude\/qcc-implementador-odd\.json\)\n- inmutables \(los versionados\): migraciones\/ \(\.claude\/qcc-implementador\.json\)\n- scripts negados: db:\* \(\.claude\/qcc-implementador-odd\.json\)\n/)
+  assert.ok(fs.existsSync(marcaDe(raiz)))
+  correr(ODD, raiz, '--cierre', '--base', linea(ini.salida, 'ODD_BASE='), '--resultado', 'COMPLETO')
+  assert.ok(!fs.existsSync(marcaDe(raiz)))
+  assert.match(correr(ODD, repo('sin-reglas', { 'a.txt': '' }), '--inicio').salida, /REGLAS DEL PROYECTO: ninguna/)
+})
 
 for (const [rol, comandos] of Object.entries(PASAN)) {
   test(`guardia: ${rol} pasa lo habitual`, () => {
@@ -395,7 +514,7 @@ test('odd: --inicio, --diff, --cierre y --ultimos sobre un repo real', () => {
   assert.equal(fila.titulo, 'Prueba')
   assert.equal(fila.tamano, 'chico')
   assert.deepEqual(fila.cambios, { archivos: 2, mas: 2, menos: 0 })
-  assert.match(correr(ODD, raiz, '--ultimos', '5').salida, /CORRIDAS \(últimas \d+ de \d+\):\n {2}.* · modos · sin costo · chico · Riesgo: ninguno · revisión omitida · COMPLETO · \+2 −0 · Prueba/)
+  assert.match(correr(ODD, raiz, '--ultimos', '5').salida, /CORRIDAS \(últimas \d+ de \d+\):\n(?: {2}.*\n)* {2}.* · modos · sin costo · chico · Riesgo: ninguno · revisión omitida · COMPLETO · \+2 −0 · Prueba/)
   // La foto no toca el índice: nada quedó preparado.
   assert.equal(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: raiz, encoding: 'utf8' }).trim(), '')
 })
@@ -618,6 +737,8 @@ test('proceso: una corrida limpia da ok', () => {
     ['Write', { file_path: path.join(raiz, 'test', 'a.test.js'), content: 'test()' }],
     ['Bash', { command: 'git diff --stat && git log -1 | head -5' }],
     ['Bash', { command: `cat ${TMP}/salida.txt && echo x > ${TMP}/y` }],
+    // Lo que negó la guardia no corrió.
+    ['Bash', { command: 'sed -i s/a/b/ src/a.js && cat src/a.js' }, 50_000, 'PreToolUse:Bash hook error: Guardia /qcc-implementador-odd: edita con Edit o Write, no por Bash (src/a.js).'],
     VERIFICAR_ODD,
     DIFF,
     ['Agent', { subagent_type: 'qcc-odd-ejecutor', prompt: 'DOC: x' }, 170_000],

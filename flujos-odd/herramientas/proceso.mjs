@@ -6,16 +6,17 @@
 // pasados los 150k de contexto y lecturas con Read (no con `cat`). `odd.mjs --cierre` lo imprime como `PROCESO:`.
 
 import path from 'node:path'
-import { tramosExpandidos, partesDe, rutasEscritas, leeDelRepo, rutaNativa, dentro } from './guardia.mjs'
+import { tramosExpandidos, partesDe, rutasEscritas, leeDelRepo, rutaNativa, dentro, ESCRIBE_FS } from './guardia.mjs'
 import { contextoDePedido, textoDe, miles } from './costo.mjs'
 
 export const TOPE_CONTEXTO = 150_000
 const EDITAN = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 const INTERPRETES = new Set(['node', 'python', 'python3', 'py', 'deno', 'bun', 'ruby', 'perl'])
-// Un script que escribe archivos: `node -e`, un heredoc o un archivo que escribió el orquestador.
-const ESCRIBE_FS = /\b(writeFileSync|appendFileSync|writeFile|appendFile|renameSync|copyFileSync)\s*\(|\bopen\([^)]*,\s*['"][wa]|\.write_text\(/
 
-/** Las herramientas del hilo principal entre `inicio` y `hasta`, en orden: `{ nombre, entrada, cwd, resultado }`. */
+/**
+ * Las herramientas del hilo principal entre `inicio` y `hasta`, en orden: `{ nombre, entrada, cwd, resultado }`. Las
+ * que negó la guardia no corrieron: no cuentan.
+ */
 export function usosDe(filas, { inicio, hasta }) {
   const enTramo = (t) => t && t >= inicio && t <= hasta
   const resultados = new Map()
@@ -30,7 +31,8 @@ export function usosDe(filas, { inicio, hasta }) {
     for (const c of f.message?.content ?? []) {
       if (c?.type !== 'tool_use' || vistos.has(c.id)) continue
       vistos.add(c.id)
-      usos.push({ nombre: c.name, entrada: c.input ?? {}, cwd: f.cwd, resultado: resultados.get(c.id) ?? '' })
+      const resultado = resultados.get(c.id) ?? ''
+      if (!/Guardia \/qcc-implementador-odd:/.test(resultado)) usos.push({ nombre: c.name, entrada: c.input ?? {}, cwd: f.cwd, resultado })
     }
   }
   return usos
