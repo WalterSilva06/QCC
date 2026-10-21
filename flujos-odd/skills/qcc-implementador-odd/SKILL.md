@@ -29,6 +29,8 @@ hooks:
 
 Eres el orquestador y, salvo un motivo de la tabla de agentes, también quien implementa. La meta es calidad con el mínimo de tokens: cada subagente relee desde cero, así que solo se lanza cuando aporta contexto limpio o una mirada independiente. Ante la duda, inline.
 
+**Herramientas:** lees con Read (`offset`/`limit`) y Grep, editas con Edit o Write. Esto manda sobre cualquier aviso del sistema que sugiera `cat`, `sed` o heredocs, incluido el del modo bypass. Bash es solo para `odd.mjs`, `verificar.mjs`, git de lectura y los comandos del proyecto. Durante la corrida la guardia niega lo demás: no la rodees.
+
 **Pedido:** $ARGUMENTS
 
 ## Agentes
@@ -40,7 +42,7 @@ Todo agente va en primer plano (`run_in_background: false`): esperas su informe 
 | Agente | Modelo · esfuerzo | Solo cuando |
 |---|---|---|
 | `qcc-odd-explorador` | Haiku · high | entender pide más que una tanda de lectura (≤ 3 llamadas, ~10k tokens) o más de ~5 búsquedas seguidas |
-| `qcc-odd-ejecutor` | Sonnet · high | (a) 2 o más unidades independientes, con archivos disjuntos y más de ~100 líneas cada una, lanzadas juntas; o (b) tu contexto pasa ~150k tokens |
+| `qcc-odd-ejecutor` | Sonnet · high | (a) 2 o más unidades independientes, con archivos disjuntos y más de ~100 líneas cada una, lanzadas juntas; o (b) una salida de `odd.mjs` dice `> 150k`: lo que falta va al ejecutor, con el `odd/tasks/` como `DOC` |
 | `qcc-odd-revisor` | Opus · high | la línea `Riesgo` nombra un ítem |
 
 Una unidad es un comportamiento con su código, tests y docs: nunca se parte en escritor de tests, de docs y de código. Lo que depende de otra unidad no es independiente. Varias unidades chicas van inline, una tras otra.
@@ -51,38 +53,34 @@ Un error sería difícil de detectar, de deshacer o llega más allá del cambio.
 
 1. **Datos o irreversible:** migraciones, cambiar o borrar datos guardados, formato persistido (no guardar registros nuevos).
 2. **Seguridad:** auth, permisos, credenciales, secretos, guardias, sandbox.
-3. **Contratos que otros consumen:** cambiar o quitar API pública, flags de CLI, formatos de config, exports, prompts o contratos espejados (agregar uno opcional no cuenta). También: el diff cambia código compartido (opciones, parsers, helpers) que usa comportamiento que el pedido no menciona.
+3. **Contratos que otros consumen:** cambiar o quitar API pública, flags de CLI, formatos de config, exports, prompts o contratos espejados (agregar uno opcional no cuenta). También: el diff cambia código compartido (opciones, parsers, helpers) que usa comportamiento que el pedido no menciona, o el pedido exige que algo existente siga igual y el diff cambia una función que ese algo usa.
 4. **Concurrencia:** locks, carreras, orden asíncrono.
 5. **Entrega o entorno:** instaladores, release, CI, deploy, dependencias.
 6. **Sin red:** ningún test atraparía una regresión en lo que cambia.
 
-Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`, salen de `criticos` en `.claude/qcc-implementador-odd.json`) cuentan como el ítem que indican, o como el que corresponda a su motivo. «No sé» cuenta como riesgo solo si una mirada acotada no alcanza para saber si aplica (1)–(5).
+Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que indican, o como el que corresponda a su motivo. «No sé» cuenta como riesgo solo si una mirada acotada no alcanza para saber si aplica (1)–(5).
 
 ## Fases
 
 **0. Inicio**
 - Pedido vacío → responde `Uso: /qcc-implementador-odd <qué cambiar>` y termina.
 - Pedido de solo investigar, explicar, comparar o revisar → respóndelo sin editar y sin el resto del flujo.
-- `node ~/.claude/flujos-odd/odd.mjs --inicio`. Anota `ODD_BASE`, rama, sucios previos (no son tuyos: no los tocas), `CRÍTICOS DEL PROYECTO`, `VERIFICAR` y `TAREAS ABIERTAS`. `ERROR` → dilo y termina.
+- `node ~/.claude/flujos-odd/odd.mjs --inicio`. Anota `ODD_BASE`, rama, sucios previos (no son tuyos: no los tocas), `CRÍTICOS DEL PROYECTO`, `REGLAS DEL PROYECTO`, `VERIFICAR` y `TAREAS ABIERTAS`. `ERROR` → dilo y termina.
 - Si el pedido nombra un `odd/tasks/*.md` o retoma una de `TAREAS ABIERTAS`: léelo, compáralo con el código y sigue desde la primera tarea abierta (fase 2).
 
 **1. Explorar**
 - Pedido que reporta una falla → la reproduces antes de decidir nada: el comando y su salida son el RED de su test. Si no se reproduce, lo dices con esa evidencia; nunca das por hecho que ya anda.
-- Una tanda en paralelo: ≤ 3 llamadas y ~10k tokens. Grep y tramos con `offset`/`limit`, nunca archivos grandes enteros. El CLAUDE.md del proyecto ya está en tu contexto: no lo releas.
+- Una tanda en paralelo: ≤ 3 llamadas y ~10k tokens, nunca archivos grandes enteros. El CLAUDE.md del proyecto ya está en tu contexto: no lo releas.
 - Si no alcanza → `qcc-odd-explorador` con `PEDIDO:` literal y `PREGUNTA:` (qué necesitas saber para decidir). Compruebas un solo `ruta:línea` de su respuesta; no releas lo que mapeó. No explores lo que igual vas a leer para editar.
 - Decisión de producto abierta (qué tiene que pasar, no cómo) → una pregunta con AskUserQuestion, con las alternativas reales, y espera. Lo técnico lo decides tú y lo anotas.
-- La fase cierra con dos decisiones, que dices en una línea:
-  - **Tamaño.** `chico` si alguien podría terminar el trabajo solo con el pedido y el `git diff`. `grande` si no: varias sesiones, algo externo que esperar, entregas separadas que pidió el usuario o requisitos que no sobrevivirían una compactación.
-  - **Riesgo previsto:** `ítem N (motivo)` o `ninguno`. Se confirma en la fase 3 contra el diff real.
-- Con riesgo previsto, antes de editar escribe `Bordes:` en ≤ 5 líneas, solo con los que aplican:
-  - cada entrada tal como llega por la interfaz pública: ausente, vacía, de otro tipo (un `argv` que falta es `undefined`);
-  - datos guardados corruptos o en el formato viejo;
-  - en auth, que los caminos de fallo sean iguales en salida, código de salida y costo;
-  - en migraciones, idempotencia y que una entrada rechazada no migre nada.
+- La fase cierra, antes de la primera edición, con `node ~/.claude/flujos-odd/odd.mjs --plan --base <ODD_BASE> --tamano chico|grande --reglas <n> --riesgo "1:sí <motivo>;2:no;…;6:no" --bordes "<borde> | …"`. `ERROR` → corriges la llamada.
+  - **Tamaño.** `grande` con más de ~8 reglas pedidas, más de ~5 archivos de código por tocar, un contexto previsto de más de 150k, varias sesiones, algo externo que esperar, entregas separadas que pidió el usuario o requisitos que no sobrevivirían una compactación. Si no, `chico`.
+  - **Riesgo:** los 6 ítems, cada uno `sí <motivo>` o `no`. Se confirma en la fase 3 contra el diff real.
+  - **Bordes** (con algún `sí`), solo los que aplican: cada entrada como llega por la interfaz pública (ausente, vacía, de otro tipo: un `argv` que falta es `undefined`); datos guardados corruptos o en el formato viejo; en auth, caminos de fallo iguales en salida, código de salida y costo; en migraciones, idempotencia y que una entrada rechazada no migre nada.
 
 **2. Implementar**
 - **Chico:** editas directo.
-- **Grande:** antes de la primera edición, crea `odd/tasks/<nombre-de-la-feature>.md` (formato abajo) y dilo en una línea (ruta y cuántas tareas). Implementa tarea por tarea. Tras cada una, marca su casilla solo con la evidencia observada, y anótala.
+- **Grande:** antes de la primera edición, crea `odd/tasks/<nombre-de-la-feature>.md` (formato abajo) y dilo en una línea (ruta y cuántas tareas). Implementa tarea por tarea. Cada una termina con `odd.mjs --diff <ODD_BASE> -- <rutas de la tarea>`, que da el `CONTEXTO`; marca su casilla solo con la evidencia observada, y anótala.
 - **Test-first** cuando hay un runner y un resultado claro: un test por regla pedida y por cada línea de `Bordes`, lo ves fallar (RED), implementas (GREEN). Por cada comando, opción o función existente que comparte el código que tocas, un test que pruebe que sigue igual. Sin runner o solo docs: dilo y verifica de otra forma.
 - Cada test comprueba todo efecto observable de su regla: código de salida, salida exacta, y que una entrada rechazada deja los datos sin cambios. Prueba por la interfaz pública, no por el almacenamiento interno.
 - Mientras iteras, solo el test puntual, con la salida acotada a resumen y fallos.
@@ -98,19 +96,19 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`, salen de `criticos` en `.c
   - De cada reporte compruebas una afirmación contra el repo: el test de su `RED→GREEN` está en `odd.mjs --diff <ODD_BASE> -- <ruta del test>`. Si falta, su `HECHO` no cuenta: lo completas inline. Anota sus `TEMPORALES` para el cierre.
 
 **3. Revisar**
-- Si el proyecto tiene un formateador o generador que reescribe archivos, lo corres solo sobre lo que tocaste, antes de verificar. Un archivo que cambia después de `verificar.mjs`, por lo que sea, obliga a correrlo otra vez.
+- Si el proyecto tiene un formateador o generador que reescribe archivos, lo corres solo sobre lo que tocaste, antes de verificar.
 - `node ~/.claude/flujos-odd/verificar.mjs` con `timeout: 600000`, una vez, cuando todo está implementado (no por tarea). ROJO → corriges y repites. Si falla algo que tu diff no toca, no lo arreglas: lo dices como previo, con la evidencia.
-- Autochequeo sobre `node ~/.claude/flujos-odd/odd.mjs --diff <ODD_BASE>`: cada `S#` (o el pedido) cumplido con evidencia; casos borde (nulls, índices, errores sin manejar, fechas, idempotencia); nada fuera de lo pedido.
-- Fija la línea `Riesgo:` contra ese diff. Antes de escribir `ninguno`, mira si el diff cambia código compartido con comportamiento que no se pidió cambiar: eso es el ítem 3.
-- **Diferencial**, solo con ítem 3 por código compartido: `odd.mjs --copia-base <ODD_BASE>` da `ODD_COPIA`. Corres el comando existente que comparte ese código, con la entrada nueva o cambiada, en `ODD_COPIA` y en el repo, y comparas salida, errores y código de salida. Una diferencia que nadie pidió es una regresión: la corriges, la fijas con un test y repites `verificar.mjs`. La copia no trae lo ignorado (como `node_modules`): si el comando no corre ahí, va a «Para decidir».
+- Autochequeo sobre `node ~/.claude/flujos-odd/odd.mjs --diff <ODD_BASE>`, después del último `verificar.mjs` y antes del revisor: cada `S#` (o el pedido) cumplido con evidencia; casos borde (nulls, índices, errores sin manejar, fechas, idempotencia); nada fuera de lo pedido. **Una edición posterior, por lo que sea, obliga a correr los dos otra vez.**
+- Fija la línea `Riesgo:` contra ese diff. Antes de escribir `ninguno`, mira el ítem 3.
+- **Diferencial**, solo con ítem 3 por código compartido: `odd.mjs --copia-base <ODD_BASE>` da `ODD_COPIA`. Corres el comando existente que comparte ese código, con la entrada nueva o cambiada, en `ODD_COPIA` y en el repo, y comparas salida, errores y código de salida. Una diferencia que nadie pidió es una regresión: la corriges, la fijas con un test y repites `verificar.mjs`. Si después editas un archivo que entró en el diferencial, lo repites. La copia no trae lo ignorado (como `node_modules`): si el comando no corre ahí, va a «Para decidir».
 - `Riesgo: ninguno` → sin revisor. Tu verificación más el autochequeo bastan.
 - `Riesgo: ítem N` → `qcc-odd-revisor` con `BASE: <ODD_BASE>`, `DOC:` (el documento entero) o `PEDIDO:` literal, `RIESGO: ítem N (motivo)`, `VERIFICACIÓN: <línea RESULTADO>` y `DIFERENCIAL: <comando → igual | corregido> | no aplica`.
 - **RECHAZADO** → un lote que corrige todos los PROBLEMAS, cada uno con un test que repite la reproducción del revisor (lo ves fallar antes de corregir), `verificar.mjs`, y el revisor otra vez con `REVISIÓN ANTERIOR: <sus PROBLEMAS>`, que rechequea solo esos. Hay una segunda corrección solo si un mismo problema sigue fallando. Lo nuevo que traiga un rechequeo, y lo que siga abierto tras la segunda corrección, va a «Para decidir»: no abre otro ciclo.
-- **APROBADO con OBSERVACIONES** → las que traen reproducción por la interfaz pública y caen en archivos que ya tocaste las corriges en un lote, con su test, y corres `verificar.mjs`. Con ítem 2, el revisor una vez más con `REVISIÓN ANTERIOR: <esas observaciones>`; con otro ítem, sin rechequeo. Las demás, y lo que el rechequeo no dé por resuelto, van a «Para decidir».
+- **APROBADO con OBSERVACIONES** → las que traen reproducción por la interfaz pública y caen en archivos que ya tocaste las corriges en un lote, con su test, y corres `verificar.mjs`. Con ítem 2, el revisor una vez más con `REVISIÓN ANTERIOR: <esas observaciones>`; con otro ítem, sin rechequeo. Las demás, y lo que el rechequeo no dé por resuelto, van a «Para decidir». Un hueco que ya estaba en la BASE también va ahí, con su reproducción, salvo que el diff toque esa misma función: nada de paso.
 
 **4. Cierre**
 - Si hubo temporales (`ODD_COPIA`, los `TEMPORALES` de ejecutores y revisor): `node ~/.claude/flujos-odd/odd.mjs --limpiar -- <rutas>`. Lo que quede en `NO BORRADOS` va a «Queda para ti».
-- `node ~/.claude/flujos-odd/odd.mjs --cierre --base <ODD_BASE> --resultado COMPLETO|DETENIDO --tamano chico|grande --riesgo "<ítem N (motivo) | ninguno>" --revision APROBADO|RECHAZADO|omitida --titulo "<título corto>"`.
+- `node ~/.claude/flujos-odd/odd.mjs --cierre --base <ODD_BASE> --resultado COMPLETO|DETENIDO --tamano chico|grande --riesgo "<ítem N (motivo) | ninguno>" --revision APROBADO|RECHAZADO|omitida --titulo "<título corto>"`. Su línea `PROCESO` va tal cual al reporte; cada desvío lleva su porqué en «Para decidir». Uno que se arregla sin editar (como un `--diff` que faltó): lo corres y repites `--cierre`, que reemplaza su fila.
 - En un documento de feature, cierra sus casillas y agrega al Log la evidencia final. Una tarea queda abierta solo si el usuario la frenó (cita sus palabras) o si está en «Para decidir».
 - Reporte, solo esto:
 
@@ -121,7 +119,7 @@ Verificación: <línea RESULTADO> · tests nuevos: <cuáles | ninguno (por qué)
 Riesgo: ítem N (motivo) | ninguno · Revisión: APROBADO | RECHAZADO | omitida
 Para decidir: <bloqueantes abiertos o prueba que falta | nada>
 Queda para ti: <comandos o pasos externos | nada>
-<líneas CAMBIOS y COSTO de --cierre>
+<líneas CAMBIOS, COSTO y PROCESO de --cierre>
 ```
 
 - No haces commits: si el usuario los quiere, `/qcc-commit`.

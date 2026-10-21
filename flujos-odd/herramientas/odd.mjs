@@ -340,7 +340,23 @@ function cierre({ base, resultado, tamano, riesgo, revision, titulo }) {
   fs.rmSync(marcaDe(RAIZ), { force: true })
   const archivo = registroDe()
   fs.mkdirSync(path.dirname(archivo), { recursive: true })
-  fs.appendFileSync(archivo, JSON.stringify(filaDeCorrida({ t, raiz: RAIZ, base, resultado, tamano, riesgo, revision, titulo, proceso, costo, cambios, sesion: sesion?.archivo })) + '\n')
+  // Un --cierre repetido (tras arreglar un desvío) reemplaza la fila de la misma corrida.
+  let previas = ''
+  try {
+    previas = fs.readFileSync(archivo, 'utf8')
+  } catch {
+    // Sin registro todavía.
+  }
+  const otras = previas.split('\n').filter((l) => {
+    try {
+      const f = JSON.parse(l)
+      return !(f.base === base && f.raiz === RAIZ)
+    } catch {
+      return l.trim() !== ''
+    }
+  })
+  const fila = JSON.stringify(filaDeCorrida({ t, raiz: RAIZ, base, resultado, tamano, riesgo, revision, titulo, proceso, costo, cambios, sesion: sesion?.archivo }))
+  fs.writeFileSync(archivo, [...otras, fila].join('\n') + '\n')
   console.log(`CAMBIOS: ${cambios.archivos} archivo(s) · +${cambios.mas} −${cambios.menos}`)
   console.log(`COSTO: ${costo ? resumenDeCosto(costo) : 'sin datos (no encontré la sesión en los transcripts)'}`)
   console.log(`PROCESO: ${proceso ?? 'sin datos'}`)

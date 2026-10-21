@@ -514,6 +514,12 @@ test('odd: --inicio, --diff, --cierre y --ultimos sobre un repo real', () => {
   assert.equal(fila.titulo, 'Prueba')
   assert.equal(fila.tamano, 'chico')
   assert.deepEqual(fila.cambios, { archivos: 2, mas: 2, menos: 0 })
+  // Repetir --cierre de la misma corrida reemplaza su fila.
+  const filas = () => fs.readFileSync(path.join(PRUEBAS, 'registros', 'odd.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  const antes = filas().length
+  correr(ODD, raiz, '--cierre', '--base', base, '--resultado', 'COMPLETO', '--tamano', 'chico', '--riesgo', 'ninguno', '--revision', 'omitida', '--titulo', 'Prueba')
+  assert.equal(filas().length, antes)
+  assert.equal(filas().filter((f) => f.base === base).length, 1)
   assert.match(correr(ODD, raiz, '--ultimos', '5').salida, /CORRIDAS \(últimas \d+ de \d+\):\n(?: {2}.*\n)* {2}.* · modos · sin costo · chico · Riesgo: ninguno · revisión omitida · COMPLETO · \+2 −0 · Prueba/)
   // La foto no toca el índice: nada quedó preparado.
   assert.equal(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: raiz, encoding: 'utf8' }).trim(), '')
