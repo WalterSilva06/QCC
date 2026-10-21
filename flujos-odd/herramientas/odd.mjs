@@ -6,6 +6,8 @@
 //   node ~/.claude/flujos-odd/odd.mjs --cierre --base <BASE> --resultado COMPLETO|DETENIDO --tamano chico|grande
 //        --riesgo "<ítem N (motivo) | ninguno>" [--revision APROBADO|RECHAZADO|omitida] [--titulo "<t>"]
 //   node ~/.claude/flujos-odd/odd.mjs --ultimos [<n>]
+//   node ~/.claude/flujos-odd/odd.mjs --copia-base <BASE>
+//   node ~/.claude/flujos-odd/odd.mjs --limpiar -- <rutas>
 //
 // --inicio: toma una foto del árbol (versionados + nuevos no ignorados) como commit suelto, que es la BASE, y la
 // imprime como `ODD_BASE=<sha>`: con esa marca costo.mjs encuentra la sesión. Además: rama, sucios previos,
@@ -13,6 +15,8 @@
 // --diff: el cambio desde la BASE contra una foto nueva (incluye archivos nuevos), con --stat y recortado a TOPE_DIFF líneas.
 // --cierre: anota una fila en `registros/odd.jsonl` con el costo real e imprime CAMBIOS y COSTO.
 // --ultimos: las últimas corridas anotadas (10 por defecto), con el promedio.
+// --copia-base: el árbol de la BASE en un temporal nuevo, para comparar contra él; imprime `ODD_COPIA=<ruta>`.
+// --limpiar: borra las rutas que están dentro de un temporal (no el temporal mismo); las demás quedan, con su motivo.
 // Sin candado ni estado: lo que el flujo tiene que recordar va en la salida o en `odd/tasks/`.
 // `ODD_REGISTROS` cambia la carpeta de registros (los tests la llevan a un temporal).
 
@@ -21,8 +25,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { raizDe } from './guardia.mjs'
-import { costoDelFlujo, resumenDeCosto, dolares } from './costo.mjs'
+import { raizDe, rutaNativa, enTemporal } from './guardia.mjs'
+import { costoDelFlujo, resumenDeCosto, resumenDeTokens, dolares } from './costo.mjs'
 
 const WIN = process.platform === 'win32'
 const DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -98,8 +102,8 @@ function configDelProyecto() {
 // ── Puras ───────────────────────────────────────────────────────────────────
 
 /**
- * Opciones de la línea de comandos: `modo` (inicio | diff | cierre | ultimos), los valores con nombre y las `rutas`
- * que siguen a `--`. Un valor que falta queda `undefined`.
+ * Opciones de la línea de comandos: `modo` (inicio | diff | cierre | ultimos | copia-base | limpiar), los valores con
+ * nombre y las `rutas` que siguen a `--`. Un valor que falta queda `undefined`.
  */
 export function opcionesDe(args) {
   const k = args.indexOf('--')
@@ -110,10 +114,10 @@ export function opcionesDe(args) {
     const v = i >= 0 ? propias[i + 1] : undefined
     return v === undefined || v.startsWith('--') ? undefined : v
   }
-  const modo = ['cierre', 'diff', 'inicio', 'ultimos'].find((m) => propias.includes(`--${m}`)) ?? null
+  const modo = ['cierre', 'diff', 'inicio', 'ultimos', 'copia-base', 'limpiar'].find((m) => propias.includes(`--${m}`)) ?? null
   return {
     modo,
-    base: modo === 'diff' ? valor('--diff') : valor('--base'),
+    base: modo === 'diff' || modo === 'copia-base' ? valor(`--${modo}`) : valor('--base'),
     resultado: valor('--resultado'),
     tamano: valor('--tamano'),
     riesgo: valor('--riesgo'),
@@ -177,8 +181,11 @@ export function filaDeCorrida({ t, raiz, base, resultado, tamano, riesgo, revisi
 export function lineaDeCorrida(f) {
   const fecha = String(f.t ?? '').slice(0, 16).replace('T', ' ')
   const repo = String(f.raiz ?? '?').split(/[\\/]/).filter(Boolean).pop() ?? '?'
-  const datos = [f.tamano, f.riesgo && `Riesgo: ${f.riesgo}`, f.revision && `revisión ${f.revision}`, f.resultado, f.cambios && `+${f.cambios.mas} −${f.cambios.menos}`].filter(Boolean)
-  return `${fecha} · ${repo} · ${f.costo ? resumenDeCosto(f.costo) : 'sin costo'}${datos.length ? ` · ${datos.join(' · ')}` : ''}${f.titulo ? ` · ${f.titulo}` : ''}`
+  const informes = f.costo?.hallazgos?.revisor ?? []
+  const hallazgos = informes.length ? `hallazgos ${informes.map((h) => `${h.problemas}p/${h.observaciones}o`).join(' → ')}` : null
+  const datos = [f.tamano, f.riesgo && `Riesgo: ${f.riesgo}`, f.revision && `revisión ${f.revision}`, hallazgos, f.resultado, f.cambios && `+${f.cambios.mas} −${f.cambios.menos}`].filter(Boolean)
+  const costo = f.costo ? resumenDeCosto(f.costo) + (f.costo.tokens ? ` · ${resumenDeTokens(f.costo.tokens)}` : '') : 'sin costo'
+  return `${fecha} · ${repo} · ${costo}${datos.length ? ` · ${datos.join(' · ')}` : ''}${f.titulo ? ` · ${f.titulo}` : ''}`
 }
 
 // ── Modos ───────────────────────────────────────────────────────────────────
@@ -270,6 +277,41 @@ function ultimos(n) {
   }
 }
 
+/** Copia el árbol de la BASE en un temporal nuevo con un índice temporal: no toca el del usuario. */
+function copiaBase(base) {
+  exigirBase(base)
+  const destino = fs.mkdtempSync(path.join(os.tmpdir(), 'qcc-odd-base-'))
+  const indice = path.join(os.tmpdir(), `qcc-odd-indice-${process.pid}-${Date.now()}`)
+  const env = { ...process.env, GIT_INDEX_FILE: indice }
+  try {
+    git(['read-tree', base], { env })
+    git(['checkout-index', '-a', `--prefix=${destino.replaceAll('\\', '/')}/`], { env })
+  } catch (e) {
+    fs.rmSync(destino, { recursive: true, force: true })
+    throw e
+  } finally {
+    fs.rmSync(indice, { force: true })
+  }
+  console.log(`ODD_COPIA=${destino.replaceAll('\\', '/')}`)
+}
+
+function limpiar(rutas) {
+  if (!rutas.length) throw new Error('faltan las rutas: --limpiar -- <rutas>')
+  let limpiados = 0
+  const quedan = []
+  for (const r of rutas) {
+    const abs = path.resolve(RAIZ, rutaNativa(r))
+    if (!enTemporal(abs)) quedan.push(`${r} (fuera del temporal)`)
+    else if (!enTemporal(path.dirname(abs))) quedan.push(`${r} (es el temporal mismo)`)
+    else if (fs.existsSync(abs)) {
+      fs.rmSync(abs, { recursive: true, force: true })
+      limpiados++
+    }
+  }
+  console.log(`LIMPIADOS: ${limpiados}`)
+  if (quedan.length) console.log(`NO BORRADOS: ${quedan.join(' · ')}`)
+}
+
 function main() {
   const o = opcionesDe(process.argv.slice(2))
   try {
@@ -277,7 +319,9 @@ function main() {
     else if (o.modo === 'diff') diff(o.base, o.rutas)
     else if (o.modo === 'cierre') cierre(o)
     else if (o.modo === 'ultimos') ultimos(o.ultimos)
-    else throw new Error('uso: odd.mjs --inicio | --diff <BASE> [-- <rutas>] | --cierre --base <BASE> --resultado … | --ultimos [<n>]')
+    else if (o.modo === 'copia-base') copiaBase(o.base)
+    else if (o.modo === 'limpiar') limpiar(o.rutas)
+    else throw new Error('uso: odd.mjs --inicio | --diff <BASE> [-- <rutas>] | --cierre --base <BASE> --resultado … | --ultimos [<n>] | --copia-base <BASE> | --limpiar -- <rutas>')
   } catch (e) {
     console.log(`ERROR: ${e.message}`)
     process.exitCode = 1

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { evaluar, motivoComando, tramosDe, raizDe } from './guardia.mjs'
 import { pasosDe, colaDe } from './verificar.mjs'
 import { opcionesDe, criticosLegibles, tareasDe, sumaNumstat, recortar, filaDeCorrida, lineaDeCorrida } from './odd.mjs'
-import { costoDelFlujo, costoDePedido } from './costo.mjs'
+import { costoDelFlujo, costoDePedido, hallazgosDe } from './costo.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 const ODD = path.join(DIR, 'odd.mjs')
@@ -211,6 +211,9 @@ test('odd: opcionesDe', () => {
   assert.equal(opcionesDe(['--cierre', '--base', '--resultado', 'x']).base, undefined)
   assert.equal(opcionesDe(['--ultimos', '3']).ultimos, 3)
   assert.equal(opcionesDe(['--ultimos']).ultimos, 10)
+  assert.equal(opcionesDe(['--copia-base', 'abc']).base, 'abc')
+  assert.deepEqual(opcionesDe(['--limpiar', '--', '/tmp/x']), { ...opcionesDe(['--limpiar']), rutas: ['/tmp/x'] })
+  assert.equal(opcionesDe(['--limpiar']).modo, 'limpiar')
   assert.equal(opcionesDe([]).modo, null)
 })
 
@@ -229,6 +232,17 @@ test('odd: fila y línea del listado', () => {
   const fila = filaDeCorrida({ t: '2026-10-20T10:00:00.000Z', raiz: '/x/repo', base: 'B', resultado: 'COMPLETO', tamano: 'chico', riesgo: 'ninguno', revision: 'omitida', cambios: { archivos: 1, mas: 2, menos: 0 } })
   assert.deepEqual(fila, { v: 1, t: '2026-10-20T10:00:00.000Z', raiz: '/x/repo', base: 'B', resultado: 'COMPLETO', tamano: 'chico', riesgo: 'ninguno', revision: 'omitida', cambios: { archivos: 1, mas: 2, menos: 0 } })
   assert.equal(lineaDeCorrida(fila), '2026-10-20 10:00 · repo · sin costo · chico · Riesgo: ninguno · revisión omitida · COMPLETO · +2 −0')
+  const costo = {
+    usd: 0.38,
+    minutos: 1.7,
+    tokens: { entrada: 36, leidos: 564338, escritos: 66891, salida: 1756 },
+    roles: { orquestador: { pedidos: 10, usd: 0.2, agentes: 0 }, revisor: { pedidos: 6, usd: 0.18, agentes: 2 } },
+    hallazgos: { revisor: [{ problemas: 2, observaciones: 1 }, { problemas: 0, observaciones: 0 }] },
+  }
+  assert.equal(
+    lineaDeCorrida({ ...fila, riesgo: 'ítem 2 (auth)', revision: 'APROBADO', costo }),
+    '2026-10-20 10:00 · repo · $0,38 · 1,7 min · orquestador $0,20 (10 pedidos) · revisor $0,18 (×2) · 564k leídos · 67k escritos · 1,8k salida · chico · Riesgo: ítem 2 (auth) · revisión APROBADO · hallazgos 2p/1o → 0p/0o · COMPLETO · +2 −0',
+  )
 })
 
 test('odd: --inicio, --diff, --cierre y --ultimos sobre un repo real', () => {
@@ -269,6 +283,36 @@ test('odd: --inicio, --diff, --cierre y --ultimos sobre un repo real', () => {
   assert.match(correr(ODD, raiz, '--ultimos', '5').salida, /CORRIDAS \(últimas \d+ de \d+\):\n {2}.* · modos · sin costo · chico · Riesgo: ninguno · revisión omitida · COMPLETO · \+2 −0 · Prueba/)
   // La foto no toca el índice: nada quedó preparado.
   assert.equal(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: raiz, encoding: 'utf8' }).trim(), '')
+})
+
+test('odd: --copia-base copia la BASE y --limpiar borra solo dentro del temporal', () => {
+  const raiz = repo('copia', { 'a.txt': 'uno\n', 'sub/b.txt': 'b\n' })
+  fs.writeFileSync(path.join(raiz, 'nuevo.txt'), 'sin versionar\n')
+  const base = linea(correr(ODD, raiz, '--inicio').salida, 'ODD_BASE=')
+  fs.writeFileSync(path.join(raiz, 'a.txt'), 'cambiado\n')
+
+  const c = correr(ODD, raiz, '--copia-base', base)
+  assert.equal(c.codigo, 0, c.salida)
+  const copia = linea(c.salida, 'ODD_COPIA=')
+  const leer = (ruta) => fs.readFileSync(path.join(copia, ruta), 'utf8').replaceAll('\r\n', '\n')
+  assert.equal(leer('a.txt'), 'uno\n')
+  assert.equal(leer('sub/b.txt'), 'b\n')
+  assert.equal(leer('nuevo.txt'), 'sin versionar\n')
+  assert.equal(fs.readFileSync(path.join(raiz, 'a.txt'), 'utf8'), 'cambiado\n')
+  assert.equal(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: raiz, encoding: 'utf8' }).trim(), '')
+
+  // Una ruta de Git Bash (`/tmp/…`) cuenta como del temporal; fuera de él, o el temporal mismo, no se borra.
+  const suelto = fs.mkdtempSync(path.join(os.tmpdir(), 'odd-limpiar-'))
+  const fuera = path.join(RAIZ, 'odd-no-existe')
+  const l = correr(ODD, raiz, '--limpiar', '--', copia, `/tmp/${path.basename(suelto)}`, fuera, os.tmpdir(), path.join(os.tmpdir(), 'odd-no-existe'))
+  assert.equal(l.codigo, 0, l.salida)
+  assert.equal(fs.existsSync(copia), false)
+  assert.equal(fs.existsSync(suelto), false)
+  assert.match(l.salida, /LIMPIADOS: 2/)
+  assert.match(l.salida, /NO BORRADOS: .*odd-no-existe \(fuera del temporal\) · .* \(es el temporal mismo\)/)
+
+  assert.match(correr(ODD, raiz, '--copia-base', 'deadbeef').salida, /ERROR: BASE desconocida/)
+  assert.match(correr(ODD, raiz, '--limpiar').salida, /ERROR: faltan las rutas/)
 })
 
 test('odd: errores', () => {
@@ -313,7 +357,7 @@ test('costo: encuentra la sesión por ODD_BASE y suma por rol', () => {
     fs.writeFileSync(path.join(subagentes, `${nombre}.jsonl`), jsonl([{ type: 'user', timestamp: en(desde), message: { role: 'user', content: 'DOC: x' } }, turno(`${nombre}-1`, desde + 30, texto)]))
   }
   agente('agent-x', 'qcc-odd-ejecutor', 20, 'ESTADO: HECHO')
-  agente('agent-r', 'qcc-odd-revisor', 100, 'VEREDICTO: APROBADO')
+  agente('agent-r', 'qcc-odd-revisor', 100, 'VEREDICTO: APROBADO\nPRUEBAS: ninguna\nOBSERVACIONES:\n- src/a.js:3 — clave ausente — login a\n- src/a.js:9 — tiempo — (sin reproducción)')
   agente('agent-viejo', 'qcc-odd-revisor', -40, 'VEREDICTO: RECHAZADO')
 
   const c = costoDelFlujo(raiz, 'b0de', { proyectos, hasta: en(300) })
@@ -321,7 +365,20 @@ test('costo: encuentra la sesión por ODD_BASE y suma por rol', () => {
   assert.deepEqual(Object.keys(c.roles).sort(), ['ejecutor', 'orquestador', 'revisor'])
   assert.equal(c.roles.orquestador.pedidos, 1)
   assert.deepEqual(c.veredictos, { ejecutor: ['HECHO'], revisor: ['APROBADO'] })
+  assert.deepEqual(c.hallazgos, { revisor: [{ problemas: 0, observaciones: 2 }] })
+  assert.deepEqual(c.roles.orquestador.tokens, { entrada: 10, leidos: 1000, escritos: 500, salida: 100 })
+  assert.deepEqual(c.tokens, { entrada: 30, leidos: 3000, escritos: 1500, salida: 300 })
   assert.equal(costoDelFlujo(raiz, 'otra', { proyectos }), null)
+})
+
+test('costo: cuenta PROBLEMAS y OBSERVACIONES del informe del revisor', () => {
+  const rechazo = 'VEREDICTO: RECHAZADO\nS#: PEDIDO → no\nPROBLEMAS: (solo si RECHAZADO; uno por línea)\nsrc/a.js:3 — m — r — e\nsrc/b.js:4 — m — r — e\nOBSERVACIONES: ninguna'
+  assert.deepEqual(hallazgosDe(rechazo), { problemas: 2, observaciones: 0 })
+  assert.deepEqual(hallazgosDe('VEREDICTO: APROBADO\nOBSERVACIONES: una sola, en la línea del campo'), { problemas: 0, observaciones: 1 })
+  assert.deepEqual(hallazgosDe('VEREDICTO: APROBADO\nOBSERVACIONES:\n- a\n- b\nBLOQUEOS: la guardia negó algo'), { problemas: 0, observaciones: 2 })
+  assert.deepEqual(hallazgosDe(''), { problemas: 0, observaciones: 0 })
+  const conRutas = 'VEREDICTO: APROBADO\nOBSERVACIONES:\n- `D:/repo/src/a.js:38`: crear sin clave\n- D:\\repo\\src\\a.js:57 — otro\n- C:/x.js — PEDIDO: algo\n\nUna nota sobre la guardia.'
+  assert.deepEqual(hallazgosDe(conRutas), { problemas: 0, observaciones: 3 })
 })
 
 // ── instalar ────────────────────────────────────────────────────────────────

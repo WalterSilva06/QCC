@@ -4,6 +4,8 @@
 // anterior a esa marca (o desde la marca, si no se encuentra) hasta el cierre. Suma el hilo principal (orquestador)
 // y cada subagente que empezó en el tramo, por rol (`qcc-odd-` quitado), con el veredicto de su último informe.
 //
+// También guarda los tokens por rol y, de cada informe del revisor, cuántos PROBLEMAS y OBSERVACIONES trajo.
+//
 // Precios por millón de tokens de la página oficial de Anthropic (octubre de 2026): entrada, salida, lectura de
 // caché y escritura de caché de 5 min y de 1 h. El hilo principal escribe con 1 h; los subagentes, con 5 min.
 
@@ -62,7 +64,18 @@ function filasDe(archivo) {
   return filas
 }
 
-/** Pedidos al modelo de esas filas, cada mensaje una vez y con su uso final: `{ pedidos, usd, sinPrecio }`. */
+const sinTokens = () => ({ entrada: 0, leidos: 0, escritos: 0, salida: 0 })
+
+/** Suma los tokens de `b` a `a` y devuelve `a`. */
+function sumarTokens(a, b) {
+  for (const k of Object.keys(a)) a[k] += b?.[k] ?? 0
+  return a
+}
+
+/**
+ * Pedidos al modelo de esas filas, cada mensaje una vez y con su uso final: `{ pedidos, usd, sinPrecio, tokens }`, con
+ * `tokens` como `{ entrada, leidos, escritos, salida }` (leídos y escritos son de caché).
+ */
 export function usoDe(filas) {
   const porMensaje = new Map()
   for (const f of filas) {
@@ -73,12 +86,14 @@ export function usoDe(filas) {
   }
   let usd = 0
   let sinPrecio = 0
+  const tokens = sinTokens()
   for (const { uso, modelo } of porMensaje.values()) {
     const c = costoDePedido(uso, modelo)
     if (c === null) sinPrecio++
     else usd += c
+    sumarTokens(tokens, { entrada: uso?.input_tokens, leidos: uso?.cache_read_input_tokens, escritos: uso?.cache_creation_input_tokens, salida: uso?.output_tokens })
   }
-  return { pedidos: porMensaje.size, usd, sinPrecio }
+  return { pedidos: porMensaje.size, usd, sinPrecio, tokens }
 }
 
 /** La sesión de `raiz` que recibió `ODD_BASE=<base>`: `{ archivo, inicio }`, o null. */
@@ -108,25 +123,52 @@ export function sesionDe(raiz, base, proyectos = proyectosDe()) {
   return null
 }
 
+/** Texto del último informe del agente. */
+function ultimoInformeDe(filas) {
+  const textos = filas.filter((f) => f?.type === 'assistant').flatMap((f) => (f.message?.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text))
+  return textos.at(-1) ?? ''
+}
+
 /** Veredicto del último informe del agente (`APROBADO`, `HECHO`…); null si su rol no da uno o no lo trae. */
 function veredictoDe(filas, rol) {
   const campo = VEREDICTO_POR_ROL[rol]
   if (!campo) return null
-  const textos = filas.filter((f) => f?.type === 'assistant').flatMap((f) => (f.message?.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text))
-  return new RegExp(`^[\\s*_>\`-]*${campo}:\\s*\\**\\s*([A-ZÁÉÍÓÚ]+)`, 'm').exec(textos.at(-1) ?? '')?.[1] ?? null
+  return new RegExp(`^[\\s*_>\`-]*${campo}:\\s*\\**\\s*([A-ZÁÉÍÓÚ]+)`, 'm').exec(ultimoInformeDe(filas))?.[1] ?? null
 }
 
 /**
- * Costo de la corrida de `raiz` con BASE `base`, hasta `hasta`: `{ inicio, minutos, usd, roles, veredictos }`, con
- * `roles` como `{ rol: { pedidos, usd, agentes } }`. null si no se encuentra la sesión.
+ * Cuántos PROBLEMAS y OBSERVACIONES trae un informe del revisor: `{ problemas, observaciones }`. Cuenta las líneas no
+ * vacías de cada sección, o el texto en la misma línea del campo; «ninguna» y el texto «(solo si…)» no cuentan.
+ */
+export function hallazgosDe(informe) {
+  const cuenta = { problemas: 0, observaciones: 0 }
+  let seccion = null
+  for (const linea of String(informe).split('\n')) {
+    // Un campo va al principio de la línea, no en un ítem «- …», y no es una unidad de Windows (`D:/…`).
+    const campo = /^[\s*_>]*([A-ZÁÉÍÓÚ#]{2,}):(?![\\/])\**\s*(.*)$/.exec(linea)
+    if (campo) seccion = { PROBLEMAS: 'problemas', OBSERVACIONES: 'observaciones' }[campo[1]] ?? null
+    if (!seccion) continue
+    const texto = (campo ? campo[2] : linea).replace(/^[\s*\-\d.)]+/, '').trim()
+    // Una línea en blanco tras algún ítem cierra la sección: lo que sigue es prosa, no hallazgos.
+    if (!texto && !campo && cuenta[seccion]) seccion = null
+    else if (texto && !/^(ningun[oa]s?|\(solo si[^)]*\)[^\w]*)\.?$/i.test(texto)) cuenta[seccion]++
+  }
+  return cuenta
+}
+
+/**
+ * Costo de la corrida de `raiz` con BASE `base`, hasta `hasta`: `{ inicio, minutos, usd, tokens, roles, veredictos,
+ * hallazgos }`, con `roles` como `{ rol: { pedidos, usd, agentes, tokens } }` y `hallazgos` como `{ revisor: [{ problemas,
+ * observaciones }] }`, uno por informe del revisor. null si no se encuentra la sesión.
  */
 export function costoDelFlujo(raiz, base, { proyectos = proyectosDe(), hasta = new Date().toISOString() } = {}) {
   const sesion = sesionDe(raiz, base, proyectos)
   if (!sesion) return null
   const enTramo = (t) => t && t >= sesion.inicio && t <= hasta
   const principal = usoDe(filasDe(sesion.archivo).filter((f) => !f.isSidechain && enTramo(f.timestamp)))
-  const roles = { orquestador: { pedidos: principal.pedidos, usd: principal.usd, agentes: 0 } }
+  const roles = { orquestador: { pedidos: principal.pedidos, usd: principal.usd, agentes: 0, tokens: principal.tokens } }
   const veredictos = {}
+  const hallazgos = {}
   let sinPrecio = principal.sinPrecio
   const carpeta = path.join(path.dirname(sesion.archivo), path.basename(sesion.archivo, '.jsonl'), 'subagents')
   let nombres = []
@@ -145,18 +187,27 @@ export function costoDelFlujo(raiz, base, { proyectos = proyectosDe(), hasta = n
       // Sin meta: rol desconocido.
     }
     const u = usoDe(filas)
-    roles[rol] ??= { pedidos: 0, usd: 0, agentes: 0 }
+    roles[rol] ??= { pedidos: 0, usd: 0, agentes: 0, tokens: sinTokens() }
     roles[rol].pedidos += u.pedidos
     roles[rol].usd += u.usd
     roles[rol].agentes++
+    sumarTokens(roles[rol].tokens, u.tokens)
     sinPrecio += u.sinPrecio
     const v = veredictoDe(filas, rol)
     if (v) (veredictos[rol] ??= []).push(v)
+    if (rol === 'revisor') (hallazgos[rol] ??= []).push(hallazgosDe(ultimoInformeDe(filas)))
   }
   const usd = Object.values(roles).reduce((s, r) => s + r.usd, 0)
+  const tokens = Object.values(roles).reduce((s, r) => sumarTokens(s, r.tokens), sinTokens())
   const minutos = Math.max(0, Date.parse(hasta) - Date.parse(sesion.inicio)) / 60_000
-  return { inicio: sesion.inicio, minutos, usd, roles, veredictos, ...(sinPrecio ? { sinPrecio } : {}) }
+  return { inicio: sesion.inicio, minutos, usd, tokens, roles, veredictos, hallazgos, ...(sinPrecio ? { sinPrecio } : {}) }
 }
+
+/** «262k» o «1,8k»: tokens en miles. */
+export const miles = (n) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : `${(n / 1000).toFixed(1).replace('.', ',')}k`)
+
+/** «262k leídos · 19k escritos · 1,8k salida»; sin la entrada sin caché, que es casi siempre ínfima. */
+export const resumenDeTokens = (t) => `${miles(t.leidos)} leídos · ${miles(t.escritos)} escritos · ${miles(t.salida)} salida`
 
 /** «$0,42 · 6,1 min · orquestador $0,30 (12 pedidos) · revisor $0,12». */
 export function resumenDeCosto(c) {

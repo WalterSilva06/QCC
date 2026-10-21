@@ -27,13 +27,18 @@ El orquestador trabaja inline. Un subagente se lanza solo por un motivo nombrado
    - `## Log`, donde `L1` es el pedido textual.
 
    Ese documento permite retomar la tarea en otra sesión.
-4. **Revisar:** `verificar.mjs` una vez, un autochequeo sobre `odd.mjs --diff` y la línea `Riesgo:`. El revisor corre solo con un ítem nombrado. Sus correcciones:
-   - un lote que corrige todos los problemas;
+4. **Revisar:**
+   - el formateador del proyecto, si hay, solo sobre lo tocado y antes de verificar;
+   - `verificar.mjs` una vez, un autochequeo sobre `odd.mjs --diff` y la línea `Riesgo:`;
+   - con ítem 3 por código compartido, un diferencial: el comando existente que comparte ese código corre en `odd.mjs --copia-base` y en el repo, y se comparan salida, errores y código de salida.
+
+   El revisor corre solo con un ítem nombrado. Sus correcciones:
+   - un lote que corrige todos los problemas, cada uno con un test que repite la reproducción del revisor;
    - un rechequeo limitado a esos problemas;
    - una segunda corrección, solo si el mismo problema sigue fallando.
 
    Lo nuevo que aparezca, y lo que siga abierto, va a «Para decidir».
-5. **Cierre:** `odd.mjs --cierre` y el reporte. No hace commits (para eso, `/qcc-commit`).
+5. **Cierre:** `odd.mjs --limpiar` con los temporales de la corrida, `odd.mjs --cierre` y el reporte. No hace commits (para eso, `/qcc-commit`).
 
 No tiene aprobación del plan, ni planificador, ni revisor del plan, ni candado, ni fotos por subtarea.
 
@@ -46,6 +51,8 @@ Se instalan en `~/.claude/flujos-odd/`. La skill y los agentes las llaman por es
   - `--diff <BASE> [-- <rutas>]` da el cambio contra una foto nueva, archivos nuevos incluidos, recortado a 400 líneas.
   - `--cierre` anota la corrida en `registros/odd.jsonl` con su costo.
   - `--ultimos [n]` lista las últimas corridas con el promedio de costo y de minutos.
+  - `--copia-base <BASE>` copia el árbol de la BASE en un temporal nuevo, sin tocar el índice del usuario, y lo imprime como `ODD_COPIA=<ruta>`. No trae lo ignorado (como `node_modules`).
+  - `--limpiar -- <rutas>` borra las rutas que están dentro de un temporal, también en la forma `/tmp/…` de Git Bash. No borra el temporal mismo ni nada fuera de él: lo lista en `NO BORRADOS`.
 - **`verificar.mjs`:**
   - corre los pasos de `verificar` de la config, o los detecta (scripts de `package.json`, Cargo, Go o pytest);
   - corre todos aunque uno falle, con CI=1 y un tope por paso;
