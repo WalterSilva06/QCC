@@ -4,7 +4,8 @@
 // anterior a esa marca (o desde la marca, si no se encuentra) hasta el cierre. Suma el hilo principal (orquestador)
 // y cada subagente que empezó en el tramo, por rol (`qcc-odd-` quitado), con el veredicto de su último informe.
 //
-// También guarda los tokens por rol y, de cada informe del revisor, cuántos PROBLEMAS y OBSERVACIONES trajo.
+// También guarda los tokens por rol y, de cada informe del revisor, cuántos PROBLEMAS y OBSERVACIONES trajo. Da además
+// el contexto actual del orquestador (`contextoActual`) y el fin real de una corrida, con el reporte (`finDeCorrida`).
 //
 // Precios por millón de tokens de la página oficial de Anthropic (octubre de 2026): entrada, salida, lectura de
 // caché y escritura de caché de 5 min y de 1 h. El hilo principal escribe con 1 h; los subagentes, con 5 min.
@@ -25,7 +26,7 @@ const COMANDO = /<command-name>\/qcc-implementador-odd</
 
 export const proyectosDe = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')
 export const dolares = (n) => `$${n.toFixed(2).replace('.', ',')}`
-const textoDe = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x?.type === 'text' ? x.text : typeof x?.content === 'string' ? x.content : textoDe(x?.content))).join('') : '')
+export const textoDe = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x?.type === 'text' ? x.text : typeof x?.content === 'string' ? x.content : textoDe(x?.content))).join('') : '')
 
 /** Precio por millón del modelo (id con o sin sufijos), según el tamaño del prompt; null si no se conoce. */
 export function precioDe(modelo, prompt = 0) {
@@ -45,7 +46,8 @@ export function costoDePedido(uso, modelo) {
   return ((u.input_tokens ?? 0) * p.entrada + (u.cache_read_input_tokens ?? 0) * p.lectura + w5m * p.escritura5m + w1h * p.escritura1h + (u.output_tokens ?? 0) * p.salida) / 1e6
 }
 
-function filasDe(archivo) {
+/** Las filas de un transcript `.jsonl`; [] si no se puede leer. Una línea cortada se ignora. */
+export function filasDe(archivo) {
   let texto
   try {
     texto = fs.readFileSync(archivo, 'utf8')
@@ -123,6 +125,32 @@ export function sesionDe(raiz, base, proyectos = proyectosDe()) {
   return null
 }
 
+/** Tokens del prompt de un pedido: el tamaño del contexto en ese momento. */
+export const contextoDePedido = (uso) => (uso?.input_tokens ?? 0) + (uso?.cache_read_input_tokens ?? 0) + (uso?.cache_creation_input_tokens ?? 0)
+
+/** Contexto del último pedido del orquestador (sin subagentes) en la sesión de `ODD_BASE`; null si no hay datos. */
+export function contextoActual(raiz, base, { proyectos = proyectosDe(), sesion = sesionDe(raiz, base, proyectos) } = {}) {
+  if (!sesion) return null
+  const ultimo = filasDe(sesion.archivo).filter((f) => f?.type === 'assistant' && !f.isSidechain && f.message?.usage).at(-1)
+  return ultimo ? contextoDePedido(ultimo.message.usage) : null
+}
+
+/**
+ * Hasta cuándo va una corrida que cerró en `t`: el último pedido del orquestador antes del siguiente mensaje del
+ * usuario, o el último de la sesión. Así el costo incluye el pedido que llamó a `--cierre` y el reporte. `t` si no hay.
+ */
+export function finDeCorrida(archivo, t) {
+  let fin = null
+  for (const f of filasDe(archivo)) {
+    if (f.isSidechain || !f.timestamp || f.timestamp <= t) continue
+    const contenido = f.message?.content
+    const delUsuario = f.type === 'user' && !f.isMeta && (typeof contenido === 'string' || (Array.isArray(contenido) && contenido.some((c) => c?.type === 'text')))
+    if (delUsuario) break
+    if (f.type === 'assistant' && (!fin || f.timestamp > fin)) fin = f.timestamp
+  }
+  return fin ?? t
+}
+
 /** Texto del último informe del agente. */
 function ultimoInformeDe(filas) {
   const textos = filas.filter((f) => f?.type === 'assistant').flatMap((f) => (f.message?.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text))
@@ -159,10 +187,10 @@ export function hallazgosDe(informe) {
 /**
  * Costo de la corrida de `raiz` con BASE `base`, hasta `hasta`: `{ inicio, minutos, usd, tokens, roles, veredictos,
  * hallazgos }`, con `roles` como `{ rol: { pedidos, usd, agentes, tokens } }` y `hallazgos` como `{ revisor: [{ problemas,
- * observaciones }] }`, uno por informe del revisor. null si no se encuentra la sesión.
+ * observaciones }] }`, uno por informe del revisor, en el orden en que empezaron. null si no se encuentra la sesión.
+ * `sesion` (`{ archivo, inicio }`) evita buscarla otra vez.
  */
-export function costoDelFlujo(raiz, base, { proyectos = proyectosDe(), hasta = new Date().toISOString() } = {}) {
-  const sesion = sesionDe(raiz, base, proyectos)
+export function costoDelFlujo(raiz, base, { proyectos = proyectosDe(), hasta = new Date().toISOString(), sesion = sesionDe(raiz, base, proyectos) } = {}) {
   if (!sesion) return null
   const enTramo = (t) => t && t >= sesion.inicio && t <= hasta
   const principal = usoDe(filasDe(sesion.archivo).filter((f) => !f.isSidechain && enTramo(f.timestamp)))
@@ -171,15 +199,19 @@ export function costoDelFlujo(raiz, base, { proyectos = proyectosDe(), hasta = n
   const hallazgos = {}
   let sinPrecio = principal.sinPrecio
   const carpeta = path.join(path.dirname(sesion.archivo), path.basename(sesion.archivo, '.jsonl'), 'subagents')
-  let nombres = []
+  let agentes = []
   try {
-    nombres = fs.readdirSync(carpeta).filter((a) => a.endsWith('.jsonl')).sort()
+    agentes = fs.readdirSync(carpeta).filter((a) => a.endsWith('.jsonl')).map((a) => {
+      const filas = filasDe(path.join(carpeta, a))
+      return { a, filas, desde: filas.find((f) => f.timestamp)?.timestamp }
+    })
   } catch {
     // Sin subagentes.
   }
-  for (const a of nombres) {
-    const filas = filasDe(path.join(carpeta, a))
-    if (!enTramo(filas.find((f) => f.timestamp)?.timestamp)) continue
+  // Por la hora de su primer pedido, no por el nombre del archivo: los hallazgos quedan en el orden real.
+  agentes.sort((x, y) => String(x.desde ?? '').localeCompare(String(y.desde ?? '')))
+  for (const { a, filas, desde } of agentes) {
+    if (!enTramo(desde)) continue
     let rol = '?'
     try {
       rol = String(JSON.parse(fs.readFileSync(path.join(carpeta, a.replace(/\.jsonl$/, '.meta.json')), 'utf8')).agentType ?? '?').replace(/^qcc-odd-/, '')
@@ -209,11 +241,14 @@ export const miles = (n) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : `${(n / 
 /** «262k leídos · 19k escritos · 1,8k salida»; sin la entrada sin caché, que es casi siempre ínfima. */
 export const resumenDeTokens = (t) => `${miles(t.leidos)} leídos · ${miles(t.escritos)} escritos · ${miles(t.salida)} salida`
 
-/** «$0,42 · 6,1 min · orquestador $0,30 (12 pedidos) · revisor $0,12». */
-export function resumenDeCosto(c) {
+/**
+ * «$0,42 · 6,1 min · orquestador $0,30 (12 pedidos) · revisor $0,12». Con `alCierre` (el costo anotado por `--cierre`),
+ * `c` es el real: «$0,44 real · $0,42 al cierre · …».
+ */
+export function resumenDeCosto(c, alCierre = null) {
   const partes = Object.entries(c.roles)
     .filter(([, r]) => r.pedidos > 0)
     .sort((a, b) => b[1].usd - a[1].usd)
     .map(([rol, r]) => `${rol} ${dolares(r.usd)}${rol === 'orquestador' ? ` (${r.pedidos} pedidos)` : r.agentes > 1 ? ` (×${r.agentes})` : ''}`)
-  return `${dolares(c.usd)} · ${c.minutos.toFixed(1).replace('.', ',')} min${partes.length ? ` · ${partes.join(' · ')}` : ''}${c.sinPrecio ? ` · ${c.sinPrecio} pedido(s) sin precio` : ''}`
+  return `${dolares(c.usd)}${alCierre === null ? '' : ` real · ${dolares(alCierre)} al cierre`} · ${c.minutos.toFixed(1).replace('.', ',')} min${partes.length ? ` · ${partes.join(' · ')}` : ''}${c.sinPrecio ? ` · ${c.sinPrecio} pedido(s) sin precio` : ''}`
 }

@@ -13,8 +13,9 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, motivoComando, tramosDe, raizDe } from './guardia.mjs'
 import { pasosDe, colaDe } from './verificar.mjs'
-import { opcionesDe, criticosLegibles, tareasDe, sumaNumstat, recortar, filaDeCorrida, lineaDeCorrida } from './odd.mjs'
-import { costoDelFlujo, costoDePedido, hallazgosDe } from './costo.mjs'
+import { opcionesDe, criticosLegibles, tareasDe, sumaNumstat, recortar, filaDeCorrida, lineaDeCorrida, riesgoDe, lineasDePlan, lineaDeContexto } from './odd.mjs'
+import { costoDelFlujo, costoDePedido, hallazgosDe, contextoActual, finDeCorrida } from './costo.mjs'
+import { procesoDe, lineaDeProceso } from './proceso.mjs'
 
 const DIR = path.dirname(fileURLToPath(import.meta.url))
 const ODD = path.join(DIR, 'odd.mjs')
@@ -52,6 +53,30 @@ function correr(script, raiz, ...args) {
 }
 
 const linea = (salida, prefijo) => salida.split('\n').find((l) => l.startsWith(prefijo))?.slice(prefijo.length)
+
+const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
+const usoCon = (contexto) => ({ input_tokens: 10, cache_read_input_tokens: contexto - 510, cache_creation_input_tokens: 500, output_tokens: 100 })
+
+/**
+ * Transcript de juguete del orquestador: el `/qcc-implementador-odd`, el `--inicio` con `ODD_BASE=<base>` y un pedido
+ * por cada uso `[herramienta, entrada, contexto?, resultado?]`, dos segundos después del anterior.
+ */
+function transcript(usos, { base = 'b0de', desde = Date.now() - 600_000 } = {}) {
+  const en = (s) => new Date(desde + s * 1000).toISOString()
+  const pedido = (id, s, contexto, nombre, input) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-sonnet-5-5', usage: usoCon(contexto), content: [{ type: 'tool_use', id: `u-${id}`, name: nombre, input }] } })
+  const resultado = (id, s, texto) => ({ type: 'user', timestamp: en(s), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `u-${id}`, content: texto }] } })
+  const filas = [
+    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/qcc-implementador-odd</command-name>\n<command-args> x </command-args>' } },
+    pedido('p0', 1, 40_000, 'Bash', { command: 'node ~/.claude/flujos-odd/odd.mjs --inicio' }),
+    resultado('p0', 2, `ODD_BASE=${base}\nRAMA: …`),
+  ]
+  usos.forEach(([nombre, input, contexto = 50_000, texto = ''], k) => filas.push(pedido(`p${k + 1}`, 10 + 2 * k, contexto, nombre, input), resultado(`p${k + 1}`, 11 + 2 * k, texto)))
+  return { filas, inicio: en(0), hasta: en(12 + 2 * usos.length), en }
+}
+
+const PLAN = ['Bash', { command: 'node ~/.claude/flujos-odd/odd.mjs --plan --base b0de --tamano chico --reglas 2 --riesgo "1:no;2:no;3:no;4:no;5:no;6:no"' }]
+const VERIFICAR_ODD = ['Bash', { command: 'node ~/.claude/flujos-odd/verificar.mjs' }]
+const DIFF = ['Bash', { command: 'node ~/.claude/flujos-odd/odd.mjs --diff b0de' }]
 
 // ── guardia ─────────────────────────────────────────────────────────────────
 
@@ -327,6 +352,12 @@ test('odd: fila y línea del listado', () => {
     lineaDeCorrida({ ...fila, riesgo: 'ítem 2 (auth)', revision: 'APROBADO', costo }),
     '2026-10-20 10:00 · repo · $0,38 · 1,7 min · orquestador $0,20 (10 pedidos) · revisor $0,18 (×2) · 564k leídos · 67k escritos · 1,8k salida · chico · Riesgo: ítem 2 (auth) · revisión APROBADO · hallazgos 2p/1o → 0p/0o · COMPLETO · +2 −0',
   )
+  const real = { ...costo, usd: 0.4, minutos: 2 }
+  assert.equal(
+    lineaDeCorrida({ ...fila, costo, costoReal: real, proceso: 'sin --diff' }),
+    '2026-10-20 10:00 · repo · $0,40 real · $0,38 al cierre · 2,0 min · orquestador $0,20 (10 pedidos) · revisor $0,18 (×2) · 564k leídos · 67k escritos · 1,8k salida · chico · Riesgo: ninguno · revisión omitida · hallazgos 2p/1o → 0p/0o · PROCESO: sin --diff · COMPLETO · +2 −0',
+  )
+  assert.equal(filaDeCorrida({ t: 'x', proceso: 'ok', sesion: '/s.jsonl' }).sesion, '/s.jsonl')
 })
 
 test('odd: --inicio, --diff, --cierre y --ultimos sobre un repo real', () => {
@@ -410,6 +441,72 @@ test('odd: errores', () => {
   assert.match(correr(ODD, raiz).salida, /ERROR: uso:/)
 })
 
+test('odd: --plan exige los 6 ítems de riesgo, un motivo por cada sí y bordes con riesgo', () => {
+  assert.deepEqual(riesgoDe('1:sí migración v3→v4; 2:no;3: si quién edita;4:no;5:NO;6:no'), { 1: 'migración v3→v4', 2: null, 3: 'quién edita', 4: null, 5: null, 6: null })
+  assert.throws(() => riesgoDe('1:no;2:no;3:no'), /faltan los ítems 4, 5, 6/)
+  assert.throws(() => riesgoDe('1:sí;2:no;3:no;4:no;5:no;6:no'), /ítem 1 dice sí sin motivo/)
+  assert.throws(() => riesgoDe('1:no;1:no;2:no;3:no;4:no;5:no;6:no'), /ítem 1 está dos veces/)
+  assert.throws(() => riesgoDe('7:no;1:no;2:no;3:no;4:no;5:no;6:no'), /N de 1 a 6/)
+  assert.throws(() => riesgoDe('1:quizá;2:no;3:no;4:no;5:no;6:no'), /no es «N:sí <motivo>»/)
+  assert.throws(() => riesgoDe(undefined), /faltan los ítems 1, 2, 3, 4, 5, 6/)
+
+  const riesgo = '1:sí migración;2:sí permisos;3:no;4:no;5:no;6:no'
+  assert.deepEqual(lineasDePlan({ tamano: 'chico', reglas: '15', riesgo, bordes: 'ausente | v3' }), [
+    'AVISO: 15 reglas → grande',
+    'TAMAÑO: chico · 15 reglas',
+    'RIESGO PREVISTO: ítems 1, 2 (1: migración · 2: permisos)',
+    'BORDES: ausente | v3',
+  ])
+  assert.deepEqual(lineasDePlan({ tamano: 'grande', reglas: '3', riesgo: '1:no;2:no;3:sí parser;4:no;5:no;6:no', bordes: 'vacío' }).slice(1), ['RIESGO PREVISTO: ítem 3 (3: parser)', 'BORDES: vacío'])
+  assert.deepEqual(lineasDePlan({ tamano: 'chico', reglas: '8', riesgo: '1:no;2:no;3:no;4:no;5:no;6:no' }), ['TAMAÑO: chico · 8 reglas', 'RIESGO PREVISTO: ninguno', 'BORDES: no aplica'])
+  assert.throws(() => lineasDePlan({ tamano: 'chico', reglas: '2', riesgo }), /--bordes es obligatorio/)
+  assert.throws(() => lineasDePlan({ tamano: 'mediano', reglas: '2', riesgo, bordes: 'x' }), /--tamano/)
+  assert.throws(() => lineasDePlan({ tamano: 'chico', riesgo, bordes: 'x' }), /--reglas/)
+
+  const raiz = repo('plan', { 'a.txt': 'x\n' })
+  const ok = correr(ODD, raiz, '--plan', '--base', 'b0de', '--tamano', 'chico', '--reglas', '2', '--riesgo', riesgo, '--bordes', 'ausente')
+  assert.equal(ok.codigo, 0, ok.salida)
+  assert.match(ok.salida, /^TAMAÑO: chico · 2 reglas\nRIESGO PREVISTO: ítems 1, 2 \(1: migración · 2: permisos\)\nBORDES: ausente\nCONTEXTO: sin datos\n$/)
+  const sinItem = correr(ODD, raiz, '--plan', '--base', 'b0de', '--tamano', 'chico', '--reglas', '2', '--riesgo', '1:no;2:no;3:no;4:no;5:no', '--bordes', 'x')
+  assert.equal(sinItem.codigo, 2)
+  assert.match(sinItem.salida, /^ERROR: --riesgo: faltan los ítems 6/)
+  assert.equal(correr(ODD, raiz, '--plan', '--tamano', 'chico', '--reglas', '2', '--riesgo', riesgo).codigo, 2)
+})
+
+test('odd: CONTEXTO, PROCESO y costo real con un transcript de juguete', () => {
+  const raiz = repo('contexto', { 'src/a.js': 'uno\n' })
+  const base = linea(correr(ODD, raiz, '--inicio').salida, 'ODD_BASE=')
+  const carpeta = path.join(PRUEBAS, 'claude', 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  fs.mkdirSync(carpeta, { recursive: true })
+  const archivo = path.join(carpeta, 's1.jsonl')
+  const { filas } = transcript([PLAN, ['Edit', { file_path: path.join(raiz, 'src', 'a.js') }, 160_000]], { base })
+  fs.writeFileSync(archivo, jsonl(filas))
+
+  const plan = correr(ODD, raiz, '--plan', '--base', base, '--tamano', 'grande', '--reglas', '2', '--riesgo', '1:no;2:no;3:no;4:no;5:no;6:no')
+  assert.match(plan.salida, /CONTEXTO: 160k · > 150k: lo que falta va a qcc-odd-ejecutor\n$/)
+  fs.writeFileSync(path.join(raiz, 'src', 'a.js'), 'dos\n')
+  assert.match(correr(ODD, raiz, '--diff', base).salida, /^CONTEXTO: 160k · > 150k/)
+
+  const c = correr(ODD, raiz, '--cierre', '--base', base, '--resultado', 'COMPLETO', '--tamano', 'grande', '--riesgo', 'ninguno', '--revision', 'omitida')
+  assert.equal(c.codigo, 0, c.salida)
+  assert.match(c.salida, /PROCESO: sin verificar\.mjs · sin --diff · contexto máx\. 160k sin ejecutor\n/)
+  assert.match(c.salida, /CONTEXTO: 160k/)
+  const fila = JSON.parse(fs.readFileSync(path.join(PRUEBAS, 'registros', 'odd.jsonl'), 'utf8').trim().split('\n').at(-1))
+  assert.equal(fila.proceso, 'sin verificar.mjs · sin --diff · contexto máx. 160k sin ejecutor')
+  assert.equal(path.resolve(fila.sesion), path.resolve(archivo))
+
+  // El reporte, después de --cierre y antes del siguiente mensaje del usuario, entra en el costo real.
+  const despues = (s) => new Date(Date.parse(fila.t) + s * 1000).toISOString()
+  const reporte = { type: 'assistant', timestamp: despues(1), message: { id: 'reporte', model: 'claude-sonnet-5-5', usage: usoCon(100_000), content: [{ type: 'text', text: 'Reporte' }] } }
+  const otro = { type: 'assistant', timestamp: despues(3), message: { id: 'otro', model: 'claude-sonnet-5-5', usage: usoCon(100_000), content: [{ type: 'text', text: 'otra cosa' }] } }
+  fs.appendFileSync(archivo, jsonl([reporte, { type: 'user', timestamp: despues(2), message: { role: 'user', content: 'gracias' } }, otro]))
+  const u = correr(ODD, raiz, '--ultimos', '1').salida
+  const alCierre = fila.costo.usd
+  const real = alCierre + costoDePedido(usoCon(100_000), 'claude-sonnet-5-5')
+  assert.match(u, new RegExp(`\\$${real.toFixed(2).replace('.', ',')} real · \\$${alCierre.toFixed(2).replace('.', ',')} al cierre · `))
+  assert.match(u, /PROCESO: sin verificar\.mjs/)
+})
+
 // ── costo ───────────────────────────────────────────────────────────────────
 
 test('costo: precio por pedido con caché de 1 h y de 5 min', () => {
@@ -463,6 +560,119 @@ test('costo: cuenta PROBLEMAS y OBSERVACIONES del informe del revisor', () => {
   assert.deepEqual(hallazgosDe(''), { problemas: 0, observaciones: 0 })
   const conRutas = 'VEREDICTO: APROBADO\nOBSERVACIONES:\n- `D:/repo/src/a.js:38`: crear sin clave\n- D:\\repo\\src\\a.js:57 — otro\n- C:/x.js — PEDIDO: algo\n\nUna nota sobre la guardia.'
   assert.deepEqual(hallazgosDe(conRutas), { problemas: 0, observaciones: 3 })
+})
+
+test('costo: los informes del revisor van en el orden en que empezaron, no por nombre de archivo', () => {
+  const raiz = path.join(os.tmpdir(), 'repo-odd-orden')
+  const proyectos = path.join(PRUEBAS, 'claude-orden', 'projects')
+  const sesion = path.join(proyectos, path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  const subagentes = path.join(sesion, 's1', 'subagents')
+  fs.mkdirSync(subagentes, { recursive: true })
+  const { filas, en } = transcript([])
+  fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl(filas))
+  const revisor = (nombre, desde, informe) => {
+    fs.writeFileSync(path.join(subagentes, `${nombre}.meta.json`), JSON.stringify({ agentType: 'qcc-odd-revisor' }))
+    fs.writeFileSync(path.join(subagentes, `${nombre}.jsonl`), jsonl([{ type: 'user', timestamp: en(desde), message: { role: 'user', content: 'x' } }, { type: 'assistant', timestamp: en(desde + 1), message: { id: nombre, model: 'claude-sonnet-5-5', usage: usoCon(1000), content: [{ type: 'text', text: informe }] } }]))
+  }
+  revisor('agent-b', 20, 'VEREDICTO: RECHAZADO\nPROBLEMAS:\n- a\n- b\nOBSERVACIONES: ninguna')
+  revisor('agent-a', 100, 'VEREDICTO: APROBADO\nOBSERVACIONES: ninguna')
+  const c = costoDelFlujo(raiz, 'b0de', { proyectos, hasta: en(300) })
+  assert.deepEqual(c.veredictos.revisor, ['RECHAZADO', 'APROBADO'])
+  assert.deepEqual(c.hallazgos.revisor, [{ problemas: 2, observaciones: 0 }, { problemas: 0, observaciones: 0 }])
+})
+
+test('costo: contextoActual y finDeCorrida', () => {
+  const raiz = path.join(os.tmpdir(), 'repo-odd-contexto')
+  const proyectos = path.join(PRUEBAS, 'claude-contexto', 'projects')
+  const carpeta = path.join(proyectos, path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  fs.mkdirSync(carpeta, { recursive: true })
+  const { filas, en } = transcript([PLAN, DIFF, ['Bash', { command: 'git status' }, 90_000]])
+  // Un subagente con más contexto no cuenta: es del orquestador.
+  filas.push({ type: 'assistant', isSidechain: true, timestamp: en(30), message: { id: 'sub', usage: usoCon(300_000), content: [] } })
+  const archivo = path.join(carpeta, 's1.jsonl')
+  fs.writeFileSync(archivo, jsonl(filas))
+  assert.equal(contextoActual(raiz, 'b0de', { proyectos }), 90_000)
+  assert.equal(contextoActual(raiz, 'otra', { proyectos }), null)
+  assert.equal(lineaDeContexto(90_000), 'CONTEXTO: 90k')
+  assert.equal(lineaDeContexto(150_001), 'CONTEXTO: 150k · > 150k: lo que falta va a qcc-odd-ejecutor')
+  assert.equal(lineaDeContexto(null), 'CONTEXTO: sin datos')
+
+  // Hasta el último pedido del orquestador antes del siguiente mensaje del usuario; los tool_result y los isMeta no
+  // lo son, y una fila system posterior no estira la corrida.
+  assert.equal(finDeCorrida(archivo, en(12)), en(14))
+  fs.appendFileSync(archivo, jsonl([{ type: 'user', timestamp: en(40), isMeta: true, message: { content: 'meta' } }, { type: 'assistant', timestamp: en(41), message: { id: 'r', content: [] } }, { type: 'system', timestamp: en(45) }, { type: 'user', timestamp: en(50), message: { content: [{ type: 'text', text: 'hola' }] } }, { type: 'assistant', timestamp: en(51), message: { id: 's', content: [] } }]))
+  assert.equal(finDeCorrida(archivo, en(12)), en(41))
+  assert.equal(finDeCorrida(archivo, en(60)), en(60))
+  assert.equal(finDeCorrida(path.join(carpeta, 'no-existe.jsonl'), en(12)), en(12))
+})
+
+// ── proceso ─────────────────────────────────────────────────────────────────
+
+test('proceso: una corrida limpia da ok', () => {
+  const raiz = repo('proceso-ok', { 'src/a.js': 'x\n' })
+  const { filas, inicio, hasta } = transcript([
+    ['Grep', { pattern: 'x' }],
+    ['Read', { file_path: path.join(raiz, 'src', 'a.js') }],
+    PLAN,
+    ['Edit', { file_path: path.join(raiz, 'src', 'a.js') }],
+    ['Write', { file_path: path.join(raiz, 'test', 'a.test.js'), content: 'test()' }],
+    ['Bash', { command: 'git diff --stat && git log -1 | head -5' }],
+    ['Bash', { command: `cat ${TMP}/salida.txt && echo x > ${TMP}/y` }],
+    VERIFICAR_ODD,
+    DIFF,
+    ['Agent', { subagent_type: 'qcc-odd-ejecutor', prompt: 'DOC: x' }, 170_000],
+    ['Agent', { subagent_type: 'qcc-odd-revisor', prompt: 'BASE: b0de' }],
+  ])
+  const p = procesoDe(filas, { raiz, inicio, hasta })
+  assert.deepEqual(p.desvios, [])
+  assert.equal(lineaDeProceso(p), 'ok')
+  assert.equal(p.contextoMax, 170_000)
+})
+
+test('proceso: marca cada desvío', () => {
+  const raiz = repo('proceso-desvios', { 'src/a.js': 'x\n', 'test/a.test.js': 'y\n' })
+  const copia = 'C:/Users/x/AppData/Local/Temp/qcc-odd-base-AbC123'
+  const { filas, inicio, hasta } = transcript([
+    ['Bash', { command: 'cat src/a.js && sed -n 1,5p test/a.test.js' }],
+    ['Bash', { command: 'git ls-files | head -100; head -c 400 src/a.js' }],
+    ['Edit', { file_path: path.join(raiz, 'src', 'a.js') }],
+    PLAN,
+    ['Bash', { command: 'sed -i s/a/b/ src/a.js' }],
+    VERIFICAR_ODD,
+    ['Bash', { command: 'node ~/.claude/flujos-odd/odd.mjs --copia-base b0de' }, 50_000, `ODD_COPIA=${copia}`],
+    ['Bash', { command: `node ${copia}/src/a.js > ${TMP}/base.txt; node src/a.js > ${TMP}/nuevo.txt` }],
+    ['Bash', { command: "cat >> test/a.test.js <<'EOF'\ntest('x', () => {})\nEOF" }, 160_000],
+  ])
+  assert.deepEqual(procesoDe(filas, { raiz, inicio, hasta }).desvios, [
+    '--plan después de editar',
+    'editó por Bash: 2',
+    'editó después del último verificar.mjs',
+    'sin --diff',
+    'editó después del diferencial',
+    'contexto máx. 160k sin ejecutor',
+    'exploró con cat/head: 2',
+  ])
+})
+
+test('proceso: sin --plan, ediciones por script y --diff viejo', () => {
+  const raiz = repo('proceso-scripts', { 'src/a.js': 'x\n' })
+  const script = path.join(os.tmpdir(), 'scratch', 'aplicar.cjs')
+  const { filas, inicio, hasta } = transcript([
+    ['Write', { file_path: script, content: "require('fs').writeFileSync('src/a.js', t)" }],
+    ['Bash', { command: `node "${script.replaceAll('\\', '/')}" && node ~/.claude/flujos-odd/verificar.mjs` }],
+    DIFF,
+    ['Bash', { command: "node - <<'EOF'\nconst fs = require('fs')\nfs.writeFileSync('src/a.js', 'y')\nEOF" }],
+    ['Bash', { command: `cat > ${TMP}/doc.cjs <<'EOF'\nrequire('fs').appendFileSync('CLAUDE.md', 'z')\nEOF` }],
+    ['Bash', { command: `node ${TMP}/doc.cjs` }],
+    ['Write', { file_path: path.join(os.tmpdir(), 'scratch', 'leer.mjs'), content: 'console.log(1)' }],
+    ['Bash', { command: `node ${TMP}/leer.mjs` }],
+    VERIFICAR_ODD,
+  ])
+  // Escribir el script no edita; correrlo sí: aplicar.cjs, el heredoc de node y doc.cjs. leer.mjs no escribe.
+  assert.deepEqual(procesoDe(filas, { raiz, inicio, hasta }).desvios, ['sin --plan', 'editó por Bash: 3', 'editó después del último --diff'])
+  // Sin ediciones, nada que verificar.
+  const vacio = transcript([PLAN])
+  assert.deepEqual(procesoDe(vacio.filas, { raiz, inicio: vacio.inicio, hasta: vacio.hasta }).desvios, [])
 })
 
 // ── instalar ────────────────────────────────────────────────────────────────

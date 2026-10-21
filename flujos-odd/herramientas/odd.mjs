@@ -2,6 +2,8 @@
 // Herramienta de /qcc-implementador-odd (nivel usuario: sirve para cualquier proyecto).
 //
 //   node ~/.claude/flujos-odd/odd.mjs --inicio
+//   node ~/.claude/flujos-odd/odd.mjs --plan --base <BASE> --tamano chico|grande --reglas <n>
+//        --riesgo "1:sí <motivo>;2:no;…;6:no" [--bordes "<borde> | <borde>"]
 //   node ~/.claude/flujos-odd/odd.mjs --diff <BASE> [-- <rutas>]
 //   node ~/.claude/flujos-odd/odd.mjs --cierre --base <BASE> --resultado COMPLETO|DETENIDO --tamano chico|grande
 //        --riesgo "<ítem N (motivo) | ninguno>" [--revision APROBADO|RECHAZADO|omitida] [--titulo "<t>"]
@@ -12,9 +14,12 @@
 // --inicio: toma una foto del árbol (versionados + nuevos no ignorados) como commit suelto, que es la BASE, y la
 // imprime como `ODD_BASE=<sha>`: con esa marca costo.mjs encuentra la sesión. Además: rama, sucios previos,
 // `criticos` y pasos de `verificar` de `.claude/qcc-implementador-odd.json`, y los `odd/tasks/*.md` con tareas abiertas.
+// --plan: el cierre de la exploración, visible: tamaño, los 6 ítems de riesgo (cada uno «sí <motivo>» o «no») y los
+// bordes. Un ítem que falta, un «sí» sin motivo o un riesgo sin bordes salen con ERROR y código 2.
 // --diff: el cambio desde la BASE contra una foto nueva (incluye archivos nuevos), con --stat y recortado a TOPE_DIFF líneas.
-// --cierre: anota una fila en `registros/odd.jsonl` con el costo real e imprime CAMBIOS y COSTO.
-// --ultimos: las últimas corridas anotadas (10 por defecto), con el promedio.
+// --cierre: anota una fila en `registros/odd.jsonl` con el costo y el control de proceso, e imprime CAMBIOS, COSTO y PROCESO.
+// --plan, --diff y --cierre imprimen `CONTEXTO: <n>k`, el del último pedido del orquestador, leído del transcript.
+// --ultimos: las últimas corridas anotadas (10 por defecto), con el promedio y el costo real (con el reporte).
 // --copia-base: el árbol de la BASE en un temporal nuevo, para comparar contra él; imprime `ODD_COPIA=<ruta>`.
 // --limpiar: borra las rutas que están dentro de un temporal (no el temporal mismo); las demás quedan, con su motivo.
 // Sin candado ni estado: lo que el flujo tiene que recordar va en la salida o en `odd/tasks/`.
@@ -26,7 +31,8 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { raizDe, rutaNativa, enTemporal } from './guardia.mjs'
-import { costoDelFlujo, resumenDeCosto, resumenDeTokens, dolares } from './costo.mjs'
+import { costoDelFlujo, contextoActual, finDeCorrida, filasDe, sesionDe, resumenDeCosto, resumenDeTokens, dolares, miles } from './costo.mjs'
+import { procesoDe, lineaDeProceso, TOPE_CONTEXTO } from './proceso.mjs'
 
 const WIN = process.platform === 'win32'
 const DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -35,6 +41,7 @@ const TOPE_DIFF = 400
 const TOPE_SUCIOS = 10
 const CONFIG = '.claude/qcc-implementador-odd.json'
 const TAREAS = 'odd/tasks'
+const REGLAS_CHICO = 8
 
 const registroDe = () => path.join(process.env.ODD_REGISTROS || path.join(DIR, 'registros'), 'odd.jsonl')
 
@@ -102,8 +109,8 @@ function configDelProyecto() {
 // ── Puras ───────────────────────────────────────────────────────────────────
 
 /**
- * Opciones de la línea de comandos: `modo` (inicio | diff | cierre | ultimos | copia-base | limpiar), los valores con
- * nombre y las `rutas` que siguen a `--`. Un valor que falta queda `undefined`.
+ * Opciones de la línea de comandos: `modo` (inicio | plan | diff | cierre | ultimos | copia-base | limpiar), los valores
+ * con nombre y las `rutas` que siguen a `--`. Un valor que falta queda `undefined`.
  */
 export function opcionesDe(args) {
   const k = args.indexOf('--')
@@ -114,13 +121,15 @@ export function opcionesDe(args) {
     const v = i >= 0 ? propias[i + 1] : undefined
     return v === undefined || v.startsWith('--') ? undefined : v
   }
-  const modo = ['cierre', 'diff', 'inicio', 'ultimos', 'copia-base', 'limpiar'].find((m) => propias.includes(`--${m}`)) ?? null
+  const modo = ['cierre', 'diff', 'inicio', 'plan', 'ultimos', 'copia-base', 'limpiar'].find((m) => propias.includes(`--${m}`)) ?? null
   return {
     modo,
     base: modo === 'diff' || modo === 'copia-base' ? valor(`--${modo}`) : valor('--base'),
     resultado: valor('--resultado'),
     tamano: valor('--tamano'),
+    reglas: valor('--reglas'),
     riesgo: valor('--riesgo'),
+    bordes: valor('--bordes'),
     revision: valor('--revision'),
     titulo: valor('--titulo'),
     ultimos: Math.max(1, Number(valor('--ultimos') ?? 10) || 10),
@@ -170,21 +179,69 @@ export function recortar(texto, tope = TOPE_DIFF) {
   return { texto: lineas.slice(0, tope).join('\n'), sobran: Math.max(0, lineas.length - tope) }
 }
 
-const sinNulos = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''))
+/** Error de uso de `--plan`: sale con código 2. */
+const errorDePlan = (mensaje) => Object.assign(new Error(mensaje), { codigo: 2 })
 
-/** La fila de `odd.jsonl`. `costo` es el de costo.mjs (o null); `cambios`, el de `sumaNumstat`. */
-export function filaDeCorrida({ t, raiz, base, resultado, tamano, riesgo, revision, titulo, costo = null, cambios } = {}) {
-  return sinNulos({ v: 1, t, raiz, base, titulo, resultado, tamano, riesgo, revision, cambios, costo })
+/**
+ * Los 6 ítems de `--riesgo "1:sí <motivo>;2:no;…"`: `{ 1: '<motivo>' | null, …, 6 }`, con null para «no». Un ítem que
+ * falta, repetido o fuera de 1-6, o un «sí» sin motivo, es un error.
+ */
+export function riesgoDe(texto) {
+  const items = {}
+  for (const parte of String(texto ?? '').split(';').map((p) => p.trim()).filter(Boolean)) {
+    const m = /^(\d+)\s*:\s*(sí|si|no)(?=[\s,:—-]|$)[\s,:—-]*(.*)$/i.exec(parte)
+    if (!m || m[1] < 1 || m[1] > 6) throw errorDePlan(`--riesgo: «${parte}» no es «N:sí <motivo>» ni «N:no», con N de 1 a 6`)
+    if (m[1] in items) throw errorDePlan(`--riesgo: el ítem ${m[1]} está dos veces`)
+    const si = m[2].toLowerCase() !== 'no'
+    if (si && !m[3].trim()) throw errorDePlan(`--riesgo: el ítem ${m[1]} dice sí sin motivo`)
+    items[m[1]] = si ? m[3].trim() : null
+  }
+  const faltan = [1, 2, 3, 4, 5, 6].filter((n) => !(n in items))
+  if (faltan.length) throw errorDePlan(`--riesgo: faltan los ítems ${faltan.join(', ')} (cada uno «N:sí <motivo>» o «N:no»)`)
+  return items
 }
 
-/** Una línea del listado `--ultimos`. */
+/** Las líneas de `--plan` (sin CONTEXTO): AVISO si las reglas piden `grande`, TAMAÑO, RIESGO PREVISTO y BORDES. */
+export function lineasDePlan({ tamano, reglas, riesgo, bordes }) {
+  if (!['chico', 'grande'].includes(tamano)) throw errorDePlan('--tamano tiene que ser chico o grande')
+  if (!/^\d+$/.test(reglas ?? '')) throw errorDePlan('--reglas tiene que ser la cantidad de reglas pedidas')
+  const items = riesgoDe(riesgo)
+  const si = Object.entries(items).filter(([, motivo]) => motivo !== null)
+  if (si.length && !bordes?.trim()) throw errorDePlan('con riesgo previsto, --bordes es obligatorio')
+  const lineas = []
+  if (tamano === 'chico' && Number(reglas) > REGLAS_CHICO) lineas.push(`AVISO: ${reglas} reglas → grande`)
+  lineas.push(`TAMAÑO: ${tamano} · ${reglas} reglas`)
+  const motivos = si.map(([n, motivo]) => `${n}: ${motivo}`).join(' · ')
+  lineas.push(`RIESGO PREVISTO: ${si.length ? `ítem${si.length > 1 ? 's' : ''} ${si.map(([n]) => n).join(', ')} (${motivos})` : 'ninguno'}`)
+  lineas.push(`BORDES: ${bordes?.trim() || 'no aplica'}`)
+  return lineas
+}
+
+/** «CONTEXTO: 112k», con el aviso del ejecutor pasados los 150k; «sin datos» si no hay transcript. */
+export function lineaDeContexto(tokens) {
+  if (tokens === null || tokens === undefined) return 'CONTEXTO: sin datos'
+  return `CONTEXTO: ${miles(tokens)}${tokens > TOPE_CONTEXTO ? ' · > 150k: lo que falta va a qcc-odd-ejecutor' : ''}`
+}
+
+const sinNulos = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''))
+
+/**
+ * La fila de `odd.jsonl`. `costo` es el de costo.mjs (o null); `cambios`, el de `sumaNumstat`; `proceso`, la línea de
+ * PROCESO; `sesion`, el transcript, para recalcular el costo real en `--ultimos`.
+ */
+export function filaDeCorrida({ t, raiz, base, resultado, tamano, riesgo, revision, titulo, proceso, costo = null, cambios, sesion } = {}) {
+  return sinNulos({ v: 1, t, raiz, base, titulo, resultado, tamano, riesgo, revision, proceso, cambios, costo, sesion })
+}
+
+/** Una línea del listado `--ultimos`. Con `costoReal` (calculado al listar), el costo es ese, junto al del cierre. */
 export function lineaDeCorrida(f) {
   const fecha = String(f.t ?? '').slice(0, 16).replace('T', ' ')
   const repo = String(f.raiz ?? '?').split(/[\\/]/).filter(Boolean).pop() ?? '?'
-  const informes = f.costo?.hallazgos?.revisor ?? []
+  const c = f.costoReal ?? f.costo
+  const informes = c?.hallazgos?.revisor ?? []
   const hallazgos = informes.length ? `hallazgos ${informes.map((h) => `${h.problemas}p/${h.observaciones}o`).join(' → ')}` : null
-  const datos = [f.tamano, f.riesgo && `Riesgo: ${f.riesgo}`, f.revision && `revisión ${f.revision}`, hallazgos, f.resultado, f.cambios && `+${f.cambios.mas} −${f.cambios.menos}`].filter(Boolean)
-  const costo = f.costo ? resumenDeCosto(f.costo) + (f.costo.tokens ? ` · ${resumenDeTokens(f.costo.tokens)}` : '') : 'sin costo'
+  const datos = [f.tamano, f.riesgo && `Riesgo: ${f.riesgo}`, f.revision && `revisión ${f.revision}`, hallazgos, f.proceso && `PROCESO: ${f.proceso}`, f.resultado, f.cambios && `+${f.cambios.mas} −${f.cambios.menos}`].filter(Boolean)
+  const costo = c ? resumenDeCosto(c, f.costoReal && f.costo ? f.costo.usd : null) + (c.tokens ? ` · ${resumenDeTokens(c.tokens)}` : '') : 'sin costo'
   return `${fecha} · ${repo} · ${costo}${datos.length ? ` · ${datos.join(' · ')}` : ''}${f.titulo ? ` · ${f.titulo}` : ''}`
 }
 
@@ -215,8 +272,24 @@ function inicio() {
   console.log(`TAREAS ABIERTAS: ${abiertas.length ? abiertas.join(' · ') : 'ninguna'}`)
 }
 
+/** El contexto actual del orquestador; null sin transcript legible (nunca falla por eso). */
+function contexto(base, sesion) {
+  try {
+    return contextoActual(RAIZ, base, sesion ? { sesion } : {})
+  } catch {
+    return null
+  }
+}
+
+function plan(o) {
+  if (!o.base) throw errorDePlan('falta la BASE: --base <ODD_BASE>')
+  for (const l of lineasDePlan(o)) console.log(l)
+  console.log(lineaDeContexto(contexto(o.base)))
+}
+
 function diff(base, rutas) {
   exigirBase(base)
+  console.log(lineaDeContexto(contexto(base)))
   const ahora = foto()
   const filtro = rutas.length ? ['--', ...rutas] : []
   const stat = git(['diff', '--stat', base, ahora, ...filtro]).trim()
@@ -236,17 +309,34 @@ function cierre({ base, resultado, tamano, riesgo, revision, titulo }) {
   if (!/^(COMPLETO|DETENIDO)\b/.test(resultado ?? '')) throw new Error('--resultado tiene que ser COMPLETO o DETENIDO')
   const t = new Date().toISOString()
   const cambios = sumaNumstat(git(['diff', '--numstat', base, foto()]))
+  let sesion = null
   let costo = null
+  let proceso = null
   try {
-    costo = costoDelFlujo(RAIZ, base, { hasta: t })
+    sesion = sesionDe(RAIZ, base)
+    costo = sesion && costoDelFlujo(RAIZ, base, { hasta: t, sesion })
+    proceso = sesion && lineaDeProceso(procesoDe(filasDe(sesion.archivo), { raiz: RAIZ, inicio: sesion.inicio, hasta: t }))
   } catch {
-    // Sin transcripts legibles: la fila va sin costo.
+    // Sin transcripts legibles: la fila va sin costo ni proceso.
   }
   const archivo = registroDe()
   fs.mkdirSync(path.dirname(archivo), { recursive: true })
-  fs.appendFileSync(archivo, JSON.stringify(filaDeCorrida({ t, raiz: RAIZ, base, resultado, tamano, riesgo, revision, titulo, costo, cambios })) + '\n')
+  fs.appendFileSync(archivo, JSON.stringify(filaDeCorrida({ t, raiz: RAIZ, base, resultado, tamano, riesgo, revision, titulo, proceso, costo, cambios, sesion: sesion?.archivo })) + '\n')
   console.log(`CAMBIOS: ${cambios.archivos} archivo(s) · +${cambios.mas} −${cambios.menos}`)
   console.log(`COSTO: ${costo ? resumenDeCosto(costo) : 'sin datos (no encontré la sesión en los transcripts)'}`)
+  console.log(`PROCESO: ${proceso ?? 'sin datos'}`)
+  console.log(lineaDeContexto(sesion ? contexto(base, sesion) : null))
+}
+
+/** El costo hasta el siguiente mensaje del usuario, con el reporte incluido; null si no cambia o no hay datos. */
+function costoReal(f) {
+  if (!f.sesion || !f.costo?.inicio || !f.base) return null
+  try {
+    const fin = finDeCorrida(f.sesion, f.t)
+    return fin > f.t ? costoDelFlujo(f.raiz, f.base, { hasta: fin, sesion: { archivo: f.sesion, inicio: f.costo.inicio } }) : null
+  } catch {
+    return null
+  }
 }
 
 function ultimos(n) {
@@ -266,13 +356,13 @@ function ultimos(n) {
     console.log(`CORRIDAS: ninguna anotada en ${registroDe()}`)
     return
   }
-  const elegidas = filas.slice(-n)
+  const elegidas = filas.slice(-n).map((f) => ({ ...f, costoReal: costoReal(f) }))
   console.log(`CORRIDAS (últimas ${elegidas.length} de ${filas.length}):`)
   for (const f of elegidas) console.log(`  ${lineaDeCorrida(f)}`)
-  const conCosto = elegidas.filter((f) => f.costo)
+  const conCosto = elegidas.map((f) => f.costoReal ?? f.costo).filter(Boolean)
   if (conCosto.length) {
-    const usd = conCosto.reduce((s, f) => s + f.costo.usd, 0) / conCosto.length
-    const minutos = conCosto.reduce((s, f) => s + f.costo.minutos, 0) / conCosto.length
+    const usd = conCosto.reduce((s, c) => s + c.usd, 0) / conCosto.length
+    const minutos = conCosto.reduce((s, c) => s + c.minutos, 0) / conCosto.length
     console.log(`PROMEDIO: ${dolares(usd)} · ${minutos.toFixed(1).replace('.', ',')} min (${conCosto.length} con costo)`)
   }
 }
@@ -316,15 +406,16 @@ function main() {
   const o = opcionesDe(process.argv.slice(2))
   try {
     if (o.modo === 'inicio') inicio()
+    else if (o.modo === 'plan') plan(o)
     else if (o.modo === 'diff') diff(o.base, o.rutas)
     else if (o.modo === 'cierre') cierre(o)
     else if (o.modo === 'ultimos') ultimos(o.ultimos)
     else if (o.modo === 'copia-base') copiaBase(o.base)
     else if (o.modo === 'limpiar') limpiar(o.rutas)
-    else throw new Error('uso: odd.mjs --inicio | --diff <BASE> [-- <rutas>] | --cierre --base <BASE> --resultado … | --ultimos [<n>] | --copia-base <BASE> | --limpiar -- <rutas>')
+    else throw new Error('uso: odd.mjs --inicio | --plan --base <BASE> --tamano … --reglas <n> --riesgo "1:…;…;6:…" [--bordes "…"] | --diff <BASE> [-- <rutas>] | --cierre --base <BASE> --resultado … | --ultimos [<n>] | --copia-base <BASE> | --limpiar -- <rutas>')
   } catch (e) {
     console.log(`ERROR: ${e.message}`)
-    process.exitCode = 1
+    process.exitCode = e.codigo ?? 1
   }
 }
 

@@ -28,6 +28,7 @@ const SERVIDORES = new Set(['vite', 'nodemon', 'live-server', 'http-server', 'se
 const SCRIPTS_SIN_FIN = /^(dev|start|serve|watch|preview)(:|$)/
 const ESCRIBEN = new Set(['cp', 'mv', 'mkdir', 'touch', 'tee', 'rm', 'rmdir', 'ln', 'install', 'copy-item', 'move-item', 'new-item', 'set-content', 'add-content', 'out-file', 'remove-item', 'cpi', 'mi', 'ni', 'sc', 'ac'])
 const BORRAN = new Set(['rm', 'remove-item', 'ri', 'del', 'erase', 'rmdir', 'rd'])
+const LEEN = new Set(['cat', 'head', 'tail', 'less', 'more', 'get-content', 'gc', 'type'])
 const LOCKFILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock', 'cargo.lock', 'go.sum', 'poetry.lock', 'uv.lock', 'composer.lock', 'gemfile.lock'])
 
 /** Raíz del repo git que contiene `dir`, o `dir` si no está en uno. */
@@ -52,7 +53,8 @@ export function rutaNativa(p) {
 }
 
 const normal = (p) => (WIN ? path.resolve(p).toLowerCase() : path.resolve(p))
-const dentro = (hijo, padre) => {
+/** Si `hijo` es `padre` o está dentro de él. */
+export const dentro = (hijo, padre) => {
   const h = normal(hijo)
   const p = normal(padre)
   return h === p || h.startsWith(p.endsWith(path.sep) ? p : p + path.sep)
@@ -220,23 +222,60 @@ function redireccionesDe(tramo) {
   return { destinos, resto }
 }
 
+/**
+ * Las partes de un tramo ya expandido: `destinos` de sus redirecciones, `prog` (en minúsculas, sin ruta ni `.exe`; ''
+ * si el tramo no corre nada), `args` y `libres` (los args que no son opciones).
+ */
+export function partesDe(tramo) {
+  const { destinos, resto } = redireccionesDe(tramo)
+  const palabras = palabrasDe(resto)
+  while (palabras.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(palabras[0])) palabras.shift()
+  while (['sudo', 'env', 'command', 'exec', 'time', 'nohup', '&'].includes(palabras[0])) palabras.shift()
+  const prog = palabras.length ? path.basename(palabras[0].replaceAll('\\', '/')).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '') : ''
+  const args = palabras.slice(1)
+  return { destinos, prog, args, libres: args.filter((a) => !a.startsWith('-')) }
+}
+
+/** Las rutas que escribe un tramo ya expandido: redirecciones, `sed -i`, `git … --output`, `cp`, `mv`, `tee`, `Set-Content`… (no los borrados ni `mkdir`). */
+export function rutasEscritas(tramo) {
+  const { destinos, prog, args, libres } = partesDe(tramo)
+  const rutas = [...destinos]
+  if (prog === 'sed' && args.some((a) => /^-[a-zA-Z]*i/.test(a) || a === '--in-place')) rutas.push(...libres.slice(1))
+  const salida = prog === 'git' ? args.findIndex((a) => a === '--output' || a === '-o') : -1
+  if (salida >= 0 && args[salida + 1]) rutas.push(args[salida + 1])
+  if (ESCRIBEN.has(prog) && !BORRAN.has(prog) && prog !== 'mkdir') {
+    const valores = libres.filter((a) => !/^-(path|destination|literalpath|value|encoding)$/i.test(a))
+    rutas.push(...(['cp', 'mv', 'ln', 'install', 'copy-item', 'move-item', 'cpi', 'mi'].includes(prog) ? valores.slice(-1) : valores))
+  }
+  return rutas
+}
+
+/** Si el tramo lee archivos del repo con `cat`, `head`, `tail`, `sed -n`, `Get-Content` o `type`, en vez de con Read. */
+export function leeDelRepo(tramo, { raiz, cwd = raiz }) {
+  const { prog, args, libres } = partesDe(tramo)
+  const sedN = prog === 'sed' && args.includes('-n')
+  if (!LEEN.has(prog) && !sedN) return false
+  return (sedN ? libres.slice(1) : libres).some((a) => {
+    const abs = path.resolve(cwd, rutaNativa(a))
+    try {
+      return dentro(abs, raiz) && fs.statSync(abs).isFile()
+    } catch {
+      return false
+    }
+  })
+}
+
 /** Por qué se niega un tramo ya expandido; null si pasa. */
 function motivoTramo(tramo, ctx) {
   const { rol, raiz, cwd } = ctx
   const revisor = rol === 'revisor'
   const escritura = (ruta) => (ruta.includes(SUST) || /\$/.test(ruta) ? (revisor ? `no se ve a dónde escribe (${ruta}): usa una ruta escrita a mano` : null) : motivoRuta(ruta, { raiz, cwd, soloTemporal: revisor }))
-  const { destinos, resto } = redireccionesDe(tramo)
+  const { destinos, prog, args, libres } = partesDe(tramo)
   for (const destino of destinos) {
     const m = escritura(destino)
     if (m) return m
   }
-  const palabras = palabrasDe(resto)
-  while (palabras.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(palabras[0])) palabras.shift()
-  while (['sudo', 'env', 'command', 'exec', 'time', 'nohup', '&'].includes(palabras[0])) palabras.shift()
-  if (!palabras.length) return null
-  const prog = path.basename(palabras[0].replaceAll('\\', '/')).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '')
-  const args = palabras.slice(1)
-  const libres = args.filter((a) => !a.startsWith('-'))
+  if (!prog) return null
   if (tramo.match(/(^|[\s"'=/\\])\.env(\.[\w-]+)?(?=$|[\s"'/\\])/m) && !/\.env\.(example|sample|template)\b/.test(tramo)) return 'secretos: .env no se lee ni se escribe'
   if (prog === 'git') {
     let k = 0
@@ -286,16 +325,22 @@ function motivoTramo(tramo, ctx) {
   return null
 }
 
-/** Por qué se niega `cmd` para `rol`; null si pasa. Expande las variables asignadas antes en el mismo comando. */
-export function motivoComando(cmd, { rol, raiz, cwd = raiz }) {
+/** Los tramos de `cmd` con las variables asignadas antes en el mismo comando ya expandidas; sin las asignaciones. */
+export function tramosExpandidos(cmd) {
   const variables = {}
+  const tramos = []
   for (const crudo of tramosDe(cmd)) {
     const tramo = crudo.replace(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g, (todo, n) => variables[n] ?? todo)
     const asignacion = /^([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|\S*)$/.exec(tramo)
-    if (asignacion) {
-      variables[asignacion[1]] = asignacion[2].replace(/^["']|["']$/g, '')
-      continue
-    }
+    if (asignacion) variables[asignacion[1]] = asignacion[2].replace(/^["']|["']$/g, '')
+    else tramos.push(tramo)
+  }
+  return tramos
+}
+
+/** Por qué se niega `cmd` para `rol`; null si pasa. */
+export function motivoComando(cmd, { rol, raiz, cwd = raiz }) {
+  for (const tramo of tramosExpandidos(cmd)) {
     const motivo = motivoTramo(tramo, { rol, raiz, cwd })
     if (motivo) return motivo
   }

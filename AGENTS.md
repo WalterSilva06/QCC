@@ -33,7 +33,7 @@ flujos-odd/
   instalar.mjs                    copia el flujo odd a ~/.claude (o lo trae con --traer)
   skills/qcc-implementador-odd/SKILL.md → ~/.claude/skills/qcc-implementador-odd/SKILL.md (todas sus reglas)
   agents/qcc-odd-*.md             → ~/.claude/agents/ (explorador, ejecutor, revisor)
-  herramientas/                   → ~/.claude/flujos-odd/ (odd, verificar, guardia, costo, odd.test)
+  herramientas/                   → ~/.claude/flujos-odd/ (odd, verificar, guardia, costo, proceso, odd.test)
 qcc-panel/
   .claude-plugin/plugin.json      manifiesto (nombre, versión, types)
   .claude-plugin/marketplace.json marketplace «mods-locales»
