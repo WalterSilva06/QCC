@@ -4,7 +4,8 @@
 //   node ~/.claude/flujos-odd/odd.mjs --inicio
 //   node ~/.claude/flujos-odd/odd.mjs --plan --base <BASE> --tamano chico|grande --reglas <n>
 //        --riesgo "1:sí <motivo>;2:no;…;6:no" [--bordes "<borde> | <borde>"]
-//   node ~/.claude/flujos-odd/odd.mjs --diff <BASE> [-- <rutas>]
+//   node ~/.claude/flujos-odd/odd.mjs --previsto chico|grande
+//   node ~/.claude/flujos-odd/odd.mjs --diff <BASE> [--stat] [-- <rutas>]
 //   node ~/.claude/flujos-odd/odd.mjs --cierre --base <BASE> --resultado COMPLETO|DETENIDO --tamano chico|grande
 //        --riesgo "<ítem N (motivo) | ninguno>" [--revision APROBADO|RECHAZADO|omitida] [--titulo "<t>"]
 //   node ~/.claude/flujos-odd/odd.mjs --ultimos [<n>]
@@ -19,8 +20,12 @@
 // --plan: el cierre de la exploración, visible: tamaño, los 6 ítems de riesgo (cada uno «sí <motivo>» o «no») y los
 // bordes. Un ítem que falta, un «sí» sin motivo o un riesgo sin bordes salen con ERROR y código 2. Anota el tamaño en
 // la marca de corrida: con `grande`, la guardia niega al orquestador editar fuera de `odd/tasks/`.
+// --previsto: anota solo el tamaño (`chico` o `grande`) en la marca de corrida, sin base ni riesgo, para activar la guardia
+// del tamaño antes de `--plan`; imprime `PREVISTO: <tamano>`. Sin marca (sin `--inicio`) no hace nada.
 // --diff: el cambio desde la BASE contra una foto nueva (incluye archivos nuevos), con --stat y recortado a TOPE_DIFF líneas.
+// Con --stat, solo el resumen: es el control tras un despacho, y no cuenta como el --diff del autochequeo.
 // --cierre: anota una fila en `registros/odd.jsonl` con el costo y el control de proceso, e imprime CAMBIOS, COSTO y PROCESO.
+// En una grande con riesgo (`--riesgo` distinto de «ninguno»), PROCESO no exige el `--diff` entero: lo revisa el revisor.
 // --plan, --diff y --cierre imprimen `CONTEXTO: <n>k`, el del último pedido del orquestador, leído del transcript.
 // --ultimos: las últimas corridas anotadas (10 por defecto), con el promedio y el costo real (con el reporte).
 // --copia-base: el árbol de la BASE en un temporal nuevo, para comparar contra él; imprime `ODD_COPIA=<ruta>`.
@@ -124,17 +129,18 @@ export function opcionesDe(args) {
     const v = i >= 0 ? propias[i + 1] : undefined
     return v === undefined || v.startsWith('--') ? undefined : v
   }
-  const modo = ['cierre', 'diff', 'inicio', 'plan', 'ultimos', 'copia-base', 'limpiar'].find((m) => propias.includes(`--${m}`)) ?? null
+  const modo = ['cierre', 'diff', 'inicio', 'plan', 'previsto', 'ultimos', 'copia-base', 'limpiar'].find((m) => propias.includes(`--${m}`)) ?? null
   return {
     modo,
     base: modo === 'diff' || modo === 'copia-base' ? valor(`--${modo}`) : valor('--base'),
     resultado: valor('--resultado'),
-    tamano: valor('--tamano'),
+    tamano: modo === 'previsto' ? valor('--previsto') : valor('--tamano'),
     reglas: valor('--reglas'),
     riesgo: valor('--riesgo'),
     bordes: valor('--bordes'),
     revision: valor('--revision'),
     titulo: valor('--titulo'),
+    stat: propias.includes('--stat'),
     ultimos: Math.max(1, Number(valor('--ultimos') ?? 10) || 10),
     rutas,
   }
@@ -222,9 +228,22 @@ export function riesgoDe(texto) {
   return items
 }
 
+/** El tamaño de `--plan` y `--previsto`: `chico` o `grande`; cualquier otro valor es un error de uso. */
+function exigirTamano(tamano) {
+  if (!['chico', 'grande'].includes(tamano)) throw errorDePlan('--tamano tiene que ser chico o grande')
+}
+
+/** Las líneas de `--previsto`: `PREVISTO: <tamano>` y, con `grande`, lo que limita la guardia. */
+export function lineasDePrevisto({ tamano }) {
+  exigirTamano(tamano)
+  const lineas = [`PREVISTO: ${tamano}`]
+  if (tamano === 'grande') lineas.push(`GRANDE: la guardia limita tu Read (limit ≤ 120 fuera de ${TAREAS}/) y tu Edit/Write (solo ${TAREAS}/)`)
+  return lineas
+}
+
 /** Las líneas de `--plan` (sin CONTEXTO): AVISO si las reglas piden `grande`, TAMAÑO, RIESGO PREVISTO y BORDES. */
 export function lineasDePlan({ tamano, reglas, riesgo, bordes }) {
-  if (!['chico', 'grande'].includes(tamano)) throw errorDePlan('--tamano tiene que ser chico o grande')
+  exigirTamano(tamano)
   if (!/^\d+$/.test(reglas ?? '')) throw errorDePlan('--reglas tiene que ser la cantidad de reglas pedidas')
   const items = riesgoDe(riesgo)
   const si = Object.entries(items).filter(([, motivo]) => motivo !== null)
@@ -331,7 +350,15 @@ function plan(o) {
   console.log(lineaDeContexto(contexto(o.base)))
 }
 
-function diff(base, rutas) {
+/** `--previsto`: anota el tamaño en la marca apenas se sabe, antes de `--plan`, para que la guardia lo aplique ya. */
+function previsto(o) {
+  const lineas = lineasDePrevisto(o)
+  anotarTamano(o.tamano)
+  for (const l of lineas) console.log(l)
+}
+
+/** `soloStat`: solo el `--stat`, para el control tras un despacho, sin cargar el diff entero en el contexto. */
+function diff(base, rutas, soloStat = false) {
   exigirBase(base)
   console.log(lineaDeContexto(contexto(base)))
   const ahora = foto()
@@ -341,8 +368,9 @@ function diff(base, rutas) {
     console.log(`DIFF: sin cambios desde ${corto(base)}${rutas.length ? ` en ${rutas.join(', ')}` : ''}`)
     return
   }
-  const { texto, sobran } = recortar(git(['diff', base, ahora, ...filtro]))
   console.log(stat)
+  if (soloStat) return
+  const { texto, sobran } = recortar(git(['diff', base, ahora, ...filtro]))
   console.log('')
   console.log(texto)
   if (sobran) console.log(`\n… recortado: ${sobran} líneas más. Pide por ruta: --diff ${corto(base)} -- <ruta>`)
@@ -359,7 +387,7 @@ function cierre({ base, resultado, tamano, riesgo, revision, titulo }) {
   try {
     sesion = sesionDe(RAIZ, base)
     costo = sesion && costoDelFlujo(RAIZ, base, { hasta: t, sesion })
-    proceso = sesion && lineaDeProceso(procesoDe(filasDe(sesion.archivo), { raiz: RAIZ, inicio: sesion.inicio, hasta: t, tamano, explorar: explorarDe(configDelProyecto()) }))
+    proceso = sesion && lineaDeProceso(procesoDe(filasDe(sesion.archivo), { raiz: RAIZ, inicio: sesion.inicio, hasta: t, tamano, riesgo, explorar: explorarDe(configDelProyecto()) }))
   } catch {
     // Sin transcripts legibles: la fila va sin costo ni proceso.
   }
@@ -468,12 +496,13 @@ function main() {
   try {
     if (o.modo === 'inicio') inicio()
     else if (o.modo === 'plan') plan(o)
-    else if (o.modo === 'diff') diff(o.base, o.rutas)
+    else if (o.modo === 'previsto') previsto(o)
+    else if (o.modo === 'diff') diff(o.base, o.rutas, o.stat)
     else if (o.modo === 'cierre') cierre(o)
     else if (o.modo === 'ultimos') ultimos(o.ultimos)
     else if (o.modo === 'copia-base') copiaBase(o.base)
     else if (o.modo === 'limpiar') limpiar(o.rutas)
-    else throw new Error('uso: odd.mjs --inicio | --plan --base <BASE> --tamano … --reglas <n> --riesgo "1:…;…;6:…" [--bordes "…"] | --diff <BASE> [-- <rutas>] | --cierre --base <BASE> --resultado … | --ultimos [<n>] | --copia-base <BASE> | --limpiar -- <rutas>')
+    else throw new Error('uso: odd.mjs --inicio | --plan --base <BASE> --tamano … --reglas <n> --riesgo "1:…;…;6:…" [--bordes "…"] | --previsto chico|grande | --diff <BASE> [--stat] [-- <rutas>] | --cierre --base <BASE> --resultado … | --ultimos [<n>] | --copia-base <BASE> | --limpiar -- <rutas>')
   } catch (e) {
     console.log(`ERROR: ${e.message}`)
     process.exitCode = e.codigo ?? 1

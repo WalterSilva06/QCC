@@ -2,7 +2,7 @@
 //
 // Recorre las herramientas que usó el hilo principal en el tramo de la corrida y devuelve los desvíos de las reglas
 // del SKILL.md que se ven ahí: `--plan` antes de la primera edición, ediciones con Edit o Write (no por Bash),
-// `verificar.mjs` y `--diff` después de la última edición, el diferencial repetido si se editó después, un ejecutor
+// `verificar.mjs` y `--diff` después de la última edición (el `--diff` no se exige en una grande con riesgo), el diferencial repetido si se editó después, un ejecutor
 // pasados los 150k de contexto y lecturas con Read (no con `cat`). En una tarea grande, además: explorador, ejecutor,
 // nada de código editado inline y pocos archivos leídos enteros antes de `--plan`. `odd.mjs --cierre` lo imprime
 // como `PROCESO:`.
@@ -57,9 +57,10 @@ export function contextoMaximo(filas, { inicio, hasta }) {
  * Los desvíos de proceso de la corrida: `{ desvios, contextoMax }`, con `desvios` vacío si no hubo. `filas` es el
  * transcript de la sesión; `inicio` y `hasta`, el tramo de la corrida. Con `tamano: 'grande'` exige además el
  * explorador (salvo `explorar: 'nunca'`), el ejecutor, ninguna edición de código inline y pocos archivos leídos
- * enteros antes de `--plan`. Despachar un ejecutor cuenta como edición; escribir en `odd/tasks/`, no.
+ * enteros antes de `--plan`. Despachar un ejecutor cuenta como edición; escribir en `odd/tasks/`, no. Con `tamano:
+ * 'grande'` y un `riesgo` que no sea «ninguno» (ausente o vacío cuenta como sin riesgo), tampoco exige el `--diff` entero.
  */
-export function procesoDe(filas, { raiz, inicio, hasta, tamano = null, explorar = 'auto' }) {
+export function procesoDe(filas, { raiz, inicio, hasta, tamano = null, riesgo = null, explorar = 'auto' }) {
   const usos = usosDe(filas, { inicio, hasta })
   const contextoMax = contextoMaximo(filas, { inicio, hasta })
   const scripts = new Set()
@@ -108,7 +109,8 @@ export function procesoDe(filas, { raiz, inicio, hasta, tamano = null, explorar 
       if (tramos.some((t) => leeDelRepo(t, { raiz, cwd }))) conCat++
       if (/odd\.mjs\b.*--plan\b/.test(cmd)) marcas.plan = k
       if (/verificar\.mjs\b/.test(cmd)) marcas.verificar = k
-      if (/odd\.mjs\b.*--diff\b/.test(cmd)) marcas.diff = k
+      // El --stat es el control tras un despacho: no reemplaza al diff entero del autochequeo.
+      if (tramos.some((t) => /odd\.mjs\b.*--diff\b/.test(t) && !/--stat\b/.test(t))) marcas.diff = k
       if (/odd\.mjs\b.*--copia-base\b/.test(cmd)) {
         copia = /ODD_COPIA=(\S+)/.exec(u.resultado)?.[1]?.split(/[\\/]/).pop() ?? copia
         marcas.diferencial = k
@@ -120,6 +122,7 @@ export function procesoDe(filas, { raiz, inicio, hasta, tamano = null, explorar 
     }
   })
   const desvios = []
+  const conRiesgo = Boolean(riesgo) && !/^ninguno\b/i.test(riesgo)
   const { plan, verificar, diff, diferencial, primeraEdicion, ultimaEdicion } = marcas
   if (plan < 0) desvios.push('sin --plan')
   else if (primeraEdicion >= 0 && plan > primeraEdicion) desvios.push('--plan después de editar')
@@ -128,8 +131,11 @@ export function procesoDe(filas, { raiz, inicio, hasta, tamano = null, explorar 
     // Una edición en el mismo comando que verifica, antes que él, no cuenta como posterior.
     if (verificar < 0) desvios.push('sin verificar.mjs')
     else if (ultimaEdicion > verificar) desvios.push('editó después del último verificar.mjs')
-    if (diff < 0) desvios.push('sin --diff')
-    else if (ultimaEdicion > diff) desvios.push('editó después del último --diff')
+    // Una grande con riesgo la revisa el revisor: el diff entero en el contexto del orquestador no se exige.
+    if (!(tamano === 'grande' && conRiesgo)) {
+      if (diff < 0) desvios.push('sin --diff')
+      else if (ultimaEdicion > diff) desvios.push('editó después del último --diff')
+    }
     if (diferencial >= 0 && ultimaEdicion > diferencial) desvios.push('editó después del diferencial')
   }
   if (contextoMax > TOPE_CONTEXTO && !ejecutor) desvios.push(`contexto máx. ${miles(contextoMax)} sin ejecutor`)

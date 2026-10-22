@@ -11,7 +11,8 @@
 // `--cierre`, que vence a las 12 h) y nunca dentro de un subagente. Niega escribir en el repo por Bash o PowerShell
 // (que edite con Edit o Write) y leer archivos del repo con `cat`, `head`, `sed -n`… (que lea con Read o Grep), más
 // lo del ejecutor salvo las dependencias, que las instala el orquestador. Si `--plan` anotó `grande` en la marca,
-// además niega Edit y Write en el repo fuera de `odd/tasks/`: el código lo editan los ejecutores.
+// además niega Edit y Write en el repo fuera de `odd/tasks/` (el código lo editan los ejecutores) y Read sobre archivos
+// del repo, también fuera de `odd/tasks/`, sin `limit` o con `limit` mayor que 120 (que use los tramos del explorador).
 //
 // Las reglas del proyecto (`guardia.protegidos`, `guardia.inmutables` y `guardia.scriptsNegados` de la config) valen
 // para los tres roles.
@@ -35,6 +36,8 @@ const CONFIG_ODD = '.claude/qcc-implementador-odd.json'
 const CONFIGS_NORMALES = ['.claude/qcc-implementador.json', '.claude/implementador.json']
 const VIDA_MARCA = 12 * 3600_000
 const TAREAS = 'odd/tasks'
+// En una tarea grande, el mayor `limit` que el orquestador puede pedir con Read sobre el código del repo.
+const LIMITE_LECTURA = 120
 
 const GIT_LECTURA = new Set(['status', 'diff', 'log', 'show', 'blame', 'grep', 'ls-files', 'ls-tree', 'rev-parse', 'rev-list', 'cat-file', 'archive', 'describe', 'shortlog', 'merge-base', 'name-rev', 'version', 'help'])
 const GESTORES = new Set(['npm', 'pnpm', 'yarn', 'bun'])
@@ -505,6 +508,17 @@ function edicionEnGrande(ruta, { raiz, cwd }) {
   return `tarea grande: el código lo edita qcc-odd-ejecutor, tú solo ${TAREAS}/ (${path.relative(raiz, abs).split(path.sep).join('/')})`
 }
 
+/** En una tarea grande el orquestador no lee código del repo entero: usa los tramos del explorador o un Read acotado. */
+function lecturaEnGrande(ruta, limite, { raiz, cwd }) {
+  if (!ruta) return null
+  const abs = path.resolve(cwd, rutaNativa(ruta))
+  if (!dentro(abs, raiz) || dentro(abs, path.join(raiz, TAREAS))) return null
+  const numero = Number(limite)
+  if (limite != null && (limite === '' || Number.isNaN(numero))) return null
+  if (limite != null && numero <= LIMITE_LECTURA) return null
+  return `tarea grande: no leas código aquí, usa los tramos del explorador (o Read con limit <= ${LIMITE_LECTURA}) (${path.relative(raiz, abs).split(path.sep).join('/')})`
+}
+
 /** Por qué se niega un tramo ya expandido; null si pasa. `cmd`: el comando entero, con los cuerpos de los heredocs. */
 function motivoTramo(tramo, ctx) {
   const { rol, raiz, cwd, profundidad = 0 } = ctx
@@ -609,6 +623,9 @@ export function evaluar(evento, rol, raiz = raizDe(process.env.CLAUDE_PROJECT_DI
       const motivo = motivoRuta(ruta, { raiz, cwd, orquestador: rol === 'orquestador' })
       if (motivo || rol !== 'orquestador') return motivo
       return tamanoDeCorrida(raiz) === 'grande' ? edicionEnGrande(ruta, { raiz, cwd }) : null
+    }
+    if (herramienta === 'Read' && rol === 'orquestador' && entrada.pages == null && tamanoDeCorrida(raiz) === 'grande') {
+      return lecturaEnGrande(String(entrada.file_path ?? ''), entrada.limit, { raiz, cwd })
     }
     return null
   } catch {

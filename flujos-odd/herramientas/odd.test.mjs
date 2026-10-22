@@ -387,6 +387,50 @@ test('guardia: en una tarea grande el orquestador solo edita odd/tasks/', () => 
   }
 })
 
+test('guardia: en una tarea grande el orquestador lee el código del repo solo con limit <= 120', () => {
+  const raiz = repo('lectura-grande', { 'src/a.js': 'x\n', 'odd/tasks/f.md': 'x\n' })
+  const afuera = path.join(PRUEBAS, 'afuera.txt')
+  const leer = (ruta, entrada = {}, { rol = 'orquestador', ...extra } = {}) =>
+    evaluar({ tool_name: 'Read', tool_input: { file_path: ruta, ...entrada }, ...extra }, rol, raiz)
+  const src = path.join(raiz, 'src', 'a.js')
+  const marcar = (contenido) => {
+    fs.mkdirSync(path.dirname(marcaDe(raiz)), { recursive: true })
+    fs.writeFileSync(marcaDe(raiz), contenido)
+  }
+  try {
+    marcar(JSON.stringify({ tamano: 'grande' }))
+    // Niegan: sin limit, con offset y sin limit, o con limit mayor que 120. El motivo manda a los tramos del explorador.
+    for (const entrada of [{}, { offset: 50 }, { limit: 200 }, { limit: 121 }, { limit: '500' }]) {
+      assert.match(leer(src, entrada) ?? 'pasó', /tarea grande: no leas código.*tramos del explorador.*limit/s, JSON.stringify(entrada))
+    }
+    // Pasan: limit acotado, el documento de la feature, fuera del repo y los demás roles.
+    for (const limit of [120, 40, '60']) assert.equal(leer(src, { limit }), null, `limit ${limit}`)
+    assert.equal(leer(path.join(raiz, 'odd', 'tasks', 'f.md')), null)
+    assert.equal(leer(afuera), null)
+    assert.equal(leer(src, {}, { rol: 'ejecutor' }), null)
+    assert.equal(leer(src, {}, { rol: 'revisor' }), null)
+    assert.equal(leer(src, {}, { agent_type: 'qcc-odd-explorador' }), null)
+    assert.equal(leer(src, {}, { agent_id: 'a1' }), null)
+    // Ante la duda pasa: un Read de PDF con pages, sin tool_input o con limit que no es un número.
+    assert.equal(leer(src, { pages: '1-3' }), null)
+    assert.equal(evaluar({ tool_name: 'Read' }, 'orquestador', raiz), null)
+    assert.equal(leer(src, { limit: 'mucho' }), null)
+    assert.match(leer(src, { limit: null }) ?? 'pasó', /tarea grande/)
+    // Una ruta relativa se resuelve contra el cwd del evento.
+    assert.match(leer('src/a.js', {}, { cwd: raiz }) ?? 'pasó', /tarea grande/)
+    // Con marca chico, sin tamaño, ilegible o sin corrida abierta no niega.
+    for (const contenido of [JSON.stringify({ tamano: 'chico' }), '{}', 'no es json']) {
+      marcar(contenido)
+      assert.equal(leer(src), null, contenido)
+    }
+    marcar(JSON.stringify({ tamano: 'grande' }))
+    fs.rmSync(marcaDe(raiz), { force: true })
+    assert.equal(leer(src), null)
+  } finally {
+    fs.rmSync(marcaDe(raiz), { force: true })
+  }
+})
+
 test('guardia: reglas del proyecto para los tres roles, con respaldo en la config de /qcc-implementador', () => {
   const raiz = repo('reglas', {
     '.claude/qcc-implementador-odd.json': JSON.stringify({ guardia: { protegidos: { 'src/gen.ts': 'lo genera el build' }, scriptsNegados: ['db:*'] } }),
@@ -526,6 +570,8 @@ test('verificar: corta un paso que pasa su tope', () => {
 test('odd: opcionesDe', () => {
   assert.deepEqual(opcionesDe(['--diff', 'abc', '--', 'a.js', 'b.js']).rutas, ['a.js', 'b.js'])
   assert.equal(opcionesDe(['--diff', 'abc']).base, 'abc')
+  assert.equal(opcionesDe(['--diff', 'abc']).stat, false)
+  assert.deepEqual([opcionesDe(['--diff', 'abc', '--stat', '--', 'a.js']).stat, opcionesDe(['--diff', 'abc', '--stat']).base], [true, 'abc'])
   const o = opcionesDe(['--cierre', '--base', 'abc', '--resultado', 'COMPLETO', '--riesgo', 'ítem 3 (parser compartido)'])
   assert.equal(o.modo, 'cierre')
   assert.equal(o.riesgo, 'ítem 3 (parser compartido)')
@@ -536,6 +582,11 @@ test('odd: opcionesDe', () => {
   assert.deepEqual(opcionesDe(['--limpiar', '--', '/tmp/x']), { ...opcionesDe(['--limpiar']), rutas: ['/tmp/x'] })
   assert.equal(opcionesDe(['--limpiar']).modo, 'limpiar')
   assert.equal(opcionesDe([]).modo, null)
+  // --previsto lleva su valor propio, como --diff <BASE>; sin valor queda undefined.
+  assert.deepEqual([opcionesDe(['--previsto', 'grande']).modo, opcionesDe(['--previsto', 'grande']).tamano], ['previsto', 'grande'])
+  assert.equal(opcionesDe(['--previsto', '--base', 'abc']).tamano, undefined)
+  assert.equal(opcionesDe(['--previsto']).tamano, undefined)
+  assert.equal(opcionesDe(['--plan', '--tamano', 'chico']).tamano, 'chico')
 })
 
 test('odd: criticosLegibles, tareasDe, sumaNumstat y recortar', () => {
@@ -601,6 +652,10 @@ test('odd: --inicio, --diff, --cierre y --ultimos sobre un repo real', () => {
   assert.match(d.salida, /nuevo\.txt/)
   assert.doesNotMatch(d.salida, /sucio\.txt/)
   assert.doesNotMatch(correr(ODD, raiz, '--diff', base, '--', 'a.txt').salida, /nuevo\.txt/)
+  // Con --stat, solo el resumen: ni el diff entero ni el contenido.
+  const s = correr(ODD, raiz, '--diff', base, '--stat', '--', 'a.txt')
+  assert.match(s.salida, /^CONTEXTO: sin datos\na\.txt \| 1 \+\n 1 file changed, 1 insertion\(\+\)\n$/)
+  assert.match(d.salida, /\+dos/)
 
   const c = correr(ODD, raiz, '--cierre', '--base', base, '--resultado', 'COMPLETO', '--tamano', 'chico', '--riesgo', 'ninguno', '--revision', 'omitida', '--titulo', 'Prueba')
   assert.equal(c.codigo, 0, c.salida)
@@ -701,6 +756,46 @@ test('odd: --plan exige los 6 ítems de riesgo, un motivo por cada sí y bordes 
   assert.match(correr(ODD, raiz, '--plan', '--base', 'basura', '--tamano', 'chico', '--reglas', '2', '--riesgo', riesgo, '--bordes', 'x').salida, /ERROR: BASE desconocida/)
 })
 
+test('odd: --previsto anota el tamaño en la marca como --plan, sin exigir base', () => {
+  const raiz = repo('previsto', { 'a.txt': 'x\n' })
+  const marca = () => JSON.parse(fs.readFileSync(marcaDe(raiz), 'utf8'))
+  try {
+    // Sin marca (sin --inicio) no hace nada y no falla.
+    const sin = correr(ODD, raiz, '--previsto', 'grande')
+    assert.equal(sin.codigo, 0, sin.salida)
+    assert.equal(fs.existsSync(marcaDe(raiz)), false)
+
+    const base = linea(correr(ODD, raiz, '--inicio').salida, 'ODD_BASE=')
+    const grande = correr(ODD, raiz, '--previsto', 'grande')
+    assert.equal(grande.codigo, 0, grande.salida)
+    assert.match(grande.salida, /^PREVISTO: grande\n.*Read.*Edit/)
+    assert.equal(marca().tamano, 'grande')
+    assert.equal(marca().base, base)
+    // Igual que --plan --tamano grande.
+    const previsto = marca()
+    correr(ODD, raiz, '--plan', '--base', base, '--tamano', 'chico', '--reglas', '2', '--riesgo', '1:no;2:no;3:no;4:no;5:no;6:no')
+    assert.equal(marca().tamano, 'chico')
+    correr(ODD, raiz, '--plan', '--base', base, '--tamano', 'grande', '--reglas', '2', '--riesgo', '1:no;2:no;3:no;4:no;5:no;6:no')
+    assert.equal(marca().tamano, previsto.tamano)
+
+    const chico = correr(ODD, raiz, '--previsto', 'chico')
+    assert.equal(chico.codigo, 0, chico.salida)
+    assert.equal(chico.salida, 'PREVISTO: chico\n')
+    assert.equal(marca().tamano, 'chico')
+
+    // Un valor que no es chico|grande da el mismo ERROR que --plan y no toca la marca.
+    const antes = fs.readFileSync(marcaDe(raiz), 'utf8')
+    for (const args of [['--previsto'], ['--previsto', ''], ['--previsto', 'mediano'], ['--previsto', '--base', base]]) {
+      const r = correr(ODD, raiz, ...args)
+      assert.equal(r.codigo, 2, args.join(' '))
+      assert.equal(r.salida, 'ERROR: --tamano tiene que ser chico o grande\n', args.join(' '))
+      assert.equal(fs.readFileSync(marcaDe(raiz), 'utf8'), antes, args.join(' '))
+    }
+  } finally {
+    fs.rmSync(marcaDe(raiz), { force: true })
+  }
+})
+
 test('odd: CONTEXTO, PROCESO y costo real con un transcript de juguete', () => {
   const raiz = repo('contexto', { 'src/a.js': 'uno\n' })
   const base = linea(correr(ODD, raiz, '--inicio').salida, 'ODD_BASE=')
@@ -735,6 +830,12 @@ test('odd: CONTEXTO, PROCESO y costo real con un transcript de juguete', () => {
   const real = alCierre + costoDePedido(usoCon(100_000), 'claude-sonnet-5-5')
   assert.match(u, new RegExp(`\\$${real.toFixed(2).replace('.', ',')} real · \\$${alCierre.toFixed(2).replace('.', ',')} al cierre · `))
   assert.match(u, /PROCESO: sin verificar\.mjs/)
+
+  // --cierre le pasa el riesgo a proceso.mjs: una grande con riesgo no exige el --diff entero.
+  const conRiesgo = correr(ODD, raiz, '--cierre', '--base', base, '--resultado', 'COMPLETO', '--tamano', 'grande', '--riesgo', 'ítem 2 (x)', '--revision', 'omitida')
+  assert.equal(conRiesgo.codigo, 0, conRiesgo.salida)
+  assert.match(conRiesgo.salida, /PROCESO: sin verificar\.mjs · contexto máx\./)
+  assert.doesNotMatch(conRiesgo.salida, /sin --diff/)
 })
 
 // ── costo ───────────────────────────────────────────────────────────────────
@@ -963,6 +1064,46 @@ test('proceso: una tarea grande pide explorador y ejecutor, y nada de código in
   // Un ejecutor despachado después del último verificar.mjs y --diff deja su cambio sin verificar.
   const tarde = transcript([PLAN, VERIFICAR_ODD, DIFF, ejecutor])
   assert.deepEqual(procesoDe(tarde.filas, { raiz, inicio: tarde.inicio, hasta: tarde.hasta }).desvios, ['editó después del último verificar.mjs', 'editó después del último --diff'])
+
+  // El --stat tras un despacho no cuenta como el --diff del autochequeo; uno entero en otro tramo del comando, sí.
+  const stat = ['Bash', { command: 'git status --short && node ~/.claude/flujos-odd/odd.mjs --diff b0de --stat -- src/a.js' }]
+  const soloStat = transcript([PLAN, ejecutor, VERIFICAR_ODD, stat])
+  assert.deepEqual(procesoDe(soloStat.filas, { raiz, inicio: soloStat.inicio, hasta: soloStat.hasta }).desvios, ['sin --diff'])
+  const conEntero = transcript([PLAN, ejecutor, VERIFICAR_ODD, ['Bash', { command: 'node ~/.claude/flujos-odd/odd.mjs --diff b0de --stat && node ~/.claude/flujos-odd/odd.mjs --diff b0de' }]])
+  assert.deepEqual(procesoDe(conEntero.filas, { raiz, inicio: conEntero.inicio, hasta: conEntero.hasta }).desvios, [])
+})
+
+test('proceso: una grande con riesgo no exige el --diff entero', () => {
+  const raiz = repo('proceso-previsto', { 'src/a.js': 'x\n' })
+  const ejecutor = ['Agent', { subagent_type: 'qcc-odd-ejecutor', prompt: 'DOC: odd/tasks/sena.md · T1' }]
+  const explorador = ['Agent', { subagent_type: 'qcc-odd-explorador', prompt: 'PEDIDO: x' }]
+  const base = { raiz, tamano: 'grande' }
+  const sinDiff = transcript([explorador, PLAN, ejecutor, VERIFICAR_ODD])
+  const con = (t, extra) => procesoDe(t.filas, { ...base, inicio: t.inicio, hasta: t.hasta, ...extra }).desvios
+  // Con riesgo: ni «sin --diff» ni «editó después del último --diff».
+  assert.deepEqual(con(sinDiff, { riesgo: 'ítem 2 (x)' }), [])
+  const diffViejo = transcript([explorador, PLAN, VERIFICAR_ODD, DIFF, ejecutor, VERIFICAR_ODD])
+  assert.deepEqual(con(diffViejo, { riesgo: 'ítem 2 (x)' }), [])
+  // Sin riesgo real, o chica: se sigue exigiendo.
+  for (const riesgo of ['ninguno', 'Ninguno', undefined, '']) assert.deepEqual(con(sinDiff, { riesgo }), ['sin --diff'], String(riesgo))
+  assert.deepEqual(con(sinDiff, { riesgo: 'ítem 2 (x)', tamano: 'chico' }), ['sin --diff'])
+  assert.deepEqual(con(diffViejo, { riesgo: 'ninguno' }), ['editó después del último --diff'])
+  // Lo demás sigue igual con riesgo: sin verificar.mjs, verificar viejo y el diferencial.
+  const sinVerificar = transcript([explorador, PLAN, ejecutor])
+  assert.deepEqual(con(sinVerificar, { riesgo: 'ítem 2 (x)' }), ['sin verificar.mjs'])
+  assert.deepEqual(con(sinVerificar, { riesgo: 'ninguno' }), ['sin verificar.mjs', 'sin --diff'])
+  const verificarViejo = transcript([explorador, PLAN, VERIFICAR_ODD, ejecutor])
+  assert.deepEqual(con(verificarViejo, { riesgo: 'ítem 2 (x)' }), ['editó después del último verificar.mjs'])
+  const copia = 'C:/Users/x/AppData/Local/Temp/qcc-odd-base-AbC123'
+  const diferencial = transcript([
+    explorador,
+    PLAN,
+    ejecutor,
+    ['Bash', { command: 'node ~/.claude/flujos-odd/odd.mjs --copia-base b0de' }, 50_000, `ODD_COPIA=${copia}`],
+    VERIFICAR_ODD,
+    ejecutor,
+  ])
+  assert.deepEqual(con(diferencial, { riesgo: 'ítem 2 (x)' }), ['editó después del último verificar.mjs', 'editó después del diferencial'])
 })
 
 // ── instalar ────────────────────────────────────────────────────────────────
