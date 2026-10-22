@@ -811,7 +811,6 @@ test('estado: la autoprueba falla si el proyecto redefine ejecutor o revisor sin
 
   assert.match(guardia({ '.claude/agents/qcc-ejecutor.md': '---\nname: qcc-ejecutor\n---\nsin hook\n' }), /^FALLA \(el proyecto redefine qcc-ejecutor en \.claude\/agents\/qcc-ejecutor\.md sin la guardia\)$/)
   assert.match(guardia({ '.claude/agents/qcc-revisor.md': 'command: node "$HOME/.claude/flujos/guardia.mjs" revisor\n' }), /^OK con avisos: el proyecto redefine qcc-revisor /)
-  assert.match(guardia({ '.claude/agents/qcc-revisor-plan.md': 'x\n' }), /^OK con avisos: el proyecto redefine qcc-revisor-plan /)
 })
 
 test('preflight: la autoprueba lee qcc-ejecutor.md y qcc-revisor.md', () => {
@@ -892,23 +891,19 @@ test('estado: decisionesDelPlan replica pasos.md y comun.md', () => {
   const sub = (n, permitidos, critica = 'no', fijos = []) => ({ n, critica, permitidos, fijos })
   const SIN = 'sin criterios — solo texto'
 
-  // Sin criterios, 2 subtareas `no` y solo .md: se omite, un ciclo, nada crítico.
+  // Sin criterios, 2 subtareas `no` y solo .md: un ciclo, nada crítico.
   const a = decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['README.md']), sub(2, ['docs/x.MD'])], pedidos: [] })
-  assert.equal(a.revisorPlan, 'REVISOR DEL PLAN: se omite (sin criterios, 2 subtarea(s))')
   assert.equal(a.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 1')
   assert.equal(a.critico, 'CRÍTICO: ninguno')
   assert.equal(a.aspectos, 'ASPECTOS: contratos, tipos y documentación')
 
-  // Una sola subtarea también se omite; con tres o ninguna, corre.
-  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.mjs'])] }).revisorPlan, /^REVISOR DEL PLAN: se omite \(sin criterios, 1 subtarea\(s\)\)$/)
+  // El número de subtareas no cambia las decisiones: tres o ninguna siguen sin criterios.
   const tres = decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md']), sub(2, ['b.md']), sub(3, ['c.md'])] })
-  assert.equal(tres.revisorPlan, 'REVISOR DEL PLAN: corre (3 subtareas)')
   assert.equal(tres.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 1')
-  assert.equal(decisionesDelPlan({ clasificacion: SIN, subtareas: [] }).revisorPlan, 'REVISOR DEL PLAN: corre (sin subtareas)')
+  assert.equal(decisionesDelPlan({ clasificacion: SIN, subtareas: [] }).ciclos, 'CICLOS DE LA REVISIÓN FINAL: 1')
 
   // Sin Clasificación cuenta como CRÍTICO y mira los casos borde si no es solo texto.
   const sinClas = decisionesDelPlan({ clasificacion: null, subtareas: [sub(1, ['flujos/herramientas/estado.mjs'])] })
-  assert.equal(sinClas.revisorPlan, 'REVISOR DEL PLAN: corre (CRÍTICO)')
   assert.equal(sinClas.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 2')
   assert.equal(sinClas.critico, 'CRÍTICO: sin Clasificación en el plan (cuenta como CRÍTICO)')
   assert.match(sinClas.aspectos, /casos borde y seguridad/)
@@ -919,7 +914,6 @@ test('estado: decisionesDelPlan replica pasos.md y comun.md', () => {
   assert.equal(solo.critico, 'CRÍTICO: #1, #5 — x · primero S1')
   assert.doesNotMatch(solo.aspectos, /casos borde/)
   assert.equal(solo.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 2')
-  assert.equal(solo.revisorPlan, 'REVISOR DEL PLAN: corre (CRÍTICO · S1 Crítica: sí)')
   assert.match(decisionesDelPlan({ clasificacion: 'CRÍTICO (#1, #5) — x', subtareas: [sub(1, ['a.mjs'], 'sí')] }).aspectos, /^ASPECTOS: contratos, tipos y documentación, casos borde y seguridad$/)
 
   // CRÍTICO (#5) no cita ninguno de #1, #2, #3, #6, #9: sin casos borde.
@@ -927,9 +921,9 @@ test('estado: decisionesDelPlan replica pasos.md y comun.md', () => {
   for (const n of [2, 3, 6, 9]) assert.match(decisionesDelPlan({ clasificacion: `CRÍTICO (#${n})`, subtareas: [sub(1, ['a.mjs'], 'sí')] }).aspectos, /casos borde/, `#${n}`)
 
   // `critica` ausente o que no empieza con «no» cuenta como sí; «nota» no es «no».
-  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'], null)] }).revisorPlan, /^REVISOR DEL PLAN: corre \(CRÍTICO · S1 Crítica: sí\)$/)
-  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'], 'nota')] }).revisorPlan, /^REVISOR DEL PLAN: corre /)
-  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'], 'No — texto')] }).revisorPlan, /^REVISOR DEL PLAN: se omite /)
+  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'], null)] }).critico, /· primero S1$/)
+  assert.match(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'], 'nota')] }).critico, /· primero S1$/)
+  assert.equal(decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'], 'No — texto')] }).critico, 'CRÍTICO: ninguno')
   // Una subtarea `no` con rutas críticas fijas pasa a sí.
   const fijas = decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['flujos/x.mjs'], 'no', [1])] })
   assert.equal(fijas.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 2')
@@ -939,7 +933,6 @@ test('estado: decisionesDelPlan replica pasos.md y comun.md', () => {
   const pedidos = decisionesDelPlan({ clasificacion: SIN, subtareas: [sub(1, ['a.md'])], pedidos: [{ n: 1, ruta: 'flujos/a.mjs' }, 5] })
   assert.equal(pedidos.ciclos, 'CICLOS DE LA REVISIÓN FINAL: 2')
   assert.equal(pedidos.critico, 'CRÍTICO: #1, #5 — solo texto · rutas críticas: #1 (flujos/a.mjs), #5')
-  assert.match(pedidos.revisorPlan, /^REVISOR DEL PLAN: corre \(CRÍTICO\)$/)
   // Si la Clasificación ya cita el criterio, no se repite como ruta crítica.
   assert.doesNotMatch(decisionesDelPlan({ clasificacion: 'CRÍTICO (#1) — y', subtareas: [sub(1, ['a.mjs'])], pedidos: [1] }).critico, /rutas críticas/)
   // Una Clasificación con texto extra no es «sin criterios»; un guion largo en la razón se conserva.
@@ -973,12 +966,11 @@ test('estado: --guardar arma el plan, un S<n>.md por subtarea y avisa las rutas 
   assert.doesNotMatch(s1, /Documentar|PREGUNTAS/)
   assert.equal(JSON.parse(fs.readFileSync(path.join(carpeta, 'estado.json'), 'utf8')).subtareas.length, 2)
   assert.match(salida, /^DECISIONES \(con los AVISOS resueltos a lo más estricto\):$/m)
-  assert.match(salida, /^REVISOR DEL PLAN: corre /m)
   assert.match(salida, /^CICLOS DE LA REVISIÓN FINAL: 2$/m)
   assert.match(salida, /^CRÍTICO: #1, #5 /m)
   assert.match(salida, /^ASPECTOS: .*casos borde y seguridad/m)
   const decisiones = JSON.parse(fs.readFileSync(path.join(carpeta, 'estado.json'), 'utf8')).decisiones
-  assert.deepEqual(Object.keys(decisiones).sort(), ['aspectos', 'ciclos', 'critico', 'revisorPlan'])
+  assert.deepEqual(Object.keys(decisiones).sort(), ['aspectos', 'ciclos', 'critico'])
   assert.match(decisiones.critico, /^CRÍTICO: #1, #5 — solo un ajuste · rutas críticas: #1 \(flujos\/herramientas\/guardia\.mjs\), #5 \(flujos\/herramientas\/guardia\.mjs\) · primero S1$/)
 
   // Un re-plan con --ajuste reemplaza solo S1; la Clasificación sigue siendo la del plan.
@@ -1050,9 +1042,8 @@ test('estado: --base --sub y --cambios --sub/--global toman la foto y los permit
 
   // --estado reimprime las DECISIONES guardadas después de PLAN:
   const decisiones = estadoJson().decisiones
-  assert.match(decisiones.revisorPlan, /^REVISOR DEL PLAN: se omite \(sin criterios, 2 subtarea\(s\)\)$/)
   assert.ok(resumen.indexOf('PLAN:') < resumen.indexOf('DECISIONES (con los AVISOS resueltos a lo más estricto):'))
-  for (const l of [decisiones.revisorPlan, decisiones.ciclos, decisiones.critico, decisiones.aspectos]) assert.ok(resumen.includes(`\n${l}\n`), l)
+  for (const l of [decisiones.ciclos, decisiones.critico, decisiones.aspectos]) assert.ok(resumen.includes(`\n${l}\n`), l)
 
   // Errores: sin foto, argumentos incompatibles y --sub sin número.
   for (const args of [['--sub', '3'], ['--sub', '1', '--global'], ['--sub', 'x'], ['--sub']]) {
@@ -1326,7 +1317,7 @@ test('estado: filaDelFlujo omite lo que falta y arma subtareas, calidad y uso', 
       costo: { inicio: 'I', minutos: 1, usd: 2, roles, veredictos: {} },
       sesion: 'S.jsonl', pedido: 'p', contexto: { primero: 10, ultimo: 99 }, tiempos: { fases: {}, activo: 1, espera: 0 },
       ejecutores: { 1: { usd: 0.123456, segundos: 7, correcciones: 1, estado: 'HECHO', esfuerzo: 'medium' } },
-      problemas: { revisorPlan: ['a'], final: [{ veredicto: 'APROBADO', items: [] }] }, alcanceFuera: [], explorador: { pedidos: 1, glob: 0, read: 0, mapa: false },
+      problemas: { final: [{ veredicto: 'APROBADO', items: [] }] }, alcanceFuera: [], explorador: { pedidos: 1, glob: 0, read: 0, mapa: false },
     },
     cambios: { 1: { archivos: 2, mas: 5, menos: 1 } },
   })
@@ -1338,7 +1329,7 @@ test('estado: filaDelFlujo omite lo que falta y arma subtareas, calidad y uso', 
     { n: 2, critica: false },
     { n: 3, critica: true },
   ])
-  assert.deepEqual(fila.calidad, { revisorPlan: ['a'], final: [{ veredicto: 'APROBADO', items: [] }], negados: 2, alcanceFuera: [], inicial: 'RESULTADO: VERDE' })
+  assert.deepEqual(fila.calidad, { final: [{ veredicto: 'APROBADO', items: [] }], negados: 2, alcanceFuera: [], inicial: 'RESULTADO: VERDE' })
 })
 
 test('cierre: anota la fila v2, imprime CONTEXTO y archiva en historial', () => {
@@ -1444,8 +1435,6 @@ test('costos: métricas del flujo desde transcripts armados', () => {
     turno('o2', 60, [agenteDe('a1', 'explorador', 'PEDIDO: x\nMAPA: mapa.md')], uso(1)),
     resultado(120, 'a1', 'ARCHIVOS'),
     turno('o3', 130, [bash('b2', `${ESTADO} --guardar x exploracion --paso 2`)], uso(1)),
-    turno('o4', 200, [agenteDe('a3', 'revisor-plan', 'PLAN: x')], uso(1)),
-    resultado(260, 'a3', 'VEREDICTO: AJUSTAR'),
     turno('o5', 270, [{ type: 'tool_use', id: 'q1', name: 'AskUserQuestion', input: { questions: [{ header: 'Plan', question: '¿Apruebas?' }] } }], uso(1)),
     resultado(570, 'q1', 'Aprobado'),
     turno('o6', 580, [bash('b5', `${ESTADO} --paso 5`)], uso(1)),
@@ -1465,8 +1454,6 @@ test('costos: métricas del flujo desde transcripts armados', () => {
     turno('e1', 70, [{ type: 'tool_use', id: 'g', name: 'Glob', input: {} }, { type: 'tool_use', id: 'r1', name: 'Read', input: {} }, { type: 'tool_use', id: 'r2', name: 'Read', input: {} }], { input_tokens: 100, output_tokens: 50 }, haiku),
     turno('e2', 110, [texto('ARCHIVOS')], { input_tokens: 200, output_tokens: 70 }, haiku),
   ])
-  agente('agent-p1', 'revisor-plan', 'PLAN: x', 140, [turno('p1', 150, [texto('VEREDICTO: AJUSTAR\nPROBLEMAS:\n1. a\n2. b\n3. c\nOBSERVACIONES: ninguna')], uso(1), 'claude-opus-5-5')])
-  agente('agent-p2', 'revisor-plan', 'PLAN: x (ajustado)', 205, [turno('p2', 255, [texto('VEREDICTO: AJUSTAR\nPROBLEMAS: (solo si AJUSTAR)\n1. Falta el test\n2) Ruta equivocada\nOBSERVACIONES: ninguna')], uso(1), 'claude-opus-5-5')])
   agente('agent-x1', 'ejecutor', E1, 590, [turno('m1', 690, [texto('ESTADO: FALLA')], uso(1))])
   agente('agent-x2', 'ejecutor', E2, 592, [turno('m2', 640, [texto('ESTADO: HECHO')], uso(1))])
   agente('agent-x3', 'ejecutor', E1_CORRECCION, 710, [turno('m3', 790, [texto('ESTADO: HECHO')], uso(1))])
@@ -1476,23 +1463,22 @@ test('costos: métricas del flujo desde transcripts armados', () => {
   const m = metricasDelFlujo(raiz, en(0), opciones)
   assert.equal(m.sesion, path.join(sesion, 's1.jsonl'))
   assert.equal(m.pedido, 'Mejorar el flujo con métricas')
-  // Tokens: 9 pedidos con uso(1) y uno con uso(2) en el hilo principal; la forma vieja del costo sigue.
-  assert.deepEqual(m.costo.roles.orquestador.tokens, { entrada: 110, leidos: 11_000, escritos: 5500, salida: 1000, thinking: 400 })
+  // Tokens: 8 pedidos con uso(1) y uno con uso(2) en el hilo principal; la forma vieja del costo sigue.
+  assert.deepEqual(m.costo.roles.orquestador.tokens, { entrada: 100, leidos: 10_000, escritos: 5000, salida: 900, thinking: 360 })
   assert.deepEqual(m.costo.roles.explorador.tokens, { entrada: 300, leidos: 0, escritos: 0, salida: 120, thinking: 0 })
   assert.deepEqual(m.costo.roles.ejecutor.tokens, { entrada: 30, leidos: 3000, escritos: 1500, salida: 300, thinking: 120 })
   assert.equal(m.costo.roles.ejecutor.agentes, 3)
-  assert.equal(m.costo.roles['revisor-plan'].agentes, 2)
-  assert.deepEqual(m.costo.veredictos, { 'revisor-plan': ['AJUSTAR', 'AJUSTAR'], ejecutor: ['FALLA', 'HECHO', 'HECHO'], final: ['RECHAZADO'] })
+  assert.deepEqual(m.costo.veredictos, { ejecutor: ['FALLA', 'HECHO', 'HECHO'], final: ['RECHAZADO'] })
   assert.deepEqual(Object.keys(m.costo).sort(), ['inicio', 'minutos', 'roles', 'usd', 'veredictos'])
   assert.deepEqual(m.contexto, { primero: 1510, ultimo: 3020 })
   // Tiempos: el preflight a los 60 s es la fase 0; el AskUserQuestion «Plan» tarda 300 s dentro de la fase 4.
-  assert.deepEqual(m.tiempos, { fases: { 0: 60, 1: 70, 2: 70, 3: 70, 4: 10, 5: 320, 7: 0 }, espera: 300, activo: 600 })
+  assert.deepEqual(m.tiempos, { fases: { 0: 60, 1: 70, 2: 140, 4: 10, 5: 320, 7: 0 }, espera: 300, activo: 600 })
   assert.equal(Object.values(m.tiempos.fases).reduce((s, n) => s + n, 0), m.tiempos.activo)
   assert.deepEqual(Object.keys(m.ejecutores), ['1', '2'])
   assert.deepEqual({ ...m.ejecutores['1'], usd: undefined }, { usd: undefined, segundos: 180, correcciones: 1, estado: 'HECHO', esfuerzo: 'medium' })
   assert.ok(m.ejecutores['1'].usd > 0)
   assert.deepEqual({ ...m.ejecutores['2'], usd: undefined }, { usd: undefined, segundos: 48, correcciones: 0, estado: 'HECHO', esfuerzo: 'high' })
-  assert.deepEqual(m.problemas, { revisorPlan: ['Falta el test', 'Ruta equivocada'], final: [{ veredicto: 'RECHAZADO', items: ['Falla X'] }] })
+  assert.deepEqual(m.problemas, { final: [{ veredicto: 'RECHAZADO', items: ['Falla X'] }] })
   assert.deepEqual(m.alcanceFuera, ['ALCANCE: FUERA (a.ts)'])
   assert.deepEqual(m.explorador, { pedidos: 2, glob: 1, read: 2, mapa: true })
   // Sin sesión en ese repo, no hay métricas; el costo sigue siendo el mismo que con costoDelFlujo.
@@ -2004,10 +1990,10 @@ test('guardia: roles de lectura registran sin bloquear', () => {
     assert.equal(buscar.status, 0)
     assert.deepEqual(dato(ultima()), { rol: 'planificador', herramienta: 'Grep', objetivo: 'foo en src', decision: 'lectura' })
 
-    const glob = hook(raiz, 'revisor-plan', ev(raiz, 'Glob', { pattern: '**/*.ts' }))
+    const glob = hook(raiz, 'explorador', ev(raiz, 'Glob', { pattern: '**/*.ts' }))
     assert.equal(glob.stdout, '')
     assert.equal(glob.status, 0)
-    assert.deepEqual(dato(ultima()), { rol: 'revisor-plan', herramienta: 'Glob', objetivo: '**/*.ts', decision: 'lectura' })
+    assert.deepEqual(dato(ultima()), { rol: 'explorador', herramienta: 'Glob', objetivo: '**/*.ts', decision: 'lectura' })
 
     // Una ruta fuera del repo se anota absoluta y tampoco se niega.
     const fuera = hook(raiz, 'explorador', ev(raiz, 'Read', { file_path: path.join(os.homedir(), '.ssh', 'id_rsa') }))
@@ -2080,7 +2066,7 @@ test('costos: problemasDe acepta viñetas y ruta:línea sin numeración', () => 
 test('estado: preflight avisa el contexto del proyecto por encima de 10k tokens', () => {
   const grande = estadoCon({}, () => [], { 'CLAUDE.md': '# Reglas\n' + 'x'.repeat(40_000) })
   assert.match(grande.salida, /^CONTEXTO DEL PROYECTO: ~11\d{3} tokens por agente \(CLAUDE\.md\)$/m)
-  assert.match(grande.salida, /^AVISO: contexto del proyecto pesado: ~\$0,28 por flujo solo en escribirlo en caché; /m)
+  assert.match(grande.salida, /^AVISO: contexto del proyecto pesado: ~\$0,25 por flujo solo en escribirlo en caché; /m)
   assert.match(grande.salida, /^REGLAS DEL PROYECTO: .*\n^CONTEXTO DEL PROYECTO: /m)
   assert.equal(grande.codigo, 0)
 })

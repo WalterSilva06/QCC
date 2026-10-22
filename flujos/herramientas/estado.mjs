@@ -8,7 +8,7 @@
 //   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"] [--resultado COMPLETO|DETENIDO:<0-7>]
 //   node ~/.claude/flujos/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo
 //   node ~/.claude/flujos/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
-//   node ~/.claude/flujos/estado.mjs --guardar <agentId> plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (revisor del plan, ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s)
+//   node ~/.claude/flujos/estado.mjs --guardar <agentId> plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s)
 //   node ~/.claude/flujos/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan y la VERIFICACIÓN INICIAL)
 //   node ~/.claude/flujos/estado.mjs --cancelar [--paso <n>]  cierra un flujo abierto sin subtareas ejecutadas (resultado CANCELADO) y libera el candado
 //   node ~/.claude/flujos/estado.mjs --reglas                reglas del proyecto para el orquestador
@@ -431,8 +431,8 @@ export function fusionarPlanes(previo, nuevo) {
 const RE_PRUEBAS = /(^|\/)(__tests__|tests?|specs?)\/|[._-](test|spec)\.[^/]+$/i
 
 /**
- * Las decisiones que salen solas del plan (pasos.md pasos 2 y 3, comun.md §5 y §6), como líneas listas para imprimir:
- * `{ revisorPlan, ciclos, critico, aspectos }`. `subtareas` trae `{ n, critica, permitidos, fijos }` (`fijos`: los criterios
+ * Las decisiones que salen solas del plan (pasos.md paso 2, comun.md §5 y §6), como líneas listas para imprimir:
+ * `{ ciclos, critico, aspectos }`. `subtareas` trae `{ n, critica, permitidos, fijos }` (`fijos`: los criterios
  * incondicionales de sus rutas críticas) y `pedidos` los criterios que piden las rutas críticas del plan (números, o `{ n, ruta }`).
  * Ante cualquier duda gana lo más estricto: sin Clasificación, o una que no empieza con «sin criterios», cuenta como CRÍTICO,
  * y también si hay pedidos o una subtarea de Crítica efectiva sí (la tiene si `critica` falta, no empieza con «no» o tiene `fijos`).
@@ -448,15 +448,6 @@ export function decisionesDelPlan({ clasificacion = null, subtareas = [], pedido
   const delTexto = textoClasificacion === null ? [] : [...textoClasificacion.matchAll(/#(\d+)/g)].map((m) => Number(m[1]))
   const citados = [...new Set([...delTexto, ...pedidas.map((p) => p.n)])].sort((a, b) => a - b)
 
-  const motivos = [
-    ...(critico ? ['CRÍTICO'] : []),
-    ...criticas.map((s) => `S${s.n} Crítica: sí`),
-    ...(lista.length >= 3 ? [`${lista.length} subtareas`] : []),
-    ...(lista.length === 0 ? ['sin subtareas'] : []),
-  ]
-  const revisorPlan = !critico && lista.length >= 1 && lista.length <= 2
-    ? `REVISOR DEL PLAN: se omite (sin criterios, ${lista.length} subtarea(s))`
-    : `REVISOR DEL PLAN: corre (${motivos.join(' · ')})`
   const ciclos = `CICLOS DE LA REVISIÓN FINAL: ${critico ? 2 : 1}`
 
   let linea
@@ -479,11 +470,11 @@ export function decisionesDelPlan({ clasificacion = null, subtareas = [], pedido
     ...(permitidos.some((p) => RE_PRUEBAS.test(p)) ? ['tests'] : []),
     ...((textoClasificacion === null || citados.some((n) => [1, 2, 3, 6, 9].includes(n))) && !soloTexto ? ['casos borde y seguridad'] : []),
   ].join(', ')
-  return { revisorPlan, ciclos, critico: `CRÍTICO: ${linea}`, aspectos: `ASPECTOS: ${aspectos}` }
+  return { ciclos, critico: `CRÍTICO: ${linea}`, aspectos: `ASPECTOS: ${aspectos}` }
 }
 
 /** Las líneas de `decisiones` (de `decisionesDelPlan`) en el orden en que se imprimen. */
-const lineasDeDecisiones = (d) => [d.revisorPlan, d.ciclos, d.critico, d.aspectos]
+const lineasDeDecisiones = (d) => [d.ciclos, d.critico, d.aspectos]
 
 /** Escribe un `S<n>.md` por subtarea, revisa campos y rutas críticas, anota el plan en el estado e imprime el resumen. */
 function resumirPlan(texto, destino) {
@@ -620,7 +611,7 @@ function mostrarEstado() {
     console.log(`  S${s.n} · ${s.objetivo} · permitidos: ${(s.permitidos ?? []).join(', ')} → ${path.join(FLUJO, `S${s.n}.md`)}`)
   }
   const d = e.decisiones
-  if (d && typeof d === 'object' && [d.revisorPlan, d.ciclos, d.critico, d.aspectos].every((l) => typeof l === 'string')) {
+  if (d && typeof d === 'object' && [d.ciclos, d.critico, d.aspectos].every((l) => typeof l === 'string')) {
     console.log('DECISIONES (con los AVISOS resueltos a lo más estricto):')
     for (const l of lineasDeDecisiones(d)) console.log(l)
   }
@@ -656,7 +647,7 @@ function autoprueba() {
       const definicion = fs.readFileSync(path.join(AGENTES, `qcc-${agente}.md`), 'utf8')
       if (!definicion.includes('guardia.mjs')) return `FALLA (~/.claude/agents/qcc-${agente}.md no declara el hook)`
     }
-    for (const agente of ['explorador', 'planificador', 'revisor-plan', 'ejecutor', 'revisor']) {
+    for (const agente of ['explorador', 'planificador', 'ejecutor', 'revisor']) {
       const viejo = path.join(RAIZ, '.claude', 'agents', `${agente}.md`)
       if (fs.existsSync(viejo)) avisos.push(`.claude/agents/${agente}.md ya no redefine nada: los agentes se llaman qcc-${agente}`)
       const propio = path.join(RAIZ, '.claude', 'agents', `qcc-${agente}.md`)
@@ -678,12 +669,12 @@ const BYTES_POR_TOKEN = 3.5
 const TOPE_IMPORTS = 5
 const UMBRAL_CONTEXTO = 10_000
 // Agentes típicos de un flujo que escriben el contexto del proyecto en caché: [modelo, escritura, cuántos].
-// Explorador (Haiku), planificador y revisión final (Opus), revisor-plan y 3 ejecutores (Sonnet), todos con caché de 5 min;
+// Explorador (Haiku), planificador y revisión final (Opus) y 3 ejecutores (Sonnet), todos con caché de 5 min;
 // el orquestador (Sonnet) la escribe con 1 h.
 const AGENTES_TIPICOS = [
   ['claude-haiku-5-5', 'escritura5m', 1],
   ['claude-opus-5-5', 'escritura5m', 2],
-  ['claude-sonnet-5-5', 'escritura5m', 4],
+  ['claude-sonnet-5-5', 'escritura5m', 3],
   ['claude-sonnet-5-5', 'escritura1h', 1],
 ]
 
@@ -1142,7 +1133,6 @@ export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado
     tiempos: m.tiempos,
     subtareas,
     calidad: sinNulos({
-      revisorPlan: m.problemas?.revisorPlan,
       final: m.problemas?.final,
       negados,
       alcanceFuera: m.alcanceFuera,
@@ -1391,7 +1381,7 @@ export function opcionesDe(args) {
   }
 }
 
-const ROLES = ['explorador', 'planificador', 'revisor-plan', 'ejecutor', 'revisor', 'final']
+const ROLES = ['explorador', 'planificador', 'ejecutor', 'revisor', 'final']
 
 /**
  * `"ejecutor=52000,ejecutor=48000,final=61000"` → `{ ejecutor: [52000, 48000], final: [61000] }`.

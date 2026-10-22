@@ -1,4 +1,4 @@
-`.claude/qcc-implementador/` o, sin ella, `.claude/qcc-implementador.md` (reglas del proyecto) manda sobre este archivo y sobre `plan.md` (clasificación y formato del plan, lo leen planificador y revisor-plan), y el `CLAUDE.md` del proyecto rige para todos los agentes; sin ellos, estos valores y lo que se lea del repo. Los nombres viejos (`.claude/implementador/`, `.claude/implementador.md` y `.claude/implementador.json`) siguen valiendo de respaldo. `.claude/qcc-implementador.json` (opcional): `verificar`, `guardia` y `criticos` (ejemplo en `~/.claude/flujos/config.ejemplo.md`).
+`.claude/qcc-implementador/` o, sin ella, `.claude/qcc-implementador.md` (reglas del proyecto) manda sobre este archivo y sobre `plan.md` (clasificación y formato del plan, lo lee el planificador), y el `CLAUDE.md` del proyecto rige para todos los agentes; sin ellos, estos valores y lo que se lea del repo. Los nombres viejos (`.claude/implementador/`, `.claude/implementador.md` y `.claude/implementador.json`) siguen valiendo de respaldo. `.claude/qcc-implementador.json` (opcional): `verificar`, `guardia` y `criticos` (ejemplo en `~/.claude/flujos/config.ejemplo.md`).
 
 ## 1. Herramientas
 
@@ -10,7 +10,7 @@ Desde la raíz del repo, con Bash (`~` = carpeta del usuario):
 | `node ~/.claude/flujos/estado.mjs --base [--sub <n>] [--paso <n>]` | Foto nueva: `BASE=<sha> DESDE=<iso>`. Con `--sub <n>` la foto de la subtarea queda en la carpeta del flujo y un reintento conserva la primera (con `AVISO: S<n> ya tenía foto…`) |
 | `node ~/.claude/flujos/estado.mjs --cambios --sub <n>\|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens …]` | Qué cambió desde la foto y qué cae fuera. `--sub <n>` toma BASE y DESDE de la foto de esa subtarea y sus permitidos del plan guardado; `--global` toma `BASE_GLOBAL`, `DESDE_GLOBAL` y la unión de los permitidos de todas las subtareas. `--permitidos` solo suma los ampliados (los de un «Aceptar», §6) a los del plan. Antes de `CAMBIOS` imprime `FOTO S<n>` o `FOTO GLOBAL` con la BASE, el DESDE y cuántos permitidos usó. La forma explícita, `--cambios <BASE> --desde <DESDE> --permitidos "<a,b>"`, sigue valiendo y no se mezcla con `--sub` ni `--global`. Con permitidos, sin nada fuera y fuera del cierre, el resumen es una línea `CAMBIOS desde <base> (<n>): <carpeta> <k> · … [· salida de verificar <k>] [· solo en el registro <k>]` (más lo que solo está en el registro, uno por uno) seguida de `ALCANCE: OK`; si no (hay FUERA, no hay permitidos o es el cierre), el detalle: con más de 20 archivos dentro del alcance los agrupa por carpeta, y lo de fuera va siempre uno por uno (no lo recortes con `\| tail`). Lo que `verificar.mjs` cambió fuera de los permitidos (mismo archivo y mismo contenido que anotó, desde el DESDE) sale aparte como `~ <estado> <ruta>   ← (salida de verificar: <paso>)` (con «, no generado» si no era de un paso de build) y no cuenta como FUERA; un cambio a mano posterior sí. En el cierre (`--paso 7`) esos archivos entran en `REVERSIÓN:`. En el cierre (`--paso 7`, con `--global`, y `--resultado COMPLETO\|DETENIDO:<paso>`) agrega `REVERSIÓN:` (los comandos exactos para deshacer el flujo), `COSTO:`, `VEREDICTOS:` y `CONTEXTO:` (leídos de los transcripts), anota una fila v2 en `registros/flujos.jsonl` y archiva el flujo (`HISTORIAL: <ruta>`, en `registros/historial/`, las 30 últimas). Termina en `ALCANCE: OK` o `ALCANCE: FUERA (n)` |
 | `node ~/.claude/flujos/estado.mjs --diff <BASE> --permitidos "<a,b>" [-- <rutas>]` | Diff desde la foto (solo el revisor) |
-| `node ~/.claude/flujos/estado.mjs --guardar <agentId> plan\|exploracion [--ajuste] [--paso <n>]` | Guarda en `FLUJO` el informe de ese agente (lo toma de su transcript). Con `exploracion`, espera (tope 570 s) a la verificación inicial e imprime `VERIFICACIÓN INICIAL: VERDE \| ROJA (…) \| SIN PASOS \| SIN RESULTADO (…)`. Con `plan`, también un `S<n>.md` por subtarea, sus permitidos, los AVISOS y las DECISIONES (`REVISOR DEL PLAN:`, `CICLOS DE LA REVISIÓN FINAL:`, `CRÍTICO:`, `ASPECTOS:`), que también guarda; `--ajuste` integra un re-plan |
+| `node ~/.claude/flujos/estado.mjs --guardar <agentId> plan\|exploracion [--ajuste] [--paso <n>]` | Guarda en `FLUJO` el informe de ese agente (lo toma de su transcript). Con `exploracion`, espera (tope 570 s) a la verificación inicial e imprime `VERIFICACIÓN INICIAL: VERDE \| ROJA (…) \| SIN PASOS \| SIN RESULTADO (…)`. Con `plan`, también un `S<n>.md` por subtarea, sus permitidos, los AVISOS y las DECISIONES (`CICLOS DE LA REVISIÓN FINAL:`, `CRÍTICO:`, `ASPECTOS:`), que también guarda; `--ajuste` integra un re-plan |
 | `node ~/.claude/flujos/estado.mjs --estado [--paso <n>]` | Lo que lleva el flujo: bases, plan, las DECISIONES, las fotos de cada subtarea (`FOTO S<n>`), último VERDE y la `VERIFICACIÓN INICIAL:` (espera igual, tope 570 s) |
 | `node ~/.claude/flujos/estado.mjs --cancelar [--paso <n>]` | Cierra un flujo sin plan aprobado (resultado CANCELADO) y libera el candado. Si hay fotos de subtareas no lo cierra: avisa y se cierra con `--cambios --global --resultado DETENIDO:<paso> --paso 7` |
 | `node ~/.claude/flujos/estado.mjs --reglas` | Reglas del proyecto para el orquestador (las inyecta tu skill) |
@@ -26,10 +26,10 @@ Si estado.mjs o verificar.mjs fallan por un error propio (`ERROR:` o excepción)
 
 ## 3. Plan (resumen)
 
-La Clasificación (criterios #1–#10) y el formato completo del plan están en `~/.claude/flujos/plan.md`, que leen el planificador y el revisor del plan. Aquí solo lo que necesitas tú:
+La Clasificación (criterios #1–#10) y el formato completo del plan están en `~/.claude/flujos/plan.md`, que lee el planificador. Aquí solo lo que necesitas tú:
 
 - **Campos:** encabezado (Clasificación, Objetivo, Fuera de alcance, Base) y, por subtarea, Crítica, Archivos permitidos, Hecho cuando, Tests, Riesgos (lo no confirmado va con «comprobar primero») y Reversión; al final, Verificación final, Queda para ti y Costo.
-- **`Crítica`:** `sí` si la subtarea toca un criterio de la Clasificación o una ruta crítica del proyecto (`criticos` de `.claude/qcc-implementador.json`, o sus reglas); ante la duda, `sí`. Con «sin criterios», todas `no`. Decide si corre el revisor del plan y qué mira primero la revisión final.
+- **`Crítica`:** `sí` si la subtarea toca un criterio de la Clasificación o una ruta crítica del proyecto (`criticos` de `.claude/qcc-implementador.json`, o sus reglas); ante la duda, `sí`. Con «sin criterios», todas `no`. Decide qué mira primero la revisión final.
 - **Lo externo** (migraciones, tipos desde un servicio, deploys, servicios vivos, verificación visual, descargas de internet) nunca es subtarea: va a «Queda para ti».
 - **Costo:** `<n> ejecutor(es) · revisión final`. No hay revisor por subtarea: la revisión final mira todo.
 - **Números de criterio (#n):** los que cita la Clasificación del plan los necesitas para recalcular las DECISIONES (`CRÍTICO` y `ASPECTOS` de la revisión final, tabla de §5) si tus completados cambian la Clasificación, una `Crítica` o los permitidos.
@@ -39,7 +39,7 @@ La Clasificación (criterios #1–#10) y el formato completo del plan están en 
 - **No escribes código ni documentación del repo.** Nada de Edit, Write, NotebookEdit ni Bash que modifique archivos. Tu Bash: estado.mjs, verificar.mjs, git de lectura y, tras el cierre, los comandos de «Queda para ti» que el usuario pida (§7). Cada estado.mjs y cada verificar.mjs va en su propia llamada a Bash, nunca encadenados (`&&`, `;`, `|`) entre sí ni con otro comando: el panel lee una sola señal por llamada y pierde la otra. Única excepción: instalar una dependencia con el gestor del proyecto (`pnpm add`, `npm install`, `cargo add`…) si el plan aprobado la nombra, sola y antes del `--base --sub` de la subtarea que la usa (el ejecutor no instala).
 - **Juntas en un mismo mensaje**, en este orden y cada una en su propia llamada: (a) `estado.mjs --paso 0` va solo y, después, el explorador (o los exploradores) juntos: el mapa del repo y el candado dependen del preflight, y el explorador con el mapa ahorra Globs; (b) `estado.mjs --base --sub <n>` y el ejecutor; (c) `estado.mjs --cambios --sub <n>` y tu `verificar.mjs`, si el ejecutor volvió HECHO; (d) el `--cambios --global` del paso 6 y la revisión final. Lo demás va de a una, porque depende de la salida anterior (el planificador, por ejemplo, espera a `--guardar … exploracion`, que decide su esfuerzo). Cada llamada que te ahorras es un pedido menos con todo tu contexto, pero no paraleliza: un Bash que no es de solo lectura corre solo y el Agent del mismo mensaje espera a que termine (varios Agent sí corren a la vez).
 - **Cada llamada a Agent lleva `run_in_background: false`** (el resultado vuelve en este turno) y nunca `isolation`. `model` y `effort`: exactamente los de la tabla de tu skill.
-- Solo los agentes `qcc-explorador`, `qcc-planificador`, `qcc-revisor-plan`, `qcc-ejecutor` y `qcc-revisor` (este, solo para la revisión final). Uno a la vez, salvo en la Exploración (hasta 5 exploradores en paralelo, solo en el caso de §5).
+- Solo los agentes `qcc-explorador`, `qcc-planificador`, `qcc-ejecutor` y `qcc-revisor` (este, solo para la revisión final). Uno a la vez, salvo en la Exploración (hasta 5 exploradores en paralelo, solo en el caso de §5).
 - Contexto mínimo: cada agente recibe solo su plantilla (§5), nunca la conversación ni el razonamiento de otro agente. La revisión final no recibe los reportes de los ejecutores: recibe el digest `EJECUTORES` (§6) y `VERIFICACIÓN FINAL`, y no repite verificar.mjs. En sus ciclos recibe su propia `REVISIÓN ANTERIOR`.
 - Preguntas al usuario solo con AskUserQuestion (aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance, ejecutar lo que queda para él). Nunca terminas el turno para esperar respuesta.
 - Sin plan aprobado no se despacha ningún ejecutor. Si el plan cambia a mitad de camino, se vuelve a aprobar.
@@ -77,24 +77,13 @@ EXPLORACIÓN: <<FLUJO>/exploracion.md (léela entera) | la fusión de §6, con v
 PLAN VIGENTE: <solo al re-planificar: <FLUJO>/plan.md, con estos ajustes ya aprobados: <AJUSTES AL PLAN | ninguno>>
 AJUSTES DEL USUARIO: <solo al re-planificar: solo el ajuste>
 ```
-**Revisor del plan** (salvo la omisión del paso 3 de los pasos) — `subagent_type: "qcc-revisor-plan"`, `description: "Revisar plan <tema>"`
-```
-PEDIDO: <literal>
-IMÁGENES: <ruta absoluta del .png> — <qué muestra> | ninguna
-BASE: <rama>@<HEAD> · sucios previos: <…> · verificación inicial: <VERDE | ROJA … | SIN PASOS>
-REGLAS: <.claude/qcc-implementador/ | .claude/qcc-implementador.md | ninguna>
-EXPLORACIÓN: <la misma que recibió el planificador>
-PLAN: <<FLUJO>/plan.md (léelo entero)>
-AJUSTES AL PLAN: <tus completados menores y los AVISOS que corregiste, una línea por cambio | ninguno>
-```
-Responde `APROBADO` o `AJUSTAR` (§6).
 
 **Ejecutor** — en el mismo mensaje que su `estado.mjs --base --sub <n>` (tu `--cambios --sub <n>` usa su foto; el ejecutor no la necesita). `subagent_type: "qcc-ejecutor"`, `description: "Sn: <título>"`
 ```
 SUBTAREA <n>/<total>: <objetivo>
 CONTRATO: <<FLUJO>/S<n>.md (léelo antes de editar: hecho cuando, tests y riesgos)>
 ARCHIVOS PERMITIDOS: <lista exacta, separada por comas>
-AJUSTES: <cambios a esta subtarea respecto al CONTRATO (revisión del plan, usuario, alcance ampliado) | ninguno>
+AJUSTES: <cambios a esta subtarea respecto al CONTRATO (usuario, alcance ampliado) | ninguno>
 CONTEXTO: <solo los hechos de la EXPLORACIÓN que tocan sus archivos (ruta:línea, símbolos, convenciones); sin opiniones, nunca el informe entero>
 YA HECHO: <una línea por subtarea anterior | nada>
 IMÁGENES: <solo si la subtarea es visual: ruta absoluta del .png> — <qué muestra>
@@ -113,7 +102,7 @@ QUÉ REVISAR: cambio completo (<n> subtarea(s))
 OBJETIVO DEL PLAN: <1–2 líneas>
 IMÁGENES: <ruta absoluta del .png> — <qué muestra> | ninguna
 PLAN: <<FLUJO>/plan.md (léelo entero: es el contrato)>
-AJUSTES AL PLAN: <lo aprobado que cambió respecto al archivo: revisión del plan, usuario, alcance ampliado | ninguno>
+AJUSTES AL PLAN: <lo aprobado que cambió respecto al archivo: usuario, alcance ampliado | ninguno>
 BASE: <BASE_GLOBAL>
 PERMITIDOS: "<la unión, separada por comas>"
 SUCIOS PREVIOS (no son del flujo): <lista | ninguno>
@@ -144,8 +133,7 @@ Qué mira cada aspecto: agente `qcc-revisor`. «Solo texto»: todos los archivos
 
 ## 6. Después de cada agente
 
-- **Explorador(es):** vuelven todos en el mismo turno. Con uno solo, su informe va como archivo (`--guardar … exploracion`, paso 2 de los pasos). Con varios, fusiona sin reescribir: se unen ARCHIVOS, TESTS, ACOPLAMIENTOS, DATOS y DUDAS con cada `ruta:línea` una sola vez y las contradicciones como DUDA; al planificador y al revisor del plan solo les pasas lo que aplica. Si uno falla o vuelve sin reporte, sigue con los demás y lee poco su área o relanza ese solo, una vez. Si sus DUDAS cambian el plan, resuélvelas leyendo tú (poco) o llévalas al plan como pregunta.
-- **Revisor del plan:** `APROBADO` → sigue a la aprobación. `AJUSTAR` → no se relanza al planificador ni al `qcc-revisor-plan`: aplicas tú lo menor o aditivo (un campo faltante, un archivo olvidado, un «hecho cuando» vago, otro orden) y lo muestras en el mensaje de aprobación, una línea por cambio, sin un plan aparte; esos cambios van también a `AJUSTES AL PLAN`. Lo que cambia el enfoque (contratos, tipos o datos de varias subtareas, o el reparto de archivos entre ellas) no lo rediseñas: va tal cual bajo el plan, en «Revisión del plan: para decidir», y lo decide el usuario. Ante la duda, a «para decidir». Sus OBSERVACIONES que tocan una subtarea pasan a los Riesgos de esa subtarea (en `AJUSTES` de su despacho), una línea cada una; si son un supuesto sin confirmar, con «comprobar primero». Si falla o vuelve sin VEREDICTO claro, se repite una vez; si sigue igual, se sigue avisando «revisión del plan no disponible». Si responde con el problema «plan resumido», se re-despacha una vez con el plan íntegro, sin contar como esa repetición. No cuenta como ciclo.
+- **Explorador(es):** vuelven todos en el mismo turno. Con uno solo, su informe va como archivo (`--guardar … exploracion`, paso 2 de los pasos). Con varios, fusiona sin reescribir: se unen ARCHIVOS, TESTS, ACOPLAMIENTOS, DATOS y DUDAS con cada `ruta:línea` una sola vez y las contradicciones como DUDA; al planificador solo le pasas lo que aplica. Si uno falla o vuelve sin reporte, sigue con los demás y lee poco su área o relanza ese solo, una vez. Si sus DUDAS cambian el plan, resuélvelas leyendo tú (poco) o llévalas al plan como pregunta.
 - **Ejecutor:** según su ESTADO, con tu `--cambios` (y tu `verificar.mjs`, si volvió HECHO, en el mismo mensaje):
   - `ALCANCE: FUERA` (lo marcado `← (salida de verificar: …)` no cuenta: no se pregunta por ello, pero mira de qué paso viene, en especial si es «no generado», un lint o format que reescribió código) → AskUserQuestion: «Aceptar» (amplía el alcance: va a `AJUSTES` y se suma a los `--permitidos "<ampliados>"` de cada `--cambios --sub`/`--global` posterior) / «Restaurar» (corrección que deja esos archivos como en la base) / «Detener». Si los archivos son del usuario (los editó él mientras tanto), «Aceptar».
   - `ESTADO: BLOQUEADO` (con o sin `NECESITA_ALCANCE:`) → AskUserQuestion: ampliar / cambiar el plan (se vuelve a aprobar) / seguir sin ella (solo si ninguna subtarea posterior depende de ella) / detener. No cuenta como ciclo. «Seguir sin ella»: si dejó cambios, primero una Corrección que los deja como en su base; la subtarea pasa a «Queda para ti» con su motivo, su línea de `EJECUTORES` es `S<n>: OMITIDA · nota: <motivo>` y sigues con la siguiente. Si el resto sale bien, el cierre es COMPLETO.

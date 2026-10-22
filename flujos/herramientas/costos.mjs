@@ -108,7 +108,7 @@ export function usoDe(filas) {
 }
 
 /** Qué línea de su informe trae el veredicto de cada rol; los demás (explorador, planificador) no dan uno. */
-const VEREDICTO_POR_ROL = { 'revisor-plan': 'VEREDICTO', revisor: 'VEREDICTO', final: 'VEREDICTO', ejecutor: 'ESTADO' }
+const VEREDICTO_POR_ROL = { revisor: 'VEREDICTO', final: 'VEREDICTO', ejecutor: 'ESTADO' }
 
 /** Veredicto del último informe del agente (`APROBADO`, `AJUSTAR`, `HECHO`…), de una línea que empieza con él; null si no trae. */
 function veredictoDe(filas, rol) {
@@ -286,7 +286,7 @@ function lanzamientosDe(principal) {
 /**
  * Tiempos del hilo principal en segundos: `fases` (pared de cada paso menos la espera que cae en él), `espera` (lo que
  * tardó el usuario en cada `AskUserQuestion`) y `activo` (el total menos la espera). Las marcas de fase son
- * `estado.mjs … --paso n`, el explorador (1), el revisor-plan (3) y el AskUserQuestion «Plan» (4).
+ * `estado.mjs … --paso n`, el explorador (1) y el AskUserQuestion «Plan» (4).
  */
 function tiemposDe(principal, inicio) {
   const t0 = Date.parse(inicio)
@@ -301,7 +301,7 @@ function tiemposDe(principal, inicio) {
       const paso = c.name === 'Bash' ? /estado\.mjs\b[^\n]*?--paso\s+(\d+)/.exec(String(c.input?.command ?? ''))?.[1] : null
       if (paso) marcas.push({ t, n: paso })
       else if (c.name === 'Agent' || c.name === 'Task') {
-        const n = { explorador: '1', 'revisor-plan': '3' }[rolCorto(c.input?.subagent_type)]
+        const n = { explorador: '1' }[rolCorto(c.input?.subagent_type)]
         if (n) marcas.push({ t, n })
       } else if (c.name === 'AskUserQuestion') {
         preguntas.set(c.id, t)
@@ -373,7 +373,6 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
   for (const f of principal) {
     for (const c of bloquesDe(f, 'tool_result')) alcanceFuera.push(...(textoDe(c.content).match(/ALCANCE: FUERA[^\n]*/g) ?? []))
   }
-  const ultimoPlan = agentes.filter((a) => a.rol === 'revisor-plan').at(-1)
   return {
     costo: costoDe(lectura),
     sesion: sesion.archivo,
@@ -381,7 +380,7 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
     contexto: { primero: contextoDe(mensajes[0]), ultimo: contextoDe(mensajes.at(-1)) },
     tiempos: tiemposDe(principal, sesion.inicio),
     ejecutores: ejecutoresDe(agentes, lanzamientosDe(principal)),
-    problemas: { revisorPlan: ultimoPlan ? informe(ultimoPlan).items : [], final: agentes.filter((a) => a.rol === 'final').map(informe) },
+    problemas: { final: agentes.filter((a) => a.rol === 'final').map(informe) },
     alcanceFuera,
     explorador: {
       pedidos: exploradores.reduce((s, a) => s + usoDe(a.filas).pedidos, 0),
@@ -402,7 +401,7 @@ export function resumenDeCosto(c) {
   return `${dolares(c.usd)} · ${decimal(c.minutos)} min${partes.length ? ` · ${partes.join(' · ')}` : ' · sin pedidos'}${sinPrecio ? ` · ${sinPrecio} pedido(s) de un modelo sin precio` : ''}`
 }
 
-/** «revisor-plan AJUSTAR · ejecutor HECHO, HECHO · final RECHAZADO, APROBADO», o «ninguno». */
+/** «ejecutor HECHO, HECHO · final RECHAZADO, APROBADO», o «ninguno». */
 export function resumenDeVeredictos(c) {
   const partes = Object.entries(c.veredictos).map(([rol, vs]) => `${rol} ${vs.join(', ')}`)
   return partes.length ? partes.join(' · ') : 'ninguno'

@@ -9,7 +9,7 @@
 // protegidos (en `.claude/`, solo settings y agentes); y al revisor, escribir fuera de los temporales— y deja cada llamada en el registro del proyecto
 // (`registros/<proyecto>-<hash>.jsonl`), que `estado.mjs --cambios` cruza con el árbol para el
 // chequeo de alcance (cubre rutas que git ignora).
-// `explorador`, `planificador` y `revisor-plan` (solo lectura) solo anotan sus Read, Glob y Grep
+// `explorador` y `planificador` (solo lectura) solo anotan sus Read, Glob y Grep
 // con decision `lectura`: nunca niegan ni imprimen nada.
 //
 // Lo propio de cada proyecto va en `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, el
@@ -1036,7 +1036,7 @@ export function evaluar(evento, rol, raiz = RAIZ) {
 }
 
 /** Roles de solo lectura: la guardia solo anota lo que leen, nunca niega. */
-export const ROLES_LECTURA = ['explorador', 'planificador', 'revisor-plan']
+export const ROLES_LECTURA = ['explorador', 'planificador']
 
 /** `{ objetivo }` de una lectura (Read, Glob, Grep) o null si la herramienta es otra o no trae objetivo. */
 export function lecturaDe(evento, raiz = RAIZ) {

@@ -53,8 +53,8 @@ El archivo real es JSON sin comentarios. `verificar.mjs` repite desde una caché
 
 Reglas del proyecto en prosa. Las skills lo inyectan y los agentes lo leen. Un archivo por sección: cada agente lee solo los suyos. Sin la carpeta rige `.claude/qcc-implementador.md` con las mismas secciones. Los nombres viejos (`.claude/implementador/` y `.claude/implementador.md`) siguen valiendo de respaldo. Secciones útiles:
 
-- **`clasificacion.md`** (orquestador, planificador, revisor-plan): lo que no es una ruta de cada criterio CRÍTICO de `plan.md` §2. Las rutas van en `criticos` de `.claude/qcc-implementador.json`, donde `estado.mjs` las aplica.
+- **`clasificacion.md`** (orquestador, planificador): lo que no es una ruta de cada criterio CRÍTICO de `plan.md` §2. Las rutas van en `criticos` de `.claude/qcc-implementador.json`, donde `estado.mjs` las aplica.
 - **`buscar.md`** (orquestador, explorador, planificador): carpetas que Grep no ve, dónde viven los tests, guardianes, archivos que no se leen o que solo se leen con Grep.
-- **`planificar.md`** (planificador, revisor-plan): convención de migraciones, infraestructura de tests, riesgos típicos, qué queda para el usuario.
+- **`planificar.md`** (planificador): convención de migraciones, infraestructura de tests, riesgos típicos, qué queda para el usuario.
 - **`ejecutor.md`** (ejecutor): reglas de tipos, test puntual, patrón para acotar la salida de los tests, particularidades de la verificación.
 - **`revisor.md`** (revisor y ejecutor): reglas del repo que justifican un rechazo.

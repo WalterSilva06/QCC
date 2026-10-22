@@ -25,7 +25,7 @@ flujos/
   agents/<nombre>.md              → ~/.claude/agents/<nombre>.md
   skills/qcc-implementador/SKILL.md → ~/.claude/skills/qcc-implementador/SKILL.md (/qcc-implementador)
   skills/qcc-commit/SKILL.md      → ~/.claude/skills/qcc-commit/SKILL.md (/qcc-commit)
-  agents/qcc-*.md                 → ~/.claude/agents/qcc-*.md (explorador, planificador, revisor-plan, ejecutor, revisor y el de /qcc-commit)
+  agents/qcc-*.md                 → ~/.claude/agents/qcc-*.md (explorador, planificador, ejecutor, revisor y el de /qcc-commit)
   agents/qcc-generador-commit.md  agente Haiku high de /qcc-commit
   herramientas/                   → ~/.claude/flujos/ (estado, verificar, guardia, costos, guardia.test, comun.md, plan.md, pasos.md, config.ejemplo.md)
   herramientas/qcc-commit/        → ~/.claude/flujos/qcc-commit/ (solo-git.mjs y su test)
@@ -33,7 +33,7 @@ flujos-odd/
   instalar.mjs                    copia el flujo odd a ~/.claude (o lo trae con --traer)
   skills/qcc-implementador-odd/SKILL.md → ~/.claude/skills/qcc-implementador-odd/SKILL.md (todas sus reglas)
   agents/qcc-odd-*.md             → ~/.claude/agents/ (explorador, ejecutor, revisor)
-  herramientas/                   → ~/.claude/flujos-odd/ (odd, verificar, guardia, costo, proceso, odd.test)
+  herramientas/                   → ~/.claude/flujos-odd/ (odd, verificar, guardia, costo, proceso, copia, odd.test)
 qcc-panel/
   .claude-plugin/plugin.json      manifiesto (nombre, versión, types)
   .claude-plugin/marketplace.json marketplace «mods-locales»
@@ -69,4 +69,4 @@ Los cinco tienen que terminar sin errores antes de dar algo por hecho. Qué no p
 
 ## Flujo con /qcc-implementador
 
-`.claude/qcc-implementador.json` define la verificación (validate → test → test flujos → test qcc-commit). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/qcc-implementador/` y mandan sobre las comunes. Las herramientas siguen leyendo `.claude/implementador.json` y `.claude/implementador/` si el nombre nuevo no existe. `/qcc-implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica; medium si la exploración no toca rutas críticas), revisor del plan Sonnet medium, ejecutor Sonnet (medium en subtareas `Crítica: no`) y revisión final siempre, Opus high, sin revisor por subtarea. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
+`.claude/qcc-implementador.json` define la verificación (validate → test → test flujos → test qcc-commit). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/qcc-implementador/` y mandan sobre las comunes. Las herramientas siguen leyendo `.claude/implementador.json` y `.claude/implementador/` si el nombre nuevo no existe. `/qcc-implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica; medium si la exploración no toca rutas críticas), ejecutor Sonnet (medium en subtareas `Crítica: no`) y revisión final siempre, Opus high, sin revisor por subtarea. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.

@@ -33,7 +33,6 @@ Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases n
 |---|---|
 | `qcc-explorador` (Haiku, high) | ninguno; `effort: "max"` solo según el paso 1 |
 | `qcc-planificador` (Opus, high) | ninguno; `effort: "medium"` si `--guardar … exploracion` dijo `RUTAS CRÍTICAS EN LA EXPLORACIÓN: ninguna` |
-| `qcc-revisor-plan` (Sonnet, medium) | ninguno |
 | `qcc-ejecutor` (Sonnet, high) | ninguno; `effort: "medium"` en una subtarea `Crítica: no` y sus correcciones (las correcciones de la revisión final, sin override) |
 | `qcc-revisor`: revisión final y sus ciclos (Opus, high) | ninguno, también con Clasificación «sin criterios» |
 
