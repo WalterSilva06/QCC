@@ -72,6 +72,8 @@ export function procesoDe(filas, { raiz, inicio, hasta, tamano = null, riesgo = 
   let ejecutor = false
   let explorador = false
   let copia = null
+  // El diferencial manual (`--copia-base`) se repite a mano; el de `--diferencial` lo repite verificar.mjs.
+  let diferencialManual = false
   usos.forEach((u, k) => {
     const cwd = u.cwd ? path.resolve(rutaNativa(u.cwd)) : raiz
     const enRepo = (ruta) => Boolean(ruta) && !/\$|__SUST__/.test(ruta) && dentro(path.resolve(cwd, rutaNativa(ruta)), raiz)
@@ -114,7 +116,14 @@ export function procesoDe(filas, { raiz, inicio, hasta, tamano = null, riesgo = 
       if (/odd\.mjs\b.*--copia-base\b/.test(cmd)) {
         copia = /ODD_COPIA=(\S+)/.exec(u.resultado)?.[1]?.split(/[\\/]/).pop() ?? copia
         marcas.diferencial = k
-      } else if (copia && cmd.includes(copia) && !/--limpiar\b/.test(cmd)) marcas.diferencial = k
+        diferencialManual = true
+      } else if (/odd\.mjs\b.*--diferencial\b/.test(cmd)) {
+        marcas.diferencial = k
+        diferencialManual = false
+      } else if (copia && cmd.includes(copia) && !/--limpiar\b/.test(cmd)) {
+        marcas.diferencial = k
+        diferencialManual = true
+      }
     }
     if (edita) {
       if (marcas.primeraEdicion < 0) marcas.primeraEdicion = k
@@ -136,7 +145,7 @@ export function procesoDe(filas, { raiz, inicio, hasta, tamano = null, riesgo = 
       if (diff < 0) desvios.push('sin --diff')
       else if (ultimaEdicion > diff) desvios.push('editó después del último --diff')
     }
-    if (diferencial >= 0 && ultimaEdicion > diferencial) desvios.push('editó después del diferencial')
+    if (diferencialManual && diferencial >= 0 && ultimaEdicion > diferencial) desvios.push('editó después del diferencial')
   }
   if (contextoMax > TOPE_CONTEXTO && !ejecutor) desvios.push(`contexto máx. ${miles(contextoMax)} sin ejecutor`)
   if (conCat) desvios.push(`exploró con cat/head: ${conCat}`)

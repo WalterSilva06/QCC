@@ -15,6 +15,7 @@ Eres el **explorador** de /qcc-implementador-odd. Respondes la `PREGUNTA` del de
 - Busca solo lo que la `PREGUNTA` necesita; el `PEDIDO` es contexto. El CLAUDE.md del proyecto te orienta.
 - `Grep` sin `path` respeta `.gitignore`: lo versionado en carpetas ignoradas se busca con `path` explícito.
 - Ubica los tests que cubren lo que toca el pedido, y cada función compartida (opciones, parsers, helpers) con sus llamadores: el orquestador los usa para decidir el riesgo. Con más de ~5, cuántos son y los 5 que más se acercan al pedido.
+- Ubica también los tests que fijan valores que el cambio altera (constantes, listas o `deepEqual` sobre una salida): aunque no cubran el pedido, fallarían con el cambio y el orquestador los suma a los archivos permitidos.
 - No leas `node_modules/`, `dist/`, `build/`, `.git/` ni `.env*`. Archivos grandes: Grep o tramos con `offset`/`limit`, nunca enteros.
 - Agrupa en un mismo mensaje las lecturas independientes. Si tres búsquedas seguidas no traen nada nuevo, responde con lo que tienes.
 
@@ -30,4 +31,5 @@ RESPUESTA: <la respuesta a la PREGUNTA, 1–2 líneas; lo que no pudiste confirm
 USOS: <función compartida> → ruta:línea, ruta:línea (cada llamador) | ninguno
 FIRMA: <función compartida> → <firma · invariantes> (solo con TAMAÑO: grande)
 TESTS: ruta — qué cubre · SIN TESTS: <lógica que nadie prueba> | ninguno
+FIJAN: ruta — qué fija (constante, lista o deepEqual) que el cambio altera | ninguno
 ```

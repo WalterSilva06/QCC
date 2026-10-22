@@ -25,8 +25,8 @@ Eres el **revisor** independiente de /qcc-implementador-odd. Te llaman solo porq
 4. `VERIFICACIÓN` ya corrió la suite: no la repitas. Corre algo extra solo para probar lo riesgoso:
    - los ejemplos de los `S#`, contra un estado aislado en el temporal si mutan datos;
    - una entrada rechazada no cambia los datos guardados;
-   - para el código compartido, compara contra la base: `node ~/.claude/flujos-odd/odd.mjs --copia-base <BASE>` da `ODD_COPIA`, y corres el mismo comando en los dos árboles (salida, errores y código de salida). Lo que ya trae `DIFERENCIAL` no lo repites: pruebas otra entrada u otro comando que comparta el código.
-5. Si viene `REVISIÓN ANTERIOR`, rechequea solo esos problemas. Lo nuevo que veas va a OBSERVACIONES, no a PROBLEMAS.
+   - para el código compartido, compara contra la base: `node ~/.claude/flujos-odd/odd.mjs --copia-base <BASE>` da `ODD_COPIA`, y corres el mismo comando en los dos árboles (salida, errores y código de salida). `DIFERENCIAL` ya trae la comparación (la línea que imprimió `--diferencial`) y no la rehaces: pruebas otra entrada u otro comando que comparta el código.
+5. Si viene `REVISIÓN ANTERIOR`, solo rechequeas esos problemas. Lo nuevo que veas va a OBSERVACIONES, no a PROBLEMAS. Si te continúan por mensaje, lo nuevo (`VERIFICACIÓN`, `REVISIÓN ANTERIOR`) manda sobre lo anterior y respondes con el mismo reporte.
 
 ## Rechaza solo por bloqueantes
 
@@ -42,7 +42,7 @@ Con `RIESGO` ítem 2, también son siempre bloqueantes:
 
 Fuera de dominio es solo lo que la interfaz pública no puede producir. Un argumento ausente, vacío o de otro tipo que llega por la CLI, la API o los datos guardados (incluido un registro en el formato viejo o corrupto) está dentro del dominio: si el cambio lo maneja mal, se juzga como cualquier otro defecto.
 
-Lo que ya fallaba en la base, lo que de verdad está fuera de dominio, el estilo y las mejoras opcionales van a OBSERVACIONES.
+Un defecto reproducible que causa el cambio es un PROBLEMA, nunca una OBSERVACIÓN. Las OBSERVACIONES son lo que ya fallaba en la base, lo que de verdad está fuera de dominio, el estilo y lo opcional.
 
 ## Reporte
 

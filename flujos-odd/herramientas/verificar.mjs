@@ -10,6 +10,8 @@
 // Corre todos los pasos (aunque uno falle) con CI=1, cada uno con un tope de `timeoutSeg` (600 por defecto); al
 // vencer se corta con sus procesos. Salida corta: una línea por paso y, solo de los que fallan, las últimas
 // TOPE_DETALLE líneas. Sin caché.
+// Con una corrida abierta cuya marca trae `diferenciales` (los que guardó `odd.mjs --diferencial`), los repite al final contra
+// la BASE de la marca (validados otra vez con la guardia): uno que DIFIERE o que la guardia niega cuenta como el paso `diferencial`.
 //
 //   node ~/.claude/flujos-odd/verificar.mjs
 //
@@ -19,7 +21,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { raizDe } from './guardia.mjs'
+import { raizDe, marcaDe, corridaAbierta, motivoComando } from './guardia.mjs'
+import { diferencial } from './copia.mjs'
 
 const WIN = process.platform === 'win32'
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g
@@ -85,7 +88,7 @@ function cortar(hijo) {
 }
 
 /** Corre un paso en `raiz`: `{ codigo, segundos, salida, vencido }`. */
-function correrPaso(paso, raiz) {
+export function correrPaso(paso, raiz) {
   return new Promise((resolver) => {
     const inicio = Date.now()
     const hijo = spawn(paso.cmd, { cwd: raiz, shell: true, env: { ...process.env, CI: '1', FORCE_COLOR: '0' }, detached: !WIN, windowsHide: true })
@@ -108,6 +111,42 @@ function correrPaso(paso, raiz) {
   })
 }
 
+/** Los diferenciales guardados en la marca de la corrida abierta: `{ base, cmds }`; `cmds` vacío si no hay o no son un arreglo. */
+function diferencialesDe(raiz) {
+  if (!corridaAbierta(raiz)) return { base: null, cmds: [] }
+  const marca = leerJson(marcaDe(raiz))
+  const cmds = Array.isArray(marca?.diferenciales) ? marca.diferenciales.filter((c) => typeof c === 'string' && c.trim()) : []
+  return { base: typeof marca?.base === 'string' ? marca.base : null, cmds }
+}
+
+/** Repite cada diferencial guardado: `{ filas, detalles, fallo }`. Un comando que la guardia niega no se ejecuta. */
+async function repetirDiferenciales(raiz) {
+  const { base, cmds } = diferencialesDe(raiz)
+  const filas = []
+  const detalles = []
+  let fallo = false
+  for (const cmd of cmds) {
+    const motivo = motivoComando(cmd, { rol: 'ejecutor', raiz })
+    if (motivo) {
+      fallo = true
+      filas.push(`✗ diferencial: ${cmd} · negado por la guardia: ${motivo}`)
+      continue
+    }
+    try {
+      const r = await diferencial(raiz, base, cmd)
+      filas.push(`${r.igual ? '✓' : '✗'} ${r.lineas[0]}`)
+      if (!r.igual) {
+        fallo = true
+        detalles.push(`── diferencial: ${cmd}`, ...r.lineas.slice(1))
+      }
+    } catch (e) {
+      fallo = true
+      filas.push(`✗ diferencial: ${cmd} · ${e.message}`)
+    }
+  }
+  return { filas, detalles, fallo }
+}
+
 async function main() {
   const raiz = raizDe(process.env.CLAUDE_PROJECT_DIR || process.cwd())
   const { origen, pasos } = pasosDe(raiz)
@@ -128,6 +167,10 @@ async function main() {
     const { lineas, cortadas } = colaDe(r.salida)
     detalles.push(`── ${paso.nombre}: ${paso.cmd}${cortadas ? ` (últimas ${lineas.length} líneas de ${lineas.length + cortadas})` : ''}`, ...lineas)
   }
+  const dif = await repetirDiferenciales(raiz)
+  filas.push(...dif.filas)
+  detalles.push(...dif.detalles)
+  if (dif.fallo) fallidos.push('diferencial')
   const resultado = fallidos.length ? `RESULTADO: ROJO (${fallidos.join(', ')})` : 'RESULTADO: VERDE'
   if (fallidos.length) console.log(`${resultado} · pasos de ${origen}`)
   console.log(filas.join('\n'))

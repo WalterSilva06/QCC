@@ -11,6 +11,7 @@
 //   node ~/.claude/flujos-odd/odd.mjs --cancelar
 //   node ~/.claude/flujos-odd/odd.mjs --ultimos [<n>]
 //   node ~/.claude/flujos-odd/odd.mjs --copia-base <BASE>
+//   node ~/.claude/flujos-odd/odd.mjs --diferencial [--base <BASE>] -- <comando>
 //   node ~/.claude/flujos-odd/odd.mjs --limpiar -- <rutas>
 //
 // --inicio: toma una foto del árbol (versionados + nuevos no ignorados) como commit suelto, que es la BASE, y la
@@ -26,12 +27,19 @@
 // --diff: el cambio desde la BASE contra una foto nueva (incluye archivos nuevos), con --stat y recortado a TOPE_DIFF líneas.
 // Con --stat, solo el resumen: es el control tras un despacho, y no cuenta como el --diff del autochequeo.
 // --cierre: anota una fila en `registros/odd.jsonl` con el costo y el control de proceso, e imprime CAMBIOS, COSTO y PROCESO.
+// Si la config trae `aceptacion` (un comando, o `{ cmd, timeoutSeg? }`; 600 s por defecto), lo corre desde la raíz del repo y
+// anota y imprime `ACEPTACIÓN: <pasan>/<total>` (su última línea `ACEPTACION: p/t`; si no, el resumen TAP; si no, el código de salida).
 // En una grande con riesgo (`--riesgo` distinto de «ninguno»), PROCESO no exige el `--diff` entero: lo revisa el revisor.
 // --plan, --diff y --cierre imprimen `CONTEXTO: <n>k`, el del último pedido del orquestador, leído del transcript.
 // --cancelar: borra la marca de corrida abierta sin anotar nada en `registros/odd.jsonl`, para un pedido que no llegó a
 // ser una corrida (vacío o solo de investigar); imprime `CANCELADA: …` y sale con código 0 haya o no marca.
 // --ultimos: las últimas corridas anotadas (10 por defecto), con el promedio y el costo real (con el reporte).
 // --copia-base: el árbol de la BASE en un temporal nuevo, para comparar contra él; imprime `ODD_COPIA=<ruta>`.
+// --diferencial: corre el comando (lo que sigue a `--`) en una copia de la BASE y en el repo, cada uno con su `$ODD_DIF_DIR` y
+// `CI=1`, y compara salida, errores y código de salida; imprime `DIFERENCIAL: <cmd> → igual` (código 0) o `→ DIFIERE` con las
+// líneas que cambian (código 1). La BASE sale de `--base` o de la marca. Valida el comando con la guardia (rol ejecutor): sin
+// comando, sin BASE o negado, sale con ERROR y código 2 sin ejecutar ni guardar nada. Guarda el comando en la marca
+// (`diferenciales`) para que `verificar.mjs` lo repita.
 // --limpiar: borra las rutas que están dentro de un temporal (no el temporal mismo); las demás quedan, con su motivo.
 // Sin candado ni estado: lo que el flujo tiene que recordar va en la salida o en `odd/tasks/`.
 // `ODD_REGISTROS` cambia la carpeta de registros (los tests la llevan a un temporal).
@@ -41,7 +49,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { raizDe, rutaNativa, enTemporal, reglasDelProyecto, marcaDe } from './guardia.mjs'
+import { raizDe, rutaNativa, enTemporal, reglasDelProyecto, marcaDe, anotarMarca, corridaAbierta, motivoComando } from './guardia.mjs'
+import { copiaBase, diferencial } from './copia.mjs'
+import { correrPaso } from './verificar.mjs'
 import { costoDelFlujo, contextoActual, finDeCorrida, filasDe, sesionDe, resumenDeCosto, resumenDeTokens, dolares, miles } from './costo.mjs'
 import { procesoDe, lineaDeProceso, TOPE_CONTEXTO } from './proceso.mjs'
 
@@ -120,7 +130,7 @@ function configDelProyecto() {
 // ── Puras ───────────────────────────────────────────────────────────────────
 
 /**
- * Opciones de la línea de comandos: `modo` (inicio | plan | previsto | diff | cierre | cancelar | ultimos | copia-base | limpiar), los valores
+ * Opciones de la línea de comandos: `modo` (inicio | plan | previsto | diff | cierre | cancelar | ultimos | copia-base | diferencial | limpiar), los valores
  * con nombre y las `rutas` que siguen a `--`. Un valor que falta queda `undefined`.
  */
 export function opcionesDe(args) {
@@ -132,7 +142,7 @@ export function opcionesDe(args) {
     const v = i >= 0 ? propias[i + 1] : undefined
     return v === undefined || v.startsWith('--') ? undefined : v
   }
-  const modo = ['cancelar', 'cierre', 'diff', 'inicio', 'plan', 'previsto', 'ultimos', 'copia-base', 'limpiar'].find((m) => propias.includes(`--${m}`)) ?? null
+  const modo = ['cancelar', 'cierre', 'diff', 'inicio', 'plan', 'previsto', 'ultimos', 'copia-base', 'diferencial', 'limpiar'].find((m) => propias.includes(`--${m}`)) ?? null
   return {
     modo,
     base: modo === 'diff' || modo === 'copia-base' ? valor(`--${modo}`) : valor('--base'),
@@ -271,10 +281,10 @@ const sinNulos = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v
 
 /**
  * La fila de `odd.jsonl`. `costo` es el de costo.mjs (o null); `cambios`, el de `sumaNumstat`; `proceso`, la línea de
- * PROCESO; `sesion`, el transcript, para recalcular el costo real en `--ultimos`.
+ * PROCESO; `aceptacion`, `{ pasan, total }` (solo si la config lo pide); `sesion`, el transcript, para recalcular el costo real en `--ultimos`.
  */
-export function filaDeCorrida({ t, raiz, base, resultado, tamano, riesgo, revision, titulo, proceso, costo = null, cambios, sesion } = {}) {
-  return sinNulos({ v: 1, t, raiz, base, titulo, resultado, tamano, riesgo, revision, proceso, cambios, costo, sesion })
+export function filaDeCorrida({ t, raiz, base, resultado, tamano, riesgo, revision, titulo, proceso, costo = null, cambios, aceptacion, sesion } = {}) {
+  return sinNulos({ v: 1, t, raiz, base, titulo, resultado, tamano, riesgo, revision, proceso, cambios, aceptacion, costo, sesion })
 }
 
 /** Una línea del listado `--ultimos`. Con `costoReal` (calculado al listar), el costo es ese, junto al del cierre. */
@@ -284,7 +294,7 @@ export function lineaDeCorrida(f) {
   const c = f.costoReal ?? f.costo
   const informes = c?.hallazgos?.revisor ?? []
   const hallazgos = informes.length ? `hallazgos ${informes.map((h) => `${h.problemas}p/${h.observaciones}o`).join(' → ')}` : null
-  const datos = [f.tamano, f.riesgo && `Riesgo: ${f.riesgo}`, f.revision && `revisión ${f.revision}`, hallazgos, f.proceso && `PROCESO: ${f.proceso}`, f.resultado, f.cambios && `+${f.cambios.mas} −${f.cambios.menos}`].filter(Boolean)
+  const datos = [f.tamano, f.riesgo && `Riesgo: ${f.riesgo}`, f.revision && `revisión ${f.revision}`, hallazgos, f.proceso && `PROCESO: ${f.proceso}`, Number.isFinite(f.aceptacion?.pasan) && Number.isFinite(f.aceptacion?.total) && `aceptación ${f.aceptacion.pasan}/${f.aceptacion.total}`, f.resultado, f.cambios && `+${f.cambios.mas} −${f.cambios.menos}`].filter(Boolean)
   const costo = c ? resumenDeCosto(c, f.costoReal && f.costo ? f.costo.usd : null) + (c.tokens ? ` · ${resumenDeTokens(c.tokens)}` : '') : 'sin costo'
   return `${fecha} · ${repo} · ${costo}${datos.length ? ` · ${datos.join(' · ')}` : ''}${f.titulo ? ` · ${f.titulo}` : ''}`
 }
@@ -334,14 +344,7 @@ function contexto(base, sesion) {
 
 /** Anota el tamaño en la marca de la corrida abierta, para la guardia; sin marca (sin `--inicio`) no hace nada. */
 function anotarTamano(tamano) {
-  const marca = marcaDe(RAIZ)
-  let datos
-  try {
-    datos = JSON.parse(fs.readFileSync(marca, 'utf8'))
-  } catch {
-    return
-  }
-  fs.writeFileSync(marca, JSON.stringify({ ...datos, tamano }) + '\n')
+  anotarMarca(RAIZ, { tamano })
 }
 
 function plan(o) {
@@ -379,22 +382,51 @@ function diff(base, rutas, soloStat = false) {
   if (sobran) console.log(`\n… recortado: ${sobran} líneas más. Pide por ruta: --diff ${corto(base)} -- <ruta>`)
 }
 
-function cierre({ base, resultado, tamano, riesgo, revision, titulo }) {
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g
+
+/** El comando de `aceptacion` de la config y su tope: `{ cmd, timeoutSeg }`; null si no la pide o es de otro tipo. */
+function aceptacionDe(config) {
+  const a = config?.aceptacion
+  const cmd = typeof a === 'string' ? a : a && typeof a === 'object' && !Array.isArray(a) ? a.cmd : null
+  if (typeof cmd !== 'string' || !cmd.trim()) return null
+  const tope = typeof a === 'object' ? Number(a.timeoutSeg) : 0
+  return { cmd, timeoutSeg: tope > 0 ? tope : 600 }
+}
+
+/**
+ * `{ pasan, total }` de una corrida de aceptación: la última línea `ACEPTACION: p/t`; si no, el resumen TAP (`# pass N` y
+ * `# fail M`); si no, el código de salida (0 → 1/1; otro o vencido → 0/1).
+ */
+function resultadoDeAceptacion({ codigo, salida, vencido }) {
+  const texto = String(salida ?? '').replace(ANSI, '')
+  const lineas = [...texto.matchAll(/^\s*ACEPTACI[OÓ]N:\s*(\d+)\s*\/\s*(\d+)\s*$/gim)]
+  if (lineas.length) return { pasan: Number(lineas.at(-1)[1]), total: Number(lineas.at(-1)[2]) }
+  const pass = [...texto.matchAll(/^#\s*pass\s+(\d+)\s*$/gm)].at(-1)
+  const fail = [...texto.matchAll(/^#\s*fail\s+(\d+)\s*$/gm)].at(-1)
+  if (pass && fail) return { pasan: Number(pass[1]), total: Number(pass[1]) + Number(fail[1]) }
+  return !vencido && codigo === 0 ? { pasan: 1, total: 1 } : { pasan: 0, total: 1 }
+}
+
+async function cierre({ base, resultado, tamano, riesgo, revision, titulo }) {
   exigirBase(base)
   if (!/^(COMPLETO|DETENIDO)\b/.test(resultado ?? '')) throw new Error('--resultado tiene que ser COMPLETO o DETENIDO')
   const t = new Date().toISOString()
   const cambios = sumaNumstat(git(['diff', '--numstat', base, foto()]))
+  const config = configDelProyecto()
   let sesion = null
   let costo = null
   let proceso = null
   try {
     sesion = sesionDe(RAIZ, base)
     costo = sesion && costoDelFlujo(RAIZ, base, { hasta: t, sesion })
-    proceso = sesion && lineaDeProceso(procesoDe(filasDe(sesion.archivo), { raiz: RAIZ, inicio: sesion.inicio, hasta: t, tamano, riesgo, explorar: explorarDe(configDelProyecto()) }))
+    proceso = sesion && lineaDeProceso(procesoDe(filasDe(sesion.archivo), { raiz: RAIZ, inicio: sesion.inicio, hasta: t, tamano, riesgo, explorar: explorarDe(config) }))
   } catch {
     // Sin transcripts legibles: la fila va sin costo ni proceso.
   }
   fs.rmSync(marcaDe(RAIZ), { force: true })
+  // La aceptación solo corre si la config la pide.
+  const pedida = aceptacionDe(config)
+  const aceptacion = pedida ? resultadoDeAceptacion(await correrPaso(pedida, RAIZ)) : undefined
   const archivo = registroDe()
   fs.mkdirSync(path.dirname(archivo), { recursive: true })
   // Un --cierre repetido (tras arreglar un desvío) reemplaza la fila de la misma corrida.
@@ -412,11 +444,12 @@ function cierre({ base, resultado, tamano, riesgo, revision, titulo }) {
       return l.trim() !== ''
     }
   })
-  const fila = JSON.stringify(filaDeCorrida({ t, raiz: RAIZ, base, resultado, tamano, riesgo, revision, titulo, proceso, costo, cambios, sesion: sesion?.archivo }))
+  const fila = JSON.stringify(filaDeCorrida({ t, raiz: RAIZ, base, resultado, tamano, riesgo, revision, titulo, proceso, costo, cambios, aceptacion, sesion: sesion?.archivo }))
   fs.writeFileSync(archivo, [...otras, fila].join('\n') + '\n')
   console.log(`CAMBIOS: ${cambios.archivos} archivo(s) · +${cambios.mas} −${cambios.menos}`)
   console.log(`COSTO: ${costo ? resumenDeCosto(costo) : 'sin datos (no encontré la sesión en los transcripts)'}`)
   console.log(`PROCESO: ${proceso ?? 'sin datos'}`)
+  if (aceptacion) console.log(`ACEPTACIÓN: ${aceptacion.pasan}/${aceptacion.total}`)
   console.log(lineaDeContexto(sesion ? contexto(base, sesion) : null))
 }
 
@@ -467,22 +500,34 @@ function ultimos(n) {
   }
 }
 
-/** Copia el árbol de la BASE en un temporal nuevo con un índice temporal: no toca el del usuario. */
-function copiaBase(base) {
-  exigirBase(base)
-  const destino = fs.mkdtempSync(path.join(os.tmpdir(), 'qcc-odd-base-'))
-  const indice = path.join(os.tmpdir(), `qcc-odd-indice-${process.pid}-${Date.now()}`)
-  const env = { ...process.env, GIT_INDEX_FILE: indice }
+/** `--copia-base`: el árbol de la BASE en un temporal nuevo (lo hace copia.mjs); imprime su ruta. */
+function copiaDeBase(base) {
+  console.log(`ODD_COPIA=${copiaBase(RAIZ, base).replaceAll('\\', '/')}`)
+}
+
+/**
+ * `--diferencial`: corre el comando en la copia de la BASE y en el repo y los compara. Sin comando, sin BASE o con el comando
+ * negado por la guardia, no ejecuta ni guarda nada (código 2). Guarda el comando en la marca, sin repetidos.
+ */
+async function diferencialDe(o) {
+  const cmd = o.rutas.join(' ').trim()
+  if (!cmd) throw errorDePlan('--diferencial: falta el comando (--diferencial -- <comando>)')
+  let marca = null
   try {
-    git(['read-tree', base], { env })
-    git(['checkout-index', '-a', `--prefix=${destino.replaceAll('\\', '/')}/`], { env })
-  } catch (e) {
-    fs.rmSync(destino, { recursive: true, force: true })
-    throw e
-  } finally {
-    fs.rmSync(indice, { force: true })
+    // Una marca de más de 12 h cuenta como sin marca: ni aporta la BASE ni se reescribe.
+    if (corridaAbierta(RAIZ)) marca = JSON.parse(fs.readFileSync(marcaDe(RAIZ), 'utf8'))
+  } catch {
+    // Sin marca: la BASE tiene que venir en --base.
   }
-  console.log(`ODD_COPIA=${destino.replaceAll('\\', '/')}`)
+  const base = o.base ?? (typeof marca?.base === 'string' ? marca.base : undefined)
+  if (!base) throw errorDePlan('--diferencial: falta la BASE (--base <ODD_BASE> o una corrida abierta con --inicio)')
+  const motivo = motivoComando(cmd, { rol: 'ejecutor', raiz: RAIZ })
+  if (motivo) throw errorDePlan(`Guardia /qcc-implementador-odd: ${motivo}`)
+  const r = await diferencial(RAIZ, base, cmd)
+  for (const l of r.lineas) console.log(l)
+  const previos = Array.isArray(marca?.diferenciales) ? marca.diferenciales.filter((c) => typeof c === 'string') : []
+  if (marca) anotarMarca(RAIZ, { diferenciales: [...new Set([...previos, cmd])] })
+  if (!r.igual) process.exitCode = 1
 }
 
 function limpiar(rutas) {
@@ -502,19 +547,20 @@ function limpiar(rutas) {
   if (quedan.length) console.log(`NO BORRADOS: ${quedan.join(' · ')}`)
 }
 
-function main() {
+async function main() {
   const o = opcionesDe(process.argv.slice(2))
   try {
     if (o.modo === 'inicio') inicio()
     else if (o.modo === 'plan') plan(o)
     else if (o.modo === 'previsto') previsto(o)
     else if (o.modo === 'diff') diff(o.base, o.rutas, o.stat)
-    else if (o.modo === 'cierre') cierre(o)
+    else if (o.modo === 'cierre') await cierre(o)
     else if (o.modo === 'cancelar') cancelar()
     else if (o.modo === 'ultimos') ultimos(o.ultimos)
-    else if (o.modo === 'copia-base') copiaBase(o.base)
+    else if (o.modo === 'copia-base') copiaDeBase(o.base)
+    else if (o.modo === 'diferencial') await diferencialDe(o)
     else if (o.modo === 'limpiar') limpiar(o.rutas)
-    else throw new Error('uso: odd.mjs --inicio | --plan --base <BASE> --tamano … --reglas <n> --riesgo "1:…;…;6:…" [--bordes "…"] | --previsto chico|grande | --diff <BASE> [--stat] [-- <rutas>] | --cierre --base <BASE> --resultado … | --cancelar | --ultimos [<n>] | --copia-base <BASE> | --limpiar -- <rutas>')
+    else throw new Error('uso: odd.mjs --inicio | --plan --base <BASE> --tamano … --reglas <n> --riesgo "1:…;…;6:…" [--bordes "…"] | --previsto chico|grande | --diff <BASE> [--stat] [-- <rutas>] | --cierre --base <BASE> --resultado … | --cancelar | --ultimos [<n>] | --copia-base <BASE> | --diferencial [--base <BASE>] -- <comando> | --limpiar -- <rutas>')
   } catch (e) {
     console.log(`ERROR: ${e.message}`)
     process.exitCode = e.codigo ?? 1

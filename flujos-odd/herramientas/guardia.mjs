@@ -154,6 +154,19 @@ export function tamanoDeCorrida(raiz) {
   return leerJson(marcaDe(raiz))?.tamano ?? null
 }
 
+/** Mezcla `campos` en la marca de la corrida de `raiz`; sin marca o con JSON ilegible no hace nada y devuelve false. Nunca lanza. */
+export function anotarMarca(raiz, campos) {
+  try {
+    const marca = marcaDe(raiz)
+    const datos = leerJson(marca)
+    if (!datos) return false
+    fs.writeFileSync(marca, JSON.stringify({ ...datos, ...campos }) + '\n')
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** Raíz del repo git que contiene `dir`, o `dir` si no está en uno. */
 export function raizDe(dir) {
   let actual = path.resolve(dir)
@@ -672,6 +685,11 @@ export function evaluar(evento, rol, raiz = raizDe(process.env.CLAUDE_PROJECT_DI
     const cwd = typeof evento?.cwd === 'string' && evento.cwd ? path.resolve(rutaNativa(evento.cwd)) : raiz
     // El hook del skill sigue activo toda la sesión: el orquestador solo se guarda durante una corrida y fuera de los subagentes.
     if (rol === 'orquestador' && (evento?.agent_type || evento?.agent_id || !corridaAbierta(raiz))) return null
+    // Un despacho al explorador con `TAMAÑO: grande` anota «grande» en la marca, sin esperar a `--previsto`. Nunca niega.
+    if ((herramienta === 'Agent' || herramienta === 'Task') && rol === 'orquestador') {
+      if (entrada.subagent_type === 'qcc-odd-explorador' && typeof entrada.prompt === 'string' && /^\s*TAMAÑO:\s*grande\b/im.test(entrada.prompt)) anotarMarca(raiz, { tamano: 'grande' })
+      return null
+    }
     if (herramienta === 'Bash' || herramienta === 'PowerShell') return motivoComando(String(entrada.command ?? ''), { rol, raiz, cwd })
     if (['Edit', 'Write', 'NotebookEdit', 'MultiEdit'].includes(herramienta)) {
       if (rol === 'revisor') return 'el revisor no edita archivos'

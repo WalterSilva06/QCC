@@ -12,6 +12,8 @@ import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, motivoComando, tramosDe, raizDe, marcaDe, reglasDelProyecto } from './guardia.mjs'
+import { anotarMarca } from './guardia.mjs'
+import { diferencial } from './copia.mjs'
 import { pasosDe, colaDe } from './verificar.mjs'
 import { opcionesDe, criticosLegibles, tareasDe, sumaNumstat, recortar, filaDeCorrida, lineaDeCorrida, riesgoDe, lineasDePlan, lineaDeContexto, cuentaCodigo, explorarDe } from './odd.mjs'
 import { costoDelFlujo, costoDePedido, hallazgosDe, contextoActual, finDeCorrida } from './costo.mjs'
@@ -598,6 +600,62 @@ test('verificar: corta un paso que pasa su tope', () => {
   assert.match(r.salida, /✗ lento · \d+ s · cortado a los 1 s/)
 })
 
+test('verificar: repite los diferenciales de la marca y un DIFIERE o un comando negado dejan ROJO', () => {
+  const raiz = repo('v-dif', {
+    '.claude/qcc-implementador-odd.json': JSON.stringify({ verificar: [{ nombre: 'bien', cmd: 'node -e "0"' }] }),
+    'valor.txt': 'uno\n',
+    'valor.js': "process.stdout.write(require('fs').readFileSync('valor.txt', 'utf8'))\n",
+  })
+  const commits = () => execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  try {
+    // Sin corrida abierta no hay diferenciales que repetir.
+    const sin = correr(VERIFICAR, raiz)
+    assert.equal(sin.codigo, 0, sin.salida)
+    assert.doesNotMatch(sin.salida, /DIFERENCIAL/)
+
+    correr(ODD, raiz, '--inicio')
+    // Todo lo que no sea un arreglo se ignora.
+    for (const raro of ['node valor.js', 7, { cmd: 'node valor.js' }, null]) {
+      anotarMarca(raiz, { diferenciales: raro })
+      const r = correr(VERIFICAR, raiz)
+      assert.equal(r.codigo, 0, `${JSON.stringify(raro)}\n${r.salida}`)
+      assert.doesNotMatch(r.salida, /DIFERENCIAL/)
+    }
+
+    // Igual: una línea por comando y VERDE.
+    assert.equal(correr(ODD, raiz, '--diferencial', '--', 'node', 'valor.js').codigo, 0)
+    const igual = correr(VERIFICAR, raiz)
+    assert.equal(igual.codigo, 0, igual.salida)
+    assert.match(igual.salida, /✓ DIFERENCIAL: node valor\.js → igual/)
+    assert.match(igual.salida, /RESULTADO: VERDE\n$/)
+
+    // DIFIERE: tras editar después del diferencial, verificar.mjs lo repite y lo ve.
+    fs.writeFileSync(path.join(raiz, 'valor.txt'), 'dos\n')
+    const difiere = correr(VERIFICAR, raiz)
+    assert.equal(difiere.codigo, 1)
+    assert.match(difiere.salida, /^RESULTADO: ROJO \(diferencial\)/)
+    assert.match(difiere.salida, /✓ bien/)
+    assert.match(difiere.salida, /✗ DIFERENCIAL: node valor\.js → DIFIERE/)
+    assert.match(difiere.salida, /^- uno\n\+ dos$/m)
+
+    // Negado por la guardia: ROJO, y no se ejecuta.
+    anotarMarca(raiz, { diferenciales: ['git commit --allow-empty -m x'] })
+    const antes = commits()
+    const negado = correr(VERIFICAR, raiz)
+    assert.equal(negado.codigo, 1)
+    assert.match(negado.salida, /^RESULTADO: ROJO \(diferencial\)/)
+    assert.match(negado.salida, /✗ diferencial: git commit --allow-empty -m x · negado por la guardia: git commit modifica/)
+    assert.equal(commits(), antes)
+
+    // Un paso que falla y un diferencial que difiere salen juntos.
+    anotarMarca(raiz, { diferenciales: ['node valor.js'] })
+    fs.writeFileSync(path.join(raiz, '.claude', 'qcc-implementador-odd.json'), JSON.stringify({ verificar: [{ nombre: 'mal', cmd: 'node -e "process.exit(2)"' }] }))
+    assert.match(correr(VERIFICAR, raiz).salida, /^RESULTADO: ROJO \(mal, diferencial\)/)
+  } finally {
+    fs.rmSync(marcaDe(raiz), { force: true })
+  }
+})
+
 // ── odd ─────────────────────────────────────────────────────────────────────
 
 test('odd: opcionesDe', () => {
@@ -761,6 +819,71 @@ test('odd: --copia-base copia la BASE y --limpiar borra solo dentro del temporal
   assert.match(correr(ODD, raiz, '--limpiar').salida, /ERROR: faltan las rutas/)
 })
 
+test('odd: --diferencial compara la BASE con el repo, valida con la guardia y guarda el comando en la marca', () => {
+  assert.deepEqual([opcionesDe(['--diferencial', '--base', 'abc', '--', 'node', 'x.js']).modo, opcionesDe(['--diferencial', '--base', 'abc', '--', 'node', 'x.js']).base, opcionesDe(['--diferencial', '--', 'node', 'x.js']).rutas], ['diferencial', 'abc', ['node', 'x.js']])
+  const raiz = repo('dif-cli', {
+    'igual.js': "console.log('hola')\n",
+    'valor.txt': 'uno\n',
+    'valor.js': "process.stdout.write(require('fs').readFileSync('valor.txt', 'utf8'))\n",
+  })
+  const marca = () => JSON.parse(fs.readFileSync(marcaDe(raiz), 'utf8'))
+  const commits = () => execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  const propios = () => fs.readdirSync(os.tmpdir()).filter((n) => /^qcc-odd-(base|dif)-/.test(n))
+  const antes = new Set(propios())
+  try {
+    // Sin marca ni --base no hay BASE.
+    const sinBase = correr(ODD, raiz, '--diferencial', '--', 'node', 'igual.js')
+    assert.equal(sinBase.codigo, 2)
+    assert.match(sinBase.salida, /^ERROR: --diferencial: falta la BASE/)
+
+    const base = linea(correr(ODD, raiz, '--inicio').salida, 'ODD_BASE=')
+    // Sin comando (ni `--`, ni nada después, ni solo espacios): nada se ejecuta ni se guarda.
+    for (const args of [['--diferencial'], ['--diferencial', '--'], ['--diferencial', '--', ' ']]) {
+      const vacio = correr(ODD, raiz, ...args)
+      assert.equal(vacio.codigo, 2, args.join(' '))
+      assert.match(vacio.salida, /^ERROR: --diferencial: falta el comando/, args.join(' '))
+    }
+    assert.equal(marca().diferenciales, undefined)
+
+    // Negado por la guardia: ERROR con su motivo, código 2, ni se ejecuta ni se guarda.
+    const commitsAntes = commits()
+    const negado = correr(ODD, raiz, '--diferencial', '--', 'git', 'commit', '--allow-empty', '-m', 'x')
+    assert.equal(negado.codigo, 2)
+    assert.match(negado.salida, /^ERROR: Guardia \/qcc-implementador-odd: git commit modifica el repositorio/)
+    assert.equal(commits(), commitsAntes)
+    assert.equal(marca().diferenciales, undefined)
+
+    // Una BASE desconocida falla claro y tampoco guarda.
+    const desconocida = correr(ODD, raiz, '--diferencial', '--base', 'deadbeef', '--', 'node', 'igual.js')
+    assert.match(desconocida.salida, /ERROR: BASE desconocida/)
+    assert.equal(marca().diferenciales, undefined)
+
+    // Igual: código 0, la línea de copia.mjs y el comando en la marca (una sola vez aunque se repita).
+    const igual = correr(ODD, raiz, '--diferencial', '--', 'node', 'igual.js')
+    assert.equal(igual.codigo, 0, igual.salida)
+    assert.equal(igual.salida, 'DIFERENCIAL: node igual.js → igual\n')
+    assert.equal(correr(ODD, raiz, '--diferencial', '--', 'node', 'igual.js').codigo, 0)
+    assert.deepEqual(marca().diferenciales, ['node igual.js'])
+    assert.equal(marca().base, base)
+
+    // DIFIERE: código 1, las líneas que cambian, y también se guarda.
+    fs.writeFileSync(path.join(raiz, 'valor.txt'), 'dos\n')
+    const difiere = correr(ODD, raiz, '--diferencial', '--', 'node', 'valor.js')
+    assert.equal(difiere.codigo, 1, difiere.salida)
+    assert.equal(difiere.salida, 'DIFERENCIAL: node valor.js → DIFIERE\n- uno\n+ dos\ncódigo de salida: copia 0 · repo 0\n')
+    assert.deepEqual(marca().diferenciales, ['node igual.js', 'node valor.js'])
+
+    // Con --base y sin marca funciona y no crea una marca.
+    fs.rmSync(marcaDe(raiz), { force: true })
+    const explicita = correr(ODD, raiz, '--diferencial', '--base', base, '--', 'node', 'igual.js')
+    assert.equal(explicita.codigo, 0, explicita.salida)
+    assert.equal(fs.existsSync(marcaDe(raiz)), false)
+    assert.deepEqual(propios().filter((n) => !antes.has(n)), [])
+  } finally {
+    fs.rmSync(marcaDe(raiz), { force: true })
+  }
+})
+
 test('odd: errores', () => {
   const raiz = repo('errores', { 'a.txt': 'x\n' })
   const sinBase = correr(ODD, raiz, '--diff', 'deadbeef')
@@ -891,6 +1014,53 @@ test('odd: CONTEXTO, PROCESO y costo real con un transcript de juguete', () => {
   assert.equal(conRiesgo.codigo, 0, conRiesgo.salida)
   assert.match(conRiesgo.salida, /PROCESO: sin verificar\.mjs · contexto máx\./)
   assert.doesNotMatch(conRiesgo.salida, /sin --diff/)
+})
+
+test('odd: --cierre corre la aceptación de la config y la anota en odd.jsonl y en --ultimos', () => {
+  const archivos = {
+    'a.txt': 'x\n',
+    'marcado.js': "console.log('ACEPTACION: 1/4')\nconsole.log('ACEPTACION: 3/5')\nprocess.exit(1)\n",
+    'tap.js': "console.log('# tests 5')\nconsole.log('# pass 4')\nconsole.log('# fail 1')\nprocess.exit(1)\n",
+    'bien.js': '',
+    'mal.js': "console.error('falla')\nprocess.exit(3)\n",
+    'espera.js': 'setTimeout(() => {}, 20000)\n',
+  }
+  const leerFilas = () => fs.readFileSync(path.join(PRUEBAS, 'registros', 'odd.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+  const cierre = (nombre, config) => {
+    const raiz = repo(nombre, { ...archivos, '.claude/qcc-implementador-odd.json': JSON.stringify(config) })
+    const base = linea(correr(ODD, raiz, '--inicio').salida, 'ODD_BASE=')
+    const c = correr(ODD, raiz, '--cierre', '--base', base, '--resultado', 'COMPLETO', '--tamano', 'chico', '--riesgo', 'ninguno', '--revision', 'omitida')
+    assert.equal(c.codigo, 0, c.salida)
+    return { c, fila: leerFilas().find((f) => f.base === base), raiz, base }
+  }
+  const casos = [
+    ['una línea ACEPTACION gana a TAP y al código de salida', 'node marcado.js', { pasan: 3, total: 5 }],
+    ['el resumen TAP', { cmd: 'node tap.js' }, { pasan: 4, total: 5 }],
+    ['el código de salida 0 es 1/1', 'node bien.js', { pasan: 1, total: 1 }],
+    ['un comando que falla sin resumen es 0/1', 'node mal.js', { pasan: 0, total: 1 }],
+    ['un comando que vence es 0/1', { cmd: 'node espera.js', timeoutSeg: 1 }, { pasan: 0, total: 1 }],
+  ]
+  casos.forEach(([titulo, aceptacion, esperado], k) => {
+    const { c, fila } = cierre(`aceptacion-${k}`, { aceptacion })
+    assert.deepEqual(fila.aceptacion, esperado, titulo)
+    assert.match(c.salida, new RegExp(`\nPROCESO: .*\nACEPTACIÓN: ${esperado.pasan}/${esperado.total}\nCONTEXTO: `), titulo)
+  })
+
+  // Sin la clave, vacía o de otro tipo: no corre nada, no imprime y la fila queda como siempre.
+  const otros = [undefined, '', '   ', 5, true, ['node bien.js'], {}, { cmd: 7 }, { cmd: '' }, null]
+  otros.forEach((aceptacion, k) => {
+    const { c, fila } = cierre(`aceptacion-sin-${k}`, aceptacion === undefined ? {} : { aceptacion })
+    assert.doesNotMatch(c.salida, /ACEPTACI/, JSON.stringify(aceptacion))
+    assert.equal('aceptacion' in fila, false, JSON.stringify(aceptacion))
+  })
+
+  // --ultimos la muestra en la fila que la tiene y no cambia las demás.
+  const { raiz } = cierre('aceptacion-ultimos', { aceptacion: 'node marcado.js' })
+  const con = correr(ODD, raiz, '--ultimos', '1').salida
+  assert.match(con, / · aceptación 3\/5 · COMPLETO/)
+  const { raiz: sinClave } = cierre('aceptacion-ultimos-sin', {})
+  assert.doesNotMatch(correr(ODD, sinClave, '--ultimos', '1').salida, /aceptación/)
+  assert.equal(lineaDeCorrida({ t: '2026-01-01T10:00:00Z', raiz: 'D:/r', resultado: 'COMPLETO', aceptacion: { pasan: 'x', total: 1 } }).includes('aceptación'), false)
 })
 
 // ── costo ───────────────────────────────────────────────────────────────────
@@ -1161,6 +1331,27 @@ test('proceso: una grande con riesgo no exige el --diff entero', () => {
   assert.deepEqual(con(diferencial, { riesgo: 'ítem 2 (x)' }), ['editó después del último verificar.mjs', 'editó después del diferencial'])
 })
 
+test('proceso: odd.mjs --diferencial lo repite verificar.mjs, así que editar después no es un desvío aparte', () => {
+  const raiz = repo('proceso-diferencial', { 'src/a.js': 'x\n' })
+  const editar = ['Edit', { file_path: path.join(raiz, 'src', 'a.js') }]
+  const diferencial = ['Bash', { command: 'node ~/.claude/flujos-odd/odd.mjs --diferencial -- node test/x.js' }]
+  const con = (usos) => {
+    const t = transcript(usos)
+    return procesoDe(t.filas, { raiz, inicio: t.inicio, hasta: t.hasta }).desvios
+  }
+  // Editó después del diferencial y volvió a verificar: limpio.
+  assert.deepEqual(con([PLAN, editar, VERIFICAR_ODD, DIFF, diferencial, editar, VERIFICAR_ODD, DIFF]), [])
+  // Sin volver a verificar, solo avisa lo de verificar y el --diff, no «editó después del diferencial».
+  assert.deepEqual(con([PLAN, editar, VERIFICAR_ODD, DIFF, diferencial, editar]), ['editó después del último verificar.mjs', 'editó después del último --diff'])
+  // El diferencial manual (--copia-base) conserva su desvío.
+  const copia = 'C:/Users/x/AppData/Local/Temp/qcc-odd-base-AbC123'
+  const manual = ['Bash', { command: 'node ~/.claude/flujos-odd/odd.mjs --copia-base b0de' }, 50_000, `ODD_COPIA=${copia}`]
+  assert.deepEqual(con([PLAN, editar, VERIFICAR_ODD, DIFF, manual, editar, VERIFICAR_ODD, DIFF]), ['editó después del diferencial'])
+  // Un --diferencial posterior al manual lo reemplaza; uno manual posterior al --diferencial vuelve a pedirlo.
+  assert.deepEqual(con([PLAN, editar, VERIFICAR_ODD, DIFF, manual, diferencial, editar, VERIFICAR_ODD, DIFF]), [])
+  assert.deepEqual(con([PLAN, editar, VERIFICAR_ODD, DIFF, diferencial, manual, editar, VERIFICAR_ODD, DIFF]), ['editó después del diferencial'])
+})
+
 // ── instalar ────────────────────────────────────────────────────────────────
 
 test('instalar: copia, no pisa lo editado en ~/.claude y --traer no corre sin edición', () => {
@@ -1179,4 +1370,170 @@ test('instalar: copia, no pisa lo editado en ~/.claude y --traer no corre sin ed
   assert.equal(frenado.status, 1)
   assert.match(frenado.stdout, /FRENADO .*flujos-odd\/odd\.mjs/)
   assert.match(instalar('--traer', '--revisar').stdout, /cambia .*odd\.mjs → .*flujos-odd[\\/]herramientas[\\/]odd\.mjs|cambia .*→ herramientas\/odd\.mjs/)
+})
+
+test('guardia: Agent/Task al explorador con TAMAÑO: grande anota «grande» en la marca y nunca niega', () => {
+  const raiz = repo('agent-grande', { 'a.txt': 'x\n' })
+  const marca = marcaDe(raiz)
+  const marcar = (contenido) => {
+    fs.mkdirSync(path.dirname(marca), { recursive: true })
+    fs.writeFileSync(marca, contenido)
+  }
+  const tamano = () => JSON.parse(fs.readFileSync(marca, 'utf8')).tamano
+  const despachar = (herramienta, entrada, { rol = 'orquestador', ...extra } = {}) => evaluar({ tool_name: herramienta, tool_input: entrada, ...extra }, rol, raiz)
+  const explorador = (prompt) => ({ subagent_type: 'qcc-odd-explorador', prompt })
+  try {
+    // Anota: Agent y Task, con cualquier mayúscula, en cualquier línea del prompt; siempre pasa.
+    for (const [herramienta, prompt] of [
+      ['Agent', 'BASE: abc\nTAMAÑO: grande\nPEDIDO: x'],
+      ['Task', 'TAMAÑO: grande'],
+      ['Agent', 'pedido\n  tamaño:   GRANDE · 9 reglas'],
+    ]) {
+      marcar(JSON.stringify({ base: 'abc' }))
+      assert.equal(despachar(herramienta, explorador(prompt)), null, prompt)
+      assert.deepEqual(JSON.parse(fs.readFileSync(marca, 'utf8')), { base: 'abc', tamano: 'grande' }, prompt)
+    }
+    // No anota (y pasa): chico, ambas opciones, sin subagent_type ni prompt, prompt que no es texto, otro agente, otro rol, dentro de un subagente.
+    const sinCambio = [
+      ['Agent', explorador('TAMAÑO: chico')],
+      ['Agent', explorador('TAMAÑO: chico | grande')],
+      ['Agent', explorador('el TAMAÑO: grande va en medio de la línea')],
+      ['Agent', { prompt: 'TAMAÑO: grande' }],
+      ['Task', { subagent_type: 'qcc-odd-explorador' }],
+      ['Agent', explorador({ texto: 'TAMAÑO: grande' })],
+      ['Agent', { subagent_type: 'qcc-odd-ejecutor', prompt: 'TAMAÑO: grande' }],
+      ['Agent', undefined],
+    ]
+    for (const [herramienta, entrada] of sinCambio) {
+      marcar('{}')
+      assert.equal(despachar(herramienta, entrada), null, JSON.stringify(entrada))
+      assert.equal(tamano(), undefined, JSON.stringify(entrada))
+    }
+    for (const extra of [{ rol: 'ejecutor' }, { rol: 'revisor' }, { agent_id: 'a1' }, { agent_type: 'qcc-odd-explorador' }]) {
+      marcar('{}')
+      assert.equal(despachar('Agent', explorador('TAMAÑO: grande'), extra), null)
+      assert.equal(tamano(), undefined, JSON.stringify(extra))
+    }
+    // Nunca baja «grande» a «chico».
+    marcar(JSON.stringify({ tamano: 'grande' }))
+    despachar('Agent', explorador('TAMAÑO: chico'))
+    assert.equal(tamano(), 'grande')
+    // Sin corrida abierta no crea la marca; con la marca ilegible, tampoco falla ni la toca.
+    fs.rmSync(marca, { force: true })
+    assert.equal(despachar('Agent', explorador('TAMAÑO: grande')), null)
+    assert.equal(fs.existsSync(marca), false)
+    marcar('no es json')
+    assert.equal(despachar('Agent', explorador('TAMAÑO: grande')), null)
+    assert.equal(fs.readFileSync(marca, 'utf8'), 'no es json')
+  } finally {
+    fs.rmSync(marca, { force: true })
+  }
+})
+
+test('guardia: anotarMarca mezcla campos en la marca y no hace nada sin marca legible', () => {
+  const raiz = repo('anotar-marca', { 'a.txt': 'x\n' })
+  const marca = marcaDe(raiz)
+  fs.rmSync(marca, { force: true })
+  try {
+    assert.equal(anotarMarca(raiz, { tamano: 'grande' }), false)
+    assert.equal(fs.existsSync(marca), false)
+    fs.mkdirSync(path.dirname(marca), { recursive: true })
+    for (const ilegible of ['no es json', '[1]', '']) {
+      fs.writeFileSync(marca, ilegible)
+      assert.equal(anotarMarca(raiz, { tamano: 'grande' }), false, ilegible)
+      assert.equal(fs.readFileSync(marca, 'utf8'), ilegible)
+    }
+    fs.writeFileSync(marca, JSON.stringify({ base: 'abc', tamano: 'chico' }))
+    assert.equal(anotarMarca(raiz, { tamano: 'grande', diferenciales: ['npm test'] }), true)
+    assert.deepEqual(JSON.parse(fs.readFileSync(marca, 'utf8')), { base: 'abc', tamano: 'grande', diferenciales: ['npm test'] })
+  } finally {
+    fs.rmSync(marca, { force: true })
+  }
+})
+
+test('copia: diferencial compara salida, errores y código de salida entre la BASE y el repo, y limpia sus temporales', async () => {
+  const raiz = repo('diferencial', {
+    'igual.js': "console.log('hola')\nconsole.error('aviso')\n",
+    'valor.txt': 'uno\n',
+    'valor.js': "process.stdout.write(require('fs').readFileSync('valor.txt', 'utf8'))\n",
+    'codigo.txt': '0',
+    'codigo.js': "process.exit(Number(require('fs').readFileSync('codigo.txt', 'utf8')))\n",
+    'errores.js': "for (let i = 0; i < 60; i++) console.error(require('fs').existsSync('valor.txt') && require('fs').readFileSync('valor.txt', 'utf8') === 'dos\\n' ? 'l' + i : 'm' + i)\n",
+    'espera.js': 'setTimeout(() => {}, 20000)\n',
+    'dir.js': "const fs = require('fs'), path = require('path')\nconst marca = path.join(process.env.ODD_DIF_DIR, 'estado')\nconsole.log(fs.existsSync(marca) ? 'existía' : 'nuevo', process.env.ODD_DIF_DIR, process.cwd(), process.env.CI)\nfs.writeFileSync(marca, 'x')\n",
+  })
+  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  const propios = () => fs.readdirSync(os.tmpdir()).filter((n) => /^qcc-odd-(base|dif)-/.test(n))
+  const antes = new Set(propios())
+
+  // Igual: la misma salida, los mismos errores y el mismo código.
+  const igual = await diferencial(raiz, base, 'node igual.js')
+  assert.equal(igual.igual, true)
+  assert.deepEqual(igual.lineas, ['DIFERENCIAL: node igual.js → igual'])
+  assert.deepEqual([igual.copia.salida, igual.copia.errores, igual.copia.codigo], ['hola\n', 'aviso\n', 0])
+  assert.deepEqual(igual.copia, igual.repo)
+
+  // `ODD_DIF_DIR` es una carpeta distinta y vacía en cada árbol, y las raíces salen normalizadas: queda igual con CI=1.
+  const dir = await diferencial(raiz, base, 'node dir.js')
+  assert.equal(dir.igual, true, dir.lineas.join('\n'))
+  assert.equal(dir.repo.salida, 'nuevo <DIF> <RAIZ> 1\n')
+
+  // Difiere por salida: lo que cambió sin commit está en el repo y no en la copia.
+  fs.writeFileSync(path.join(raiz, 'valor.txt'), 'dos\n')
+  const salida = await diferencial(raiz, base, 'node valor.js')
+  assert.equal(salida.igual, false)
+  assert.deepEqual(salida.lineas, ['DIFERENCIAL: node valor.js → DIFIERE', '- uno', '+ dos', 'código de salida: copia 0 · repo 0'])
+
+  // Difiere solo por el código de salida.
+  fs.writeFileSync(path.join(raiz, 'codigo.txt'), '3')
+  const codigo = await diferencial(raiz, base, 'node codigo.js')
+  assert.equal(codigo.igual, false)
+  assert.deepEqual(codigo.lineas, ['DIFERENCIAL: node codigo.js → DIFIERE', 'código de salida: copia 0 · repo 3'])
+
+  // Difiere por los errores, y recorta a 40 líneas (60 de la copia y 60 del repo: 120, se muestran 40 y faltan 80).
+  const errores = await diferencial(raiz, base, 'node errores.js')
+  assert.equal(errores.igual, false)
+  assert.equal(errores.lineas.filter((l) => l.startsWith('- [stderr] ')).length, 40)
+  assert.ok(errores.lineas.includes('… 80 líneas más'), errores.lineas.join('\n'))
+
+  // Una BASE que no existe falla claro; un comando que vence no cuelga.
+  await assert.rejects(diferencial(raiz, '0'.repeat(40), 'node igual.js'), /BASE desconocida/)
+  const vencido = await diferencial(raiz, base, 'node espera.js', { topeSeg: 1 })
+  assert.equal(vencido.igual, true)
+  assert.equal(vencido.repo.codigo, 'vencido')
+
+  // No deja temporales propios, y el repo queda como estaba.
+  assert.deepEqual(propios().filter((n) => !antes.has(n)), [])
+  assert.equal(fs.readFileSync(path.join(raiz, 'valor.txt'), 'utf8'), 'dos\n')
+})
+
+test('copia: diferencial normaliza también la forma /tmp/… que Git Bash da al temporal', async () => {
+  const raiz = repo('diferencial-tmp', { 'a.txt': 'x\n' })
+  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  for (const cmd of ['pwd', 'cd "$ODD_DIF_DIR" && pwd', 'echo "$ODD_DIF_DIR"']) {
+    const r = await diferencial(raiz, base, cmd)
+    assert.equal(r.igual, true, `${cmd}\n${r.lineas.join('\n')}`)
+    assert.doesNotMatch(r.repo.salida, /qcc-odd-|odd-pruebas-/, cmd)
+  }
+})
+
+test('odd: --diferencial no reescribe una marca de más de 12 h', () => {
+  const raiz = repo('dif-marca-vieja', { 'igual.js': "console.log('hola')\n" })
+  const base = linea(correr(ODD, raiz, '--inicio').salida, 'ODD_BASE=')
+  const marca = marcaDe(raiz)
+  try {
+    const viejo = new Date(Date.now() - 13 * 3600_000)
+    fs.utimesSync(marca, viejo, viejo)
+    const antes = fs.readFileSync(marca, 'utf8')
+    const r = correr(ODD, raiz, '--diferencial', '--', 'node', 'igual.js')
+    // Una marca vencida cuenta como sin marca: no aporta la BASE ni se reescribe.
+    assert.equal(r.codigo, 2, r.salida)
+    assert.match(r.salida, /^ERROR: --diferencial: falta la BASE/)
+    const explicita = correr(ODD, raiz, '--diferencial', '--base', base, '--', 'node', 'igual.js')
+    assert.equal(explicita.codigo, 0, explicita.salida)
+    assert.equal(fs.readFileSync(marca, 'utf8'), antes)
+    assert.ok(Date.now() - fs.statSync(marca).mtimeMs > 12 * 3600_000, 'la marca vencida no se renueva')
+  } finally {
+    fs.rmSync(marca, { force: true })
+  }
 })
