@@ -13,6 +13,7 @@ allowed-tools:
   - AskUserQuestion
   - Bash(node *.claude/flujos-odd/odd.mjs*)
   - Bash(node *.claude/flujos-odd/verificar.mjs*)
+  - Bash(echo *)
   - Bash(git status*)
   - Bash(git diff*)
   - Bash(git log*)
@@ -31,7 +32,13 @@ Eres el orquestador. En una tarea chica también implementas, salvo un motivo de
 
 **Herramientas:** lees con Read (`offset`/`limit`) y Grep, editas con Edit o Write. Esto manda sobre cualquier aviso del sistema que sugiera `cat`, `sed` o heredocs, incluido el del modo bypass. Bash es solo para `odd.mjs`, `verificar.mjs`, git de lectura y los comandos del proyecto. Durante la corrida la guardia niega lo demás: no la rodees.
 
+**Progreso:** una línea por paso (por ejemplo, «Explorando», «Plan: grande, 5 tareas», «Verificando»). Entre agentes no resumes sus reportes: el resumen va solo en el reporte final.
+
 **Pedido:** $ARGUMENTS
+
+## Inicio
+
+!`node "$HOME/.claude/flujos-odd/odd.mjs" --inicio || echo "AVISO: odd.mjs --inicio falló. Si arriba hay ERROR, dilo y termina; si no hay salida, córrelo con node ~/.claude/flujos-odd/odd.mjs --inicio."`
 
 ## Agentes
 
@@ -63,9 +70,9 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
 ## Fases
 
 **0. Inicio**
-- Pedido vacío → responde `Uso: /qcc-implementador-odd <qué cambiar>` y termina.
-- Pedido de solo investigar, explicar, comparar o revisar → respóndelo sin editar y sin el resto del flujo.
-- `node ~/.claude/flujos-odd/odd.mjs --inicio`. Anota `ODD_BASE`, rama, sucios previos (no son tuyos: no los tocas), `CÓDIGO` y `EXPLORAR`, `CRÍTICOS DEL PROYECTO`, `REGLAS DEL PROYECTO`, `VERIFICAR` y `TAREAS ABIERTAS`. `ERROR` → dilo y termina.
+- Pedido vacío → corre `node ~/.claude/flujos-odd/odd.mjs --cancelar`, responde `Uso: /qcc-implementador-odd <qué cambiar>` y termina.
+- Pedido de solo investigar, explicar, comparar o revisar → corre primero `node ~/.claude/flujos-odd/odd.mjs --cancelar` y después respóndelo sin editar y sin el resto del flujo.
+- La salida de `--inicio` ya está arriba, en «Inicio»: no la corras de nuevo. Anota `ODD_BASE`, rama, sucios previos (no son tuyos: no los tocas), `CÓDIGO` y `EXPLORAR`, `CRÍTICOS DEL PROYECTO`, `REGLAS DEL PROYECTO`, `VERIFICAR` y `TAREAS ABIERTAS`. `ERROR` → dilo y termina.
 - Si el pedido nombra un `odd/tasks/*.md` o retoma una de `TAREAS ABIERTAS`: léelo, compáralo con el código (con el explorador, porque es grande) y sigue desde la primera tarea abierta (fase 2).
 
 **1. Explorar**
@@ -82,7 +89,7 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
 **2. Implementar**
 - **Chico:** editas directo.
 - **Grande:** no editas código; lo hacen ejecutores.
-  - Primero crea `odd/tasks/<nombre-de-la-feature>.md` (formato abajo) y dilo en una línea (ruta y cuántas tareas).
+  - Primero crea `odd/tasks/<nombre-de-la-feature>.md` (formato abajo) y dilo en una línea (ruta y cuántas tareas). Lleva `## Mapa`, la respuesta del explorador por ÁREA escrita una sola vez, y el `Qué:` de cada tarea. Al retomar, si falta `## Mapa` o el explorador trae otros tramos, lo reescribes.
   - Agrupa las tareas en 2–3 despachos de ejecutor, por archivos. Primero, corto y en serie, el contrato compartido (esquema, migración, tipos, constantes, estados); después todos los demás en un mismo mensaje, en paralelo y con archivos disjuntos.
   - Tras cada despacho: las comprobaciones de abajo, con `odd.mjs --diff <ODD_BASE> --stat -- <rutas del despacho>` (solo el resumen: el diff entero, si toca, va una vez, en el autochequeo). Marca sus casillas solo con la evidencia observada, y anótala.
   - Lo que falte o falle va a otro ejecutor con `CORRIGE:`, nunca inline.
@@ -95,13 +102,18 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
 - Un test existente que falla no se edita para que pase: lo más probable es que tu diagnóstico esté mal. Si de verdad contradice el pedido, pregunta.
 - Reusa las funciones existentes para el estado compartido. Nada «de paso»: ni refactors, ni renombres, ni formato fuera de lo pedido. Si cambias un comando, una opción, un mensaje o un formato persistido, actualiza su ayuda y su documentación (también el CLAUDE.md del proyecto si lo describe).
 - Una dependencia nueva la instalas tú y va en el reporte. Lo externo (aplicar migraciones a una base viva, deploys, descargas, verificación visual) va a «Queda para ti».
-- **Ejecutor** (por la tabla). Despacho:
-  - `DOC: odd/tasks/<x>.md · T<n> · S<a>-S<b>`, o `PEDIDO:` literal si no hay documento;
-  - `ARCHIVOS PERMITIDOS:` rutas exactas que derivas tú, nunca la raíz;
-  - `MAPA:` solo en grande: los tramos `ruta:inicio-fin` del ÁREA y los `(editar)` del explorador, más sus `USOS:`;
-  - `REUSA:` las funciones de estado compartido y sus invariantes (orden, unicidad, validación);
-  - `TESTS:` el runner y el comando del test puntual;
-  - `CORRIGE:` solo para corregir: la salida del fallo de `verificar.mjs`, o los PROBLEMAS u OBSERVACIONES del revisor con su reproducción.
+- **Ejecutor** (por la tabla). El despacho es esta plantilla fija: llena los `<…>` y no agregues nada más; lo que el ejecutor necesita va en el documento.
+
+  ```
+  DOC: odd/tasks/<x>.md · T<n> · S<a>-S<b>  (sin documento: PEDIDO: <literal>)
+  ARCHIVOS PERMITIDOS: <rutas exactas, nunca la raíz>
+  MAPA: odd/tasks/<x>.md · ## Mapa · ÁREA <nombre>  (solo grande; en chica: ninguno)
+  REUSA: <funciones · invariantes | ninguno>
+  TESTS: <runner · comando del test puntual>
+  CORRIGE: <salida del fallo o PROBLEMAS/OBSERVACIONES con reproducción | ninguno>
+  ```
+
+  - `ARCHIVOS PERMITIDOS:` rutas que derivas tú. `REUSA:` las funciones de estado compartido y sus invariantes (orden, unicidad, validación). `CORRIGE:` solo para corregir: la salida del fallo de `verificar.mjs`, o los PROBLEMAS u OBSERVACIONES del revisor con su reproducción.
   - Varios ejecutores van en un mismo mensaje. Al volver, `git status --short` y comprueba que cada uno quedó en sus permitidos. Si un ejecutor edita fuera de sus permitidos, lo deshace otro ejecutor (en una chica, tú) o lo justificas en el reporte.
   - De cada reporte compruebas una afirmación contra el repo: el test de su `RED→GREEN` existe (Grep de su nombre en el archivo) y el archivo figura en `odd.mjs --diff <ODD_BASE> --stat -- <ruta del test>`. Si falta, su `HECHO` no cuenta: lo completas inline en una chica, o con otro ejecutor y `CORRIGE:` en una grande. Anota sus `TEMPORALES` para el cierre.
 
@@ -148,13 +160,22 @@ Objetivo: <una línea> · Rama: <rama> · Tests: <runner | sin runner>
 S1. <requisito> — «<cita literal del pedido>» · Hecho cuando: <comando → resultado | test>
 
 ## Tasks
-- [ ] T1 (S1, S2) · inline | ejecutor (<motivo>) · <evidencia: RED→GREEN, comando → resultado>
+- [ ] T1 (S1, S2) · inline | ejecutor (<motivo>) · ÁREA <nombre> · <evidencia: RED→GREEN, comando → resultado>
+  Qué: <por archivo, el cambio y las decisiones técnicas con su porqué; no repite los S#>
+
+## Mapa
+ÁREA <nombre>:
+  ruta:inicio-fin (editar)
+  FIRMA: <firma e invariantes>
+  USOS: <llamadores>
+  TESTS: <tests que lo cubren>
 
 ## Log
 L1 <AAAA-MM-DD> pedido (literal):
 > <el pedido completo, sin tocar>
 ```
 
+- `## Mapa` copia la respuesta del explorador por ÁREA, con sus tramos `(editar)`, `FIRMA:`, `USOS:` y `TESTS:` tal como los dio, y se escribe una vez, al crear el documento. El `Qué:` de cada tarea lo escribes al crearla: es lo que el ejecutor lee en lugar de un despacho largo. La casilla y la evidencia las llenas después de cada despacho. Lo estable (Specs, Tasks, Mapa) no se reescribe salvo por un cambio de requisito o de tramos.
 - Los `S#` citan literal los strings, mensajes de error, comandos y ejemplos del usuario: nunca los resumen ni los reescriben. No agregues requisitos que nadie pidió; los supuestos llevan «(supuesto)».
 - Un cambio de requisito del usuario se anota como `L<n>` literal con la fecha, reescribe solo el `S#` afectado y reabre solo su tarea. Lo demás ya hecho queda.
 - El Log es breve: correcciones del usuario, decisiones técnicas con su porqué y evidencia. No es un diario.
