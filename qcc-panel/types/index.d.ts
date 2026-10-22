@@ -214,7 +214,15 @@ export type Historial = {
   filas: FilaHistorial[]
 }
 
-/** Las pestañas del panel: «Inicio», «Flujo», «Gasto semanal» e «Historial». «Carpeta» es un botón, no una pestaña. */
+/** Qué implementadores hay instalados: `true` está, `false` no está (con certeza), `null` dudoso (algo de la detección falló). */
+export type Instalados = {
+  /** `/qcc-implementador`. */
+  normal: boolean | null
+  /** `/qcc-implementador-odd`. */
+  odd: boolean | null
+}
+
+/** Las pestañas del panel: «Inicio», «Flujo», «Gasto semanal» e «Historial». «Carpeta» es un botón, no una pestaña. «Flujo» e «Historial» pueden estar ocultas si no hay un implementador instalado. */
 export type Pestana = 'inicio' | 'flujo' | 'semana' | 'historial'
 
 /**
@@ -254,6 +262,8 @@ declare module 'claude-code' {
       freno?: Freno | null
       /** Hay una corrida de `/qcc-implementador-odd` en este turno: el hilo principal anota sus tokens como los de un flujo. Se borra al terminar el turno del hilo principal. Solo de esta terminal. Si falta (estado de una versión anterior), `false`. */
       corridaOdd?: boolean
+      /** Los implementadores detectados (ajustes y `SKILL.md`); `null` si aún no se detectó o si la detección fue dudosa. Si falta (estado de una versión anterior), `null`. */
+      instalados?: Instalados | null
     }
   }
 }

@@ -36,6 +36,7 @@ import {
 import type { Nodo, Senal } from '../hooks/flujo'
 import { decidirFreno, UMBRAL_FRENO } from '../hooks/freno'
 import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaHistorial, lineasHistorial, promedioHistorial, rutaHistorial, rutaHistorialOdd, unirHistorial } from '../hooks/historial'
+import { detectar, rutaSkill, vistaDe } from '../hooks/instalados'
 import { aDesglose, barra, barraPartida, barraTramos, desgloseTramos, duracion, etiquetasAlineadas, falta, historialVigente, lineaContexto, lineaLimite, pct, pestanaValida, repartir, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
   ESPERA_MAX_MS,
@@ -7752,6 +7753,284 @@ describe('historial en el panel', () => {
       for (const f of filas) expect(Array.from(f).length).toBeLessThanOrEqual(pane.props.bodyColumns)
       await ui.unmount()
     }
+  })
+
+  /**
+   * El motor de `motorHistorial` más lo que pide `session.start`: `settings.read` (`'falla'` rechaza), `fs.exists` de los dos `SKILL.md`
+   * (`null` no lo stubea: rechaza con `no implementation`; `'falla'` en uno lo rechaza) y el historial sin filas, para que su evidencia no cuente.
+   */
+  function motorInstalados(
+    on: On,
+    opciones: { ajustes?: Record<string, unknown> | 'falla'; skills?: { normal?: boolean | 'falla'; odd?: boolean | 'falla' } | null; inicial?: Record<string, unknown> } = {},
+  ) {
+    const motor = motorHistorial(on, opciones.inicial)
+    motor.archivo.texto = ''
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    // Por defecto el panel mismo está instalado como plugin: la clave `enabledPlugins` existe y sin implementadores es un «no está» cierto.
+    on('settings.read', () => (opciones.ajustes === 'falla' ? { deny: 'sin ajustes' } : { value: opciones.ajustes ?? { enabledPlugins: { 'qcc-panel@mercado': true } } }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    const consultas: string[] = []
+    const skills = opciones.skills === undefined ? { normal: false, odd: false } : opciones.skills
+    if (skills !== null) {
+      on('fs.exists', (_$, e) => {
+        consultas.push(e.path)
+        const r = e.path.includes('qcc-implementador-odd') ? skills.odd : skills.normal
+        if (r === 'falla') return { deny: 'no se pudo mirar' }
+
+        return { value: r === true }
+      })
+    }
+
+    return { ...motor, consultas }
+  }
+
+  /** Arranca la sesión y espera la detección en segundo plano. */
+  async function arrancar($: Engine) {
+    await $.session.measure(MEDIDA)
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\QCC' })
+    await esperar()
+  }
+
+  /** Las claves de los botones de pestañas, en el orden en que se dibujan. */
+  const pestanasDe = async (ui: Ui) => (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => typeof k === 'string' && k.startsWith('pestana-'))
+  const TODAS = ['pestana-inicio', 'pestana-flujo', 'pestana-semana', 'pestana-historial']
+  /** Las entradas de la leyenda de «Gasto semanal» (siempre se dibuja ahí). */
+  async function leyendaDe(ui: Ui) {
+    await ui.press({ key: 'pestana-semana' })
+    const arbol = await ui.findAll({})
+    const desde = arbol.findIndex(n => n.type === 'Box' && n.key === 'leyenda')
+    const nombres: string[] = []
+    for (const n of arbol.slice(desde + 1)) {
+      if (n.type === 'Box' && !(typeof n.key === 'string' && n.key.startsWith('leyenda-'))) break
+      if (n.type === 'Text' && n.text !== '■' && (n.text ?? '').trim() !== '') nombres.push((n.text ?? '').trim())
+    }
+
+    return nombres
+  }
+
+  test('S1: sin ningún implementador solo quedan Inicio y Gasto semanal (y Carpeta); se miraron los dos SKILL.md', async ($, on) => {
+    const { consultas } = motorInstalados(on)
+    await arrancar($)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await pestanasDe(ui)).toEqual(['pestana-inicio', 'pestana-semana'])
+    expect(await ui.find({ type: 'Button', key: 'pestana-flujo' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'pestana-historial' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'carpeta' })).toBeDefined()
+    // El motor de prueba dispara el tick más de una vez: importa qué rutas se miraron, no cuántas veces.
+    expect([...new Set(consultas)].sort()).toEqual(['C:\\Users\\x\\.claude\\skills\\qcc-implementador-odd\\SKILL.md', 'C:\\Users\\x\\.claude\\skills\\qcc-implementador\\SKILL.md'].sort())
+    await ui.unmount()
+  })
+
+  test('S2: con /qcc-implementador (por archivo o por ajustes) salen las cuatro pestañas, en orden y con sus hotkeys', async ($, on) => {
+    motorInstalados(on, { skills: { normal: true, odd: false } })
+    await arrancar($)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await pestanasDe(ui)).toEqual(TODAS)
+    const hotkeys = (await ui.findAll({ type: 'Button' })).filter(b => TODAS.includes(String(b.key))).map(b => b.props.hotkey)
+    expect(hotkeys).toEqual(['i', 'f', 's', 'h'])
+    await ui.unmount()
+  })
+
+  for (const enabledPlugins of [{ 'qcc-implementador@mercado': true }, { 'qcc@mercado': true }]) {
+    test(`S2: ${JSON.stringify(enabledPlugins)} en ajustes da las cuatro pestañas`, async ($, on) => {
+      motorInstalados(on, { ajustes: { enabledPlugins } })
+      await arrancar($)
+
+      const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+      expect(await pestanasDe(ui)).toEqual(TODAS)
+      await ui.unmount()
+    })
+  }
+
+  test('S3: con solo /qcc-implementador-odd sale Historial pero no Flujo; `qcc-implementador@x` no activa odd', async ($, on) => {
+    motorInstalados(on, { ajustes: { enabledPlugins: { 'qcc-implementador-odd@mercado': true } } })
+    await arrancar($)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await pestanasDe(ui)).toEqual(['pestana-inicio', 'pestana-semana', 'pestana-historial'])
+    await ui.unmount()
+  })
+
+  test('S1: `enabledPlugins` en false (o `qcc-commit` habilitado) no cuenta como instalado', async ($, on) => {
+    motorInstalados(on, { ajustes: { enabledPlugins: { 'qcc-implementador@m': false, 'qcc-implementador-odd@m': false, 'qcc-commit@m': true } } })
+    await arrancar($)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await pestanasDe(ui)).toEqual(['pestana-inicio', 'pestana-semana'])
+    await ui.unmount()
+  })
+
+  test('S4: sin /qcc-implementador Inicio omite `flujo —` y deja `esf`; la leyenda pierde ■ orquestador sin ningún implementador', async ($, on) => {
+    motorInstalados(on)
+    await arrancar($)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await ui.find({ type: 'Box', key: 'esfuerzo-flujo' })).toBeDefined()
+    expect(await ui.find({ type: 'Box', key: 'flujo-resumen' })).toBeUndefined()
+    expect(await textosDe(ui)).toContain('esf   ')
+    expect(await textosDe(ui)).not.toContain('flujo ')
+    expect(await leyendaDe(ui)).toEqual(['directo', 'subagentes'])
+    await ui.unmount()
+  })
+
+  for (const [nombre, skills, conFlujo] of [
+    ['/qcc-implementador', { normal: true, odd: false }, true],
+    ['solo odd', { normal: false, odd: true }, false],
+  ] as const) {
+    test(`S4: con ${nombre} la fila \`flujo —\` ${conFlujo ? 'está' : 'no está'} y la leyenda conserva ■ orquestador`, async ($, on) => {
+      motorInstalados(on, { skills })
+      await arrancar($)
+
+      const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+      expect((await ui.find({ type: 'Box', key: 'flujo-resumen' })) !== undefined).toBe(conFlujo)
+      expect(await leyendaDe(ui)).toEqual(['directo', 'orquestador', 'subagentes'])
+      await ui.unmount()
+    })
+  }
+
+  test('S5: la pestaña guardada oculta dibuja Inicio y no borra la preferencia', async ($, on) => {
+    const { guardados } = motorInstalados(on, { inicial: { 'prefs:pestana': 'historial' } })
+    await arrancar($)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await ui.find({ type: 'Box', key: 'historial' })).toBeUndefined()
+    expect(await ui.find({ type: 'Box', key: 'esfuerzo-flujo' })).toBeDefined()
+    expect(guardados.get('prefs:pestana')).toBe('historial')
+    await ui.unmount()
+  })
+
+  for (const [nombre, caso] of [
+    ['`settings.read` rechaza', { ajustes: 'falla', skills: { normal: false, odd: false } }],
+    ['`settings.read` trae {} sin enabledPlugins', { ajustes: {}, skills: { normal: false, odd: false } }],
+    ['`fs.exists` sin stub rechaza', { skills: null }],
+    ['`fs.exists` rechaza el de /qcc-implementador', { skills: { normal: 'falla', odd: false } }],
+  ] as const) {
+    test(`S6: si ${nombre} se muestra todo`, async ($, on) => {
+      motorInstalados(on, caso)
+      await arrancar($)
+
+      const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+      expect(await pestanasDe(ui)).toEqual(TODAS)
+      expect(await ui.find({ type: 'Box', key: 'flujo-resumen' })).toBeDefined()
+      expect(await leyendaDe(ui)).toEqual(['directo', 'orquestador', 'subagentes'])
+      await ui.unmount()
+    })
+  }
+
+  test('S6: si `fs.exists` rechaza el de odd (y /qcc-implementador no está) Flujo sigue oculto pero Historial y ■ orquestador se muestran', async ($, on) => {
+    motorInstalados(on, { skills: { normal: false, odd: 'falla' } })
+    await arrancar($)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await pestanasDe(ui)).toEqual(['pestana-inicio', 'pestana-semana', 'pestana-historial'])
+    expect(await leyendaDe(ui)).toEqual(['directo', 'orquestador', 'subagentes'])
+    await ui.unmount()
+  })
+
+  test('S6: sin carpeta personal (`node` falla) la detección es dudosa y se muestra todo; node se pidió una vez', async ($, on) => {
+    const { archivo, llamadas, consultas } = motorInstalados(on)
+    archivo.nodeFalla = true
+    await arrancar($)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await pestanasDe(ui)).toEqual(TODAS)
+    expect(consultas).toEqual([])
+    expect(llamadas.node).toBe(1)
+    await ui.unmount()
+  })
+
+  test('S7: un historial con filas muestra Historial aunque no haya implementador; Flujo sigue oculto', async ($, on) => {
+    const { archivo, llamadas } = motorInstalados(on)
+    archivo.texto = SEIS
+    await arrancar($)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await pestanasDe(ui)).toEqual(['pestana-inicio', 'pestana-semana', 'pestana-historial'])
+    // La detección y el historial comparten el pedido de la carpeta personal.
+    expect(llamadas.node).toBe(1)
+    await ui.unmount()
+  })
+})
+
+describe('implementadores instalados (puro)', () => {
+  test('rutaSkill: separador de la carpeta personal, separadores finales fuera y null si está vacía', () => {
+    expect(rutaSkill('C:\\Users\\x', 'qcc-implementador')).toBe('C:\\Users\\x\\.claude\\skills\\qcc-implementador\\SKILL.md')
+    expect(rutaSkill('C:\\Users\\x\\\\', 'qcc-implementador-odd')).toBe('C:\\Users\\x\\.claude\\skills\\qcc-implementador-odd\\SKILL.md')
+    expect(rutaSkill('/home/x', 'qcc-implementador')).toBe('/home/x/.claude/skills/qcc-implementador/SKILL.md')
+    expect(rutaSkill('/home/x//', 'qcc-implementador')).toBe('/home/x/.claude/skills/qcc-implementador/SKILL.md')
+    expect(rutaSkill('', 'qcc-implementador')).toBeNull()
+    expect(rutaSkill('   ', 'qcc-implementador')).toBeNull()
+  })
+
+  test('detectar: ajustes y archivo; `false` solo si ambos lo dicen; cualquier fallo sin hallazgo es null', () => {
+    const plugins = (enabledPlugins: unknown) => ({ enabledPlugins })
+    const casos: { ajustes: unknown; normal: boolean | null; odd: boolean | null; espera: { normal: boolean | null; odd: boolean | null } }[] = [
+      // Nada instalado, todo comprobado (`enabledPlugins` presente como objeto).
+      { ajustes: plugins({}), normal: false, odd: false, espera: { normal: false, odd: false } },
+      // Solo por archivo (la instalación manual vieja).
+      { ajustes: plugins({}), normal: true, odd: false, espera: { normal: true, odd: false } },
+      { ajustes: plugins({}), normal: false, odd: true, espera: { normal: false, odd: true } },
+      // Solo por ajustes, con mercado o con el nombre pelado.
+      { ajustes: plugins({ 'qcc-implementador@m': true }), normal: false, odd: false, espera: { normal: true, odd: false } },
+      { ajustes: plugins({ 'qcc-implementador': true }), normal: false, odd: false, espera: { normal: true, odd: false } },
+      { ajustes: plugins({ 'qcc-implementador-odd@m': true }), normal: false, odd: false, espera: { normal: false, odd: true } },
+      { ajustes: plugins({ 'qcc-implementador-odd': true }), normal: false, odd: false, espera: { normal: false, odd: true } },
+      // El paquete cuenta para los dos.
+      { ajustes: plugins({ 'qcc@m': true }), normal: false, odd: false, espera: { normal: true, odd: true } },
+      { ajustes: plugins({ qcc: true }), normal: false, odd: false, espera: { normal: true, odd: true } },
+      // Solo un valor exactamente `true` cuenta; otros plugins y claves parecidas no.
+      { ajustes: plugins({ 'qcc-implementador@m': false, 'qcc-implementador-odd@m': 'true', 'qcc@m': 1 }), normal: false, odd: false, espera: { normal: false, odd: false } },
+      { ajustes: plugins({ 'qcc-commit@m': true, 'qcc-panel@m': true, 'qcc-implementadores@m': true }), normal: false, odd: false, espera: { normal: false, odd: false } },
+      // Dudoso: ajustes ilegibles, sin `enabledPlugins` (o que no es un objeto) o archivo sin comprobar y nada hallado.
+      { ajustes: {}, normal: false, odd: false, espera: { normal: null, odd: null } },
+      { ajustes: {}, normal: true, odd: false, espera: { normal: true, odd: null } },
+      { ajustes: {}, normal: false, odd: true, espera: { normal: null, odd: true } },
+      { ajustes: plugins([true]), normal: false, odd: false, espera: { normal: null, odd: null } },
+      { ajustes: null, normal: false, odd: false, espera: { normal: null, odd: null } },
+      { ajustes: [], normal: false, odd: false, espera: { normal: null, odd: null } },
+      { ajustes: {}, normal: null, odd: null, espera: { normal: null, odd: null } },
+      { ajustes: plugins({}), normal: null, odd: false, espera: { normal: null, odd: false } },
+      { ajustes: {}, normal: null, odd: false, espera: { normal: null, odd: null } },
+      { ajustes: null, normal: null, odd: null, espera: { normal: null, odd: null } },
+      // Lo hallado gana aunque lo otro falle.
+      { ajustes: null, normal: true, odd: false, espera: { normal: true, odd: null } },
+      { ajustes: plugins({ 'qcc-implementador@m': true }), normal: null, odd: null, espera: { normal: true, odd: null } },
+    ]
+    for (const c of casos) expect(detectar({ ajustes: c.ajustes, normal: c.normal, odd: c.odd })).toEqual(c.espera)
+  })
+
+  test('vistaDe: sin detección o dudosa se muestra todo; la evidencia de uso gana sobre «no está»', () => {
+    const nada = { flujo: false, odd: false, historial: false }
+    const todo = { flujo: true, historial: true, orquestador: true }
+    for (const inst of [null, undefined, { normal: null, odd: null }]) expect(vistaDe(inst, nada)).toEqual(todo)
+    expect(vistaDe({ normal: true, odd: false }, nada)).toEqual(todo)
+    expect(vistaDe({ normal: false, odd: false }, nada)).toEqual({ flujo: false, historial: false, orquestador: false })
+    expect(vistaDe({ normal: false, odd: true }, nada)).toEqual({ flujo: false, historial: true, orquestador: true })
+    expect(vistaDe({ normal: null, odd: false }, nada)).toEqual(todo)
+    expect(vistaDe({ normal: false, odd: null }, nada)).toEqual({ flujo: false, historial: true, orquestador: true })
+
+    const ninguno = { normal: false, odd: false }
+    expect(vistaDe(ninguno, { ...nada, flujo: true })).toEqual(todo)
+    expect(vistaDe(ninguno, { ...nada, odd: true })).toEqual({ flujo: false, historial: true, orquestador: true })
+    expect(vistaDe(ninguno, { ...nada, historial: true })).toEqual({ flujo: false, historial: true, orquestador: false })
+  })
+
+  test('pestanaValida con vista: una pestaña oculta da inicio; sin vista todas valen', () => {
+    const oculta = { flujo: false, historial: false }
+    expect(pestanaValida('flujo', oculta)).toBe('inicio')
+    expect(pestanaValida('historial', oculta)).toBe('inicio')
+    expect(pestanaValida('semana', oculta)).toBe('semana')
+    expect(pestanaValida('inicio', oculta)).toBe('inicio')
+    expect(pestanaValida('flujo', { flujo: true, historial: false })).toBe('flujo')
+    expect(pestanaValida('historial', { flujo: false, historial: true })).toBe('historial')
+    expect(pestanaValida('historial', { flujo: true, historial: false })).toBe('inicio')
+    expect(pestanaValida('otra', { flujo: true, historial: true })).toBe('inicio')
+    expect(pestanaValida('flujo')).toBe('flujo')
+    expect(pestanaValida('historial')).toBe('historial')
   })
 })
 

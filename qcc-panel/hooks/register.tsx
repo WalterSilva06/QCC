@@ -37,6 +37,7 @@ import {
 } from './flujo'
 import type { Senal } from './flujo'
 import { cifraMinutos, cifraUsd, leerHistorial, lineasHistorial, promedioHistorial, rutaHistorial, rutaHistorialOdd, unirHistorial } from './historial'
+import { NOMBRE_NORMAL, NOMBRE_ODD, detectar, rutaSkill, vistaDe } from './instalados'
 import {
   aDesglose,
   barra,
@@ -105,6 +106,7 @@ const historial = atom({ plugin: 'qcc-panel', key: 'historial' } as const, null)
 const home = atom({ plugin: 'qcc-panel', key: 'home' } as const, null)
 const freno = atom({ plugin: 'qcc-panel', key: 'freno' } as const, null)
 const corridaOdd = atom({ plugin: 'qcc-panel', key: 'corridaOdd' } as const, false)
+const instalados = atom({ plugin: 'qcc-panel', key: 'instalados' } as const, null)
 
 /** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
@@ -263,6 +265,41 @@ async function fechaDeRegistro($: EngineInterface, ruta: string): Promise<number
   }
 }
 
+/** El pedido de la carpeta personal en vuelo, compartido: la detección de implementadores y el historial no abren dos `node -p`. */
+let lecturaCasa: Promise<string> | null = null
+
+/** Pide la carpeta personal a `node` si aún no se conoce (`''` si falla y no se repite). Nunca rechaza. */
+async function pedirCarpetaPersonal($: EngineInterface): Promise<string> {
+  try {
+    const guardada = (await read($, home)) ?? null
+    if (guardada !== null) return guardada
+
+    let pedida = ''
+    try {
+      const r = await $.process.run(['node', '-p', 'require("os").homedir()'], { timeoutMs: 5_000 })
+      if (r.exitCode === 0) pedida = r.stdout.trim()
+    } catch {
+      // Sin la carpeta personal no hay historial.
+    }
+    await update($, home, () => pedida)
+
+    return pedida
+  } catch {
+    return ''
+  }
+}
+
+/** La carpeta personal (`''` si no se supo). Otra petición mientras tanto espera a la que va en vuelo. */
+function carpetaPersonal($: EngineInterface): Promise<string> {
+  if (lecturaCasa === null) {
+    lecturaCasa = pedirCarpetaPersonal($).finally(() => {
+      lecturaCasa = null
+    })
+  }
+
+  return lecturaCasa
+}
+
 /**
  * Lee `flujos.jsonl` y `odd.jsonl` si cambiaron desde la última vez: pide la carpeta personal una vez (`''` si falla y no se repite),
  * mira la fecha de los dos archivos y solo los lee si la suma es otra. Un fallo deja el historial como estaba; si falta uno de los dos
@@ -270,18 +307,7 @@ async function fechaDeRegistro($: EngineInterface, ruta: string): Promise<number
  */
 async function leerArchivoHistorial($: EngineInterface) {
   try {
-    let casa = (await read($, home)) ?? null
-    if (casa === null) {
-      let pedida = ''
-      try {
-        const r = await $.process.run(['node', '-p', 'require("os").homedir()'], { timeoutMs: 5_000 })
-        if (r.exitCode === 0) pedida = r.stdout.trim()
-      } catch {
-        // Sin la carpeta personal no hay historial.
-      }
-      casa = pedida
-      await update($, home, () => pedida)
-    }
+    const casa = await carpetaPersonal($)
 
     const ruta = rutaHistorial(casa)
     if (ruta === null) return
@@ -321,6 +347,45 @@ function releerHistorial($: EngineInterface): Promise<void> {
   }
 
   return lecturaHistorial
+}
+
+/** Si existe `ruta`: `true` o `false`; `null` si no se pudo comprobar (dudoso, no «no está»). */
+async function existeArchivo($: EngineInterface, ruta: string | null): Promise<boolean | null> {
+  if (ruta === null) return null
+  try {
+    const r: unknown = await $.fs.exists(ruta)
+
+    return typeof r === 'boolean' ? r : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Detecta qué implementadores hay instalados (ajustes y `SKILL.md`) y actualiza el atom solo si el resultado cambió.
+ * Nunca rechaza: un fallo del panel no puede frenar el arranque ni el tick, y un fallo de detección deja todo visible.
+ */
+async function detectarInstalados($: EngineInterface): Promise<void> {
+  try {
+    let ajustes: unknown = null
+    try {
+      ajustes = await $.settings.read()
+    } catch {
+      // Sin ajustes legibles la detección es dudosa.
+    }
+    const casa = await carpetaPersonal($)
+    const [normal, odd] = await Promise.all([
+      existeArchivo($, rutaSkill(casa, NOMBRE_NORMAL)),
+      existeArchivo($, rutaSkill(casa, NOMBRE_ODD)),
+    ])
+    const nuevo = detectar({ ajustes, normal, odd })
+    const actual = (await read($, instalados)) ?? null
+    if (actual !== null && actual.normal === nuevo.normal && actual.odd === nuevo.odd) return
+
+    await update($, instalados, () => nuevo)
+  } catch {
+    // Sin detección el panel muestra todo.
+  }
 }
 
 /**
@@ -569,12 +634,15 @@ export const register: Register = on => {
     // En segundo plano: pide la carpeta personal (y lee el historial) sin frenar el arranque, para que abrir la pestaña «Historial»
     // no espere a `node -p`; con la pestaña abierta desde antes, el historial se ve sin esperar al tick.
     void releerHistorial($)
+    // También en segundo plano: qué implementadores hay decide las pestañas, y hasta saberlo se muestra todo.
+    void detectarInstalados($)
 
     // Mueve la cuenta regresiva y suma lo que otras sesiones anotaron; no llama a ningún modelo.
     $.clock.every(TICK_MS, () => {
       void $.clock.now().then(t => update($, ahora, () => t))
       void releerSemana($)
       void releerHistorial($)
+      void detectarInstalados($)
     })
 
     try {
@@ -861,10 +929,17 @@ export const register: Register = on => {
     const fl = await read($, flujo)
     const filasExp = await read($, filasExploradores)
     // Atoms nuevos: tras un `/reload-plugins` el estado anterior puede no traerlos.
-    const pest = (await read($, pestana)) ?? 'inicio'
+    const pestGuardada = (await read($, pestana)) ?? 'inicio'
     const his = (await read($, historial)) ?? null
+    const inst = (await read($, instalados)) ?? null
+    const odd = (await read($, corridaOdd)) === true
     await read($, ahora)
     const t = await $.clock.now()
+
+    // Qué se muestra según los implementadores instalados; la evidencia de uso gana sobre un «no está».
+    const vista = vistaDe(inst, { flujo: fl !== null, odd, historial: (his?.filas.length ?? 0) > 0 })
+    // Una pestaña oculta dibuja «Inicio»; la preferencia guardada no se borra.
+    const pest = pestanaValida(pestGuardada, vista)
 
     const ancho = Math.max(6, Math.min(40, e.props.bodyColumns))
 
@@ -1046,9 +1121,9 @@ export const register: Register = on => {
      */
     const botones = [
       { clave: 'pestana-inicio', hotkey: 'i', label: 'Inicio', alPulsar: () => elegirPestana($, 'inicio') },
-      { clave: 'pestana-flujo', hotkey: 'f', label: 'Flujo', alPulsar: () => elegirPestana($, 'flujo') },
+      ...(vista.flujo ? [{ clave: 'pestana-flujo', hotkey: 'f', label: 'Flujo', alPulsar: () => elegirPestana($, 'flujo') }] : []),
       { clave: 'pestana-semana', hotkey: 's', label: 'Gasto semanal', alPulsar: () => elegirPestana($, 'semana') },
-      { clave: 'pestana-historial', hotkey: 'h', label: 'Historial', alPulsar: () => elegirPestana($, 'historial') },
+      ...(vista.historial ? [{ clave: 'pestana-historial', hotkey: 'h', label: 'Historial', alPulsar: () => elegirPestana($, 'historial') }] : []),
     ]
     const filaPestanas = (
       <Box key="pestanas" flexDirection="column" marginBottom={1}>
@@ -1221,7 +1296,7 @@ export const register: Register = on => {
      */
     const entradasLeyenda = [
       { color: 'claude', nombre: 'directo' },
-      { color: COLOR_FLUJO, nombre: 'orquestador' },
+      ...(vista.orquestador ? [{ color: COLOR_FLUJO, nombre: 'orquestador' }] : []),
       { color: COLOR_SUB, nombre: 'subagentes' },
     ]
     const leyenda = (separada: boolean) => (
@@ -1384,14 +1459,16 @@ export const register: Register = on => {
               </Text>
             )}
           </Box>
-          <Box>
-            <Text>{'flujo '}</Text>
-            <Box key="flujo-resumen">
-              <Text dimColor wrap="truncate-end">
-                {fl === null ? '—' : resumenFlujo(fl, t)}
-              </Text>
+          {vista.flujo && (
+            <Box>
+              <Text>{'flujo '}</Text>
+              <Box key="flujo-resumen">
+                <Text dimColor wrap="truncate-end">
+                  {fl === null ? '—' : resumenFlujo(fl, t)}
+                </Text>
+              </Box>
             </Box>
-          </Box>
+          )}
         </Box>
 
         <Box key="sesion-bloque" flexDirection="column" marginTop={1}>

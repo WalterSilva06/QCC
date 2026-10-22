@@ -265,9 +265,15 @@ export function historialVigente(actual: Pick<Historial, 'v' | 'mtimeMs'> | null
   return actual != null && actual.v === 5 && actual.mtimeMs === mtimeMs
 }
 
-/** La pestaña guardada si es una de las cuatro; con cualquier otro valor, `'inicio'`. */
-export function pestanaValida(x: unknown): Pestana {
-  return x === 'flujo' || x === 'semana' || x === 'historial' ? x : 'inicio'
+/**
+ * La pestaña guardada si es una de las cuatro; con cualquier otro valor, `'inicio'`. Con `vista`, una pestaña oculta
+ * (`flujo` o `historial` en `false`) también da `'inicio'`; sin ella, todas valen.
+ */
+export function pestanaValida(x: unknown, vista?: { flujo: boolean; historial: boolean }): Pestana {
+  if (x === 'flujo') return vista?.flujo === false ? 'inicio' : x
+  if (x === 'historial') return vista?.historial === false ? 'inicio' : x
+
+  return x === 'semana' ? x : 'inicio'
 }
 
 /** Las ventanas conocidas primero (5 h, semana), el resto detrás en su orden. */
