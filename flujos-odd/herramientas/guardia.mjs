@@ -5,6 +5,7 @@
 // (argumento `revisor`): Claude Code lo corre solo mientras ese agente trabaja. Niega lo que un subagente odd
 // no hace nunca: git que modifica, instalar o quitar dependencias, red, borrados recursivos, secretos (`.env*`),
 // servidores y modos watch que no terminan, y archivos protegidos. Al revisor, además, escribir fuera del temporal.
+// Al ejecutor, escribir en el repo por Bash o PowerShell (que edite con Edit o Write): solo escribe en el temporal.
 //
 // El skill lo declara con el argumento `orquestador`. Un hook de skill sigue activo el resto de la sesión, así que
 // este rol solo niega mientras hay una corrida abierta en el repo (la marca que deja `odd.mjs --inicio` y borra
@@ -456,26 +457,73 @@ export function rutasEscritas(tramo, { conBorrados = false, profundidad = 0 } = 
 }
 
 /**
+ * El código que corre un tramo con un intérprete: el que va en línea (`node -e`), el de un heredoc por stdin o el de
+ * un script de fuera del repo (ya escrito, o escrito por un heredoc del mismo comando). null si no corre código que
+ * cuente: los scripts del proyecto, los de este flujo y los de una copia de la BASE no cuentan.
+ */
+function codigoDeScript(tramo, { raiz, cwd = raiz, cmd = tramo }) {
+  const { prog, args, libres } = partesDe(tramo)
+  if (!INTERPRETES.has(prog)) return null
+  if (args.some((a) => CODIGO_EN_LINEA.has(a))) return tramo
+  const cuerpos = cuerposDe(cmd)
+  if (args.includes('-') || !libres.length) return cuerpos
+  if (/qcc-odd-base-/.test(libres[0])) return null
+  const abs = path.resolve(cwd, rutaNativa(libres[0]))
+  // Las herramientas de este flujo, instaladas en cualquier cuenta (`~/.claude*/flujos-odd/`), escriben lo suyo.
+  const herramienta = HERRAMIENTAS.has(path.basename(abs).toLowerCase()) && (dentro(path.dirname(abs), DIR) || /[\\/]\.claude[^\\/]*[\\/]flujos-odd$/i.test(path.dirname(abs)))
+  if (dentro(abs, raiz) || herramienta) return null
+  try {
+    return fs.statSync(abs).size < 1e6 ? fs.readFileSync(abs, 'utf8') : null
+  } catch {
+    return cmd.includes(path.basename(abs)) ? cuerpos : null
+  }
+}
+
+/**
  * Si el tramo corre un script que escribe archivos: código en línea (`node -e`, un heredoc por stdin) con
  * `writeFileSync`… o un script de fuera del repo que lo tiene (ya escrito, o escrito por un heredoc del mismo
  * comando). Los scripts del proyecto, los de este flujo y los de una copia de la BASE no cuentan.
  */
-export function scriptQueEscribe(tramo, { raiz, cwd = raiz, cmd = tramo }) {
-  const { prog, args, libres } = partesDe(tramo)
-  if (!INTERPRETES.has(prog)) return false
-  if (args.some((a) => CODIGO_EN_LINEA.has(a))) return ESCRIBE_FS.test(tramo)
-  const cuerpos = cuerposDe(cmd)
-  if (args.includes('-') || !libres.length) return ESCRIBE_FS.test(cuerpos)
-  if (/qcc-odd-base-/.test(libres[0])) return false
-  const abs = path.resolve(cwd, rutaNativa(libres[0]))
-  // Las herramientas de este flujo, instaladas en cualquier cuenta (`~/.claude*/flujos-odd/`), escriben lo suyo.
-  const herramienta = HERRAMIENTAS.has(path.basename(abs).toLowerCase()) && (dentro(path.dirname(abs), DIR) || /[\\/]\.claude[^\\/]*[\\/]flujos-odd$/i.test(path.dirname(abs)))
-  if (dentro(abs, raiz) || herramienta) return false
-  try {
-    return fs.statSync(abs).size < 1e6 && ESCRIBE_FS.test(fs.readFileSync(abs, 'utf8'))
-  } catch {
-    return ESCRIBE_FS.test(cuerpos) && cmd.includes(path.basename(abs))
+export function scriptQueEscribe(tramo, ctx) {
+  const codigo = codigoDeScript(tramo, ctx)
+  return codigo != null && ESCRIBE_FS.test(codigo)
+}
+
+// Un argumento de llamada: un literal entre comillas o una expresión hasta la coma o el paréntesis. `\x60` es la comilla invertida.
+const ARG_LLAMADA = String.raw`\s*('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|\x60[^\x60]*\x60|[^,)\s][^,)]*)`
+// El destino de cada escritura: el 1.er argumento de `writeFileSync`… y de `open(…, 'w')`, el 2.º de `copyFileSync`/`renameSync`.
+const DESTINOS_ESCRITURA = [
+  [new RegExp(String.raw`\b(?:writeFileSync|appendFileSync|writeFile|appendFile|createWriteStream)\s*\(` + ARG_LLAMADA, 'g'), 1],
+  [new RegExp(String.raw`\bopen\(` + ARG_LLAMADA + String.raw`\s*,\s*(?:mode\s*=\s*)?['"][wax][bt]?\+?['"]`, 'g'), 1],
+  [new RegExp(String.raw`\b(?:copyFileSync|renameSync)\s*\(` + ARG_LLAMADA + String.raw`\s*,` + ARG_LLAMADA, 'g'), 2],
+]
+// Señales de que un destino que no se ve va al temporal.
+const SENAL_TEMPORAL = /\b(tmpdir|mkdtemp\w*|gettempdir|te?mp)\b/i
+
+/**
+ * Si el tramo corre un script que escribe archivos del repo: algún destino literal cae dentro del repo, o hay uno
+ * que no se ve (una expresión, `write_text`…) y el código no menciona el temporal. Lo que ya cuenta `scriptQueEscribe`.
+ */
+function scriptEscribeEnRepo(tramo, ctx) {
+  const codigo = codigoDeScript(tramo, ctx)
+  if (codigo == null || !ESCRIBE_FS.test(codigo)) return false
+  const { raiz, cwd = raiz } = ctx
+  let vistos = 0
+  let sinVer = false
+  for (const [re, k] of DESTINOS_ESCRITURA) {
+    for (const m of codigo.matchAll(re)) {
+      vistos++
+      const arg = m[k].trim()
+      if (!/^['"]/.test(arg) && !(arg.startsWith('`') && !arg.includes('${'))) {
+        sinVer = true
+        continue
+      }
+      if (dentro(path.resolve(cwd, rutaNativa(arg.slice(1, -1).replace(/\\(.)/g, '$1'))), raiz)) return true
+    }
   }
+  // Más escrituras que destinos extraídos (`write_text`, un `open` con una expresión): hay destinos que no se ven.
+  if (vistos < [...codigo.matchAll(new RegExp(ESCRIBE_FS.source, 'g'))].length) sinVer = true
+  return sinVer && !SENAL_TEMPORAL.test(codigo)
 }
 
 /** Si el tramo lee archivos del repo con `cat`, `head`, `tail`, `sed -n`, `Get-Content` o `type`, en vez de con Read. */
@@ -493,8 +541,8 @@ export function leeDelRepo(tramo, { raiz, cwd = raiz }) {
   })
 }
 
-/** Por qué el orquestador no escribe en `ruta` por Bash: dentro del repo, edita con Edit o Write. */
-function escrituraDelOrquestador(ruta, { raiz, cwd }) {
+/** Por qué el orquestador y el ejecutor no escriben en `ruta` por Bash: dentro del repo, editan con Edit o Write. */
+function escrituraPorBash(ruta, { raiz, cwd }) {
   if (ruta.includes(SUST) || /\$/.test(ruta)) return null
   const abs = path.resolve(cwd, rutaNativa(ruta))
   if (!dentro(abs, raiz)) return null
@@ -526,7 +574,7 @@ function motivoTramo(tramo, ctx) {
   const orquestador = rol === 'orquestador'
   const escritura = (ruta) =>
     orquestador
-      ? escrituraDelOrquestador(ruta, ctx)
+      ? escrituraPorBash(ruta, ctx)
       : ruta.includes(SUST) || /\$/.test(ruta)
         ? revisor
           ? `no se ve a dónde escribe (${ruta}): usa una ruta escrita a mano`
@@ -550,6 +598,14 @@ function motivoTramo(tramo, ctx) {
     if (scriptQueEscribe(tramo, ctx)) return 'edita con Edit o Write, no con un script que escribe archivos (writeFileSync…); para el temporal, redirige la salida'
   }
   if (tramo.match(/(^|[\s"'=/\\])\.env(\.[\w-]+)?(?=$|[\s"'/\\])/m) && !/\.env\.(example|sample|template)\b/.test(tramo)) return 'secretos: .env no se lee ni se escribe'
+  // El ejecutor edita el repo con Edit o Write; por Bash solo escribe en el temporal (borrar y crear carpetas sí puede).
+  if (!orquestador && !revisor) {
+    for (const ruta of rutasEscritas(tramo, { conBorrados: false, profundidad: 3 })) {
+      const m = escrituraPorBash(ruta, ctx)
+      if (m) return m
+    }
+    if (scriptEscribeEnRepo(tramo, ctx)) return 'edita con Edit o Write, no con un script que escribe archivos del repo (writeFileSync…); en el temporal, usa una ruta del temporal'
+  }
   if (prog === 'git') {
     let k = 0
     while (k < args.length && args[k].startsWith('-')) k += ['-C', '-c', '--git-dir', '--work-tree'].includes(args[k]) ? 2 : 1
@@ -653,7 +709,7 @@ function main() {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
-      permissionDecisionReason: `Guardia /qcc-implementador-odd: ${motivo}. No lo rodees: ${rol === 'orquestador' ? 'usa la herramienta que dice, o anótalo en «Para decidir»' : 'anótalo en BLOQUEOS de tu reporte'}.`,
+      permissionDecisionReason: `Guardia /qcc-implementador-odd: ${motivo}. No lo rodees: ${rol === 'orquestador' ? 'usa la herramienta que dice, o anótalo en «Para decidir»' : rol === 'ejecutor' ? 'usa la herramienta que dice, o anótalo en BLOQUEOS de tu reporte' : 'anótalo en BLOQUEOS de tu reporte'}.`,
     },
   }))
 }

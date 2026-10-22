@@ -8,6 +8,7 @@
 //   node ~/.claude/flujos-odd/odd.mjs --diff <BASE> [--stat] [-- <rutas>]
 //   node ~/.claude/flujos-odd/odd.mjs --cierre --base <BASE> --resultado COMPLETO|DETENIDO --tamano chico|grande
 //        --riesgo "<ítem N (motivo) | ninguno>" [--revision APROBADO|RECHAZADO|omitida] [--titulo "<t>"]
+//   node ~/.claude/flujos-odd/odd.mjs --cancelar
 //   node ~/.claude/flujos-odd/odd.mjs --ultimos [<n>]
 //   node ~/.claude/flujos-odd/odd.mjs --copia-base <BASE>
 //   node ~/.claude/flujos-odd/odd.mjs --limpiar -- <rutas>
@@ -16,7 +17,7 @@
 // imprime como `ODD_BASE=<sha>`: con esa marca costo.mjs encuentra la sesión. Además: rama, sucios previos,
 // archivos de código y `explorar`, `criticos`, reglas de la guardia y pasos de `verificar` de `.claude/qcc-implementador-odd.json`, y los
 // `odd/tasks/*.md` con tareas abiertas. Deja la marca de corrida abierta (`registros/activas/`), que activa la guardia
-// del orquestador; `--cierre` la borra.
+// del orquestador; `--cierre` o `--cancelar` la borra.
 // --plan: el cierre de la exploración, visible: tamaño, los 6 ítems de riesgo (cada uno «sí <motivo>» o «no») y los
 // bordes. Un ítem que falta, un «sí» sin motivo o un riesgo sin bordes salen con ERROR y código 2. Anota el tamaño en
 // la marca de corrida: con `grande`, la guardia niega al orquestador editar fuera de `odd/tasks/`.
@@ -27,6 +28,8 @@
 // --cierre: anota una fila en `registros/odd.jsonl` con el costo y el control de proceso, e imprime CAMBIOS, COSTO y PROCESO.
 // En una grande con riesgo (`--riesgo` distinto de «ninguno»), PROCESO no exige el `--diff` entero: lo revisa el revisor.
 // --plan, --diff y --cierre imprimen `CONTEXTO: <n>k`, el del último pedido del orquestador, leído del transcript.
+// --cancelar: borra la marca de corrida abierta sin anotar nada en `registros/odd.jsonl`, para un pedido que no llegó a
+// ser una corrida (vacío o solo de investigar); imprime `CANCELADA: …` y sale con código 0 haya o no marca.
 // --ultimos: las últimas corridas anotadas (10 por defecto), con el promedio y el costo real (con el reporte).
 // --copia-base: el árbol de la BASE en un temporal nuevo, para comparar contra él; imprime `ODD_COPIA=<ruta>`.
 // --limpiar: borra las rutas que están dentro de un temporal (no el temporal mismo); las demás quedan, con su motivo.
@@ -117,7 +120,7 @@ function configDelProyecto() {
 // ── Puras ───────────────────────────────────────────────────────────────────
 
 /**
- * Opciones de la línea de comandos: `modo` (inicio | plan | diff | cierre | ultimos | copia-base | limpiar), los valores
+ * Opciones de la línea de comandos: `modo` (inicio | plan | previsto | diff | cierre | cancelar | ultimos | copia-base | limpiar), los valores
  * con nombre y las `rutas` que siguen a `--`. Un valor que falta queda `undefined`.
  */
 export function opcionesDe(args) {
@@ -129,7 +132,7 @@ export function opcionesDe(args) {
     const v = i >= 0 ? propias[i + 1] : undefined
     return v === undefined || v.startsWith('--') ? undefined : v
   }
-  const modo = ['cierre', 'diff', 'inicio', 'plan', 'previsto', 'ultimos', 'copia-base', 'limpiar'].find((m) => propias.includes(`--${m}`)) ?? null
+  const modo = ['cancelar', 'cierre', 'diff', 'inicio', 'plan', 'previsto', 'ultimos', 'copia-base', 'limpiar'].find((m) => propias.includes(`--${m}`)) ?? null
   return {
     modo,
     base: modo === 'diff' || modo === 'copia-base' ? valor(`--${modo}`) : valor('--base'),
@@ -307,7 +310,7 @@ function inicio() {
   }
   const lista = sucios.slice(0, TOPE_SUCIOS).join(', ') + (sucios.length > TOPE_SUCIOS ? `, … ${sucios.length - TOPE_SUCIOS} más` : '')
   const reglas = reglasLegibles(reglasDelProyecto(RAIZ))
-  // La marca de corrida abierta: con ella la guardia del orquestador se activa; --cierre la borra.
+  // La marca de corrida abierta: con ella la guardia del orquestador se activa; --cierre o --cancelar la borran.
   const marca = marcaDe(RAIZ)
   fs.mkdirSync(path.dirname(marca), { recursive: true })
   fs.writeFileSync(marca, JSON.stringify({ base, t: new Date().toISOString() }) + '\n')
@@ -417,6 +420,14 @@ function cierre({ base, resultado, tamano, riesgo, revision, titulo }) {
   console.log(lineaDeContexto(sesion ? contexto(base, sesion) : null))
 }
 
+/** `--cancelar`: borra la marca de corrida abierta sin tocar el registro de corridas. */
+function cancelar() {
+  const marca = marcaDe(RAIZ)
+  const habia = fs.existsSync(marca)
+  fs.rmSync(marca, { force: true })
+  console.log(habia ? 'CANCELADA: corrida cerrada sin anotar' : 'CANCELADA: no había corrida abierta')
+}
+
 /** El costo hasta el siguiente mensaje del usuario, con el reporte incluido; null si no cambia o no hay datos. */
 function costoReal(f) {
   if (!f.sesion || !f.costo?.inicio || !f.base) return null
@@ -499,10 +510,11 @@ function main() {
     else if (o.modo === 'previsto') previsto(o)
     else if (o.modo === 'diff') diff(o.base, o.rutas, o.stat)
     else if (o.modo === 'cierre') cierre(o)
+    else if (o.modo === 'cancelar') cancelar()
     else if (o.modo === 'ultimos') ultimos(o.ultimos)
     else if (o.modo === 'copia-base') copiaBase(o.base)
     else if (o.modo === 'limpiar') limpiar(o.rutas)
-    else throw new Error('uso: odd.mjs --inicio | --plan --base <BASE> --tamano … --reglas <n> --riesgo "1:…;…;6:…" [--bordes "…"] | --previsto chico|grande | --diff <BASE> [--stat] [-- <rutas>] | --cierre --base <BASE> --resultado … | --ultimos [<n>] | --copia-base <BASE> | --limpiar -- <rutas>')
+    else throw new Error('uso: odd.mjs --inicio | --plan --base <BASE> --tamano … --reglas <n> --riesgo "1:…;…;6:…" [--bordes "…"] | --previsto chico|grande | --diff <BASE> [--stat] [-- <rutas>] | --cierre --base <BASE> --resultado … | --cancelar | --ultimos [<n>] | --copia-base <BASE> | --limpiar -- <rutas>')
   } catch (e) {
     console.log(`ERROR: ${e.message}`)
     process.exitCode = e.codigo ?? 1

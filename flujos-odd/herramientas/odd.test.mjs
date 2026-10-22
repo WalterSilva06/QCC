@@ -163,7 +163,15 @@ const PASAN = {
     'rm flujos-odd/viejo.txt',
     'Remove-Item -Force flujos-odd/viejo.txt',
     `mkdir -p ${TMP}/a && cp flujos-odd/x.js ${TMP}/a/`,
-    'echo "process.env.FOO" > flujos-odd/nota.txt',
+    // Por Bash solo escribe en el temporal; en el repo edita con Edit o Write.
+    `echo x > ${TMP}/salida.txt`,
+    `sed -i s/a/b/ ${TMP}/a`,
+    `cat > ${TMP}/s.mjs <<'EOF'\nconsole.log(1)\nEOF`,
+    `node -e "require('fs').writeFileSync('${TMP}/x.txt', 'x')"`,
+    `node -e "const fs=require('fs'),os=require('os'),p=require('path');fs.copyFileSync('AGENTS.md', p.join(os.tmpdir(),'a.md'))"`,
+    'node flujos-odd/instalar.mjs --revisar',
+    `node ~/.claude/flujos-odd/odd.mjs --limpiar -- ${TMP}/x`,
+    'mkdir -p flujos-odd/nuevo',
     'cat .env.example',
     'cargo test',
   ],
@@ -254,6 +262,17 @@ const NIEGAN = {
     ['echo x > ../fuera.txt', /fuera del repo/],
     ['echo x > pnpm-lock.yaml', /lockfile/],
     ['cat <<EOF\n$(git push)\nEOF', /git push/],
+    ['echo "process.env.FOO" > flujos-odd/nota.txt', /edita con Edit o Write/],
+    ['sed -i s/a/b/ AGENTS.md', /edita con Edit o Write/],
+    ["cat > flujos-odd/x.test.mjs <<'EOF'\nx\nEOF", /edita con Edit o Write/],
+    ['echo x | tee AGENTS.md', /edita con Edit o Write/],
+    ['cp a.js flujos-odd/b.js', /edita con Edit o Write/],
+    ['Set-Content -Path AGENTS.md -Value x', /edita con Edit o Write/],
+    ...ESCAPES.map((cmd) => [cmd, /edita con Edit o Write/]),
+    ["node -e \"require('fs').writeFileSync('AGENTS.md', 'x')\"", /script que escribe archivos del repo/],
+    [`node -e "const fs=require('fs');const f='AGENTS.md';fs.writeFileSync(f, 'x')"`, /script que escribe archivos del repo/],
+    [`python3 - <<'EOF'\nopen('AGENTS.md', 'w').write('x')\nEOF`, /script que escribe archivos del repo/],
+    [`cat > ${TMP}/s.mjs <<'EOF'\nrequire('fs').writeFileSync('AGENTS.md', 'x')\nEOF\nnode ${TMP}/s.mjs`, /script que escribe archivos del repo/],
   ],
   revisor: [
     ['echo x > flujos-odd/nota.txt', /solo escribe en el temporal/],
@@ -311,6 +330,20 @@ test('guardia: el orquestador no corre un script del temporal que escribe archiv
   assert.equal(motivoComando(`node "${lee.replaceAll('\\', '/')}"`, { rol: 'orquestador', raiz: RAIZ }), null)
   // Un script del proyecto corre, escriba o no: es un comando del proyecto.
   assert.equal(motivoComando('node flujos-odd/instalar.mjs --revisar', { rol: 'orquestador', raiz: RAIZ }), null)
+})
+
+test('guardia: el ejecutor no corre un script del temporal que escribe en el repo', () => {
+  const escribe = path.join(PRUEBAS, 'ejecutor-aplicar.cjs')
+  fs.writeFileSync(escribe, "require('fs').writeFileSync('src/a.js', t)")
+  const aTemporal = path.join(PRUEBAS, 'ejecutor-salida.cjs')
+  fs.writeFileSync(aTemporal, `require('fs').writeFileSync('${TMP}/salida.txt', t)`)
+  assert.match(motivoComando(`node "${escribe.replaceAll('\\', '/')}" && npm test`, { rol: 'ejecutor', raiz: RAIZ }) ?? 'pasó', /script que escribe archivos del repo/)
+  assert.equal(motivoComando(`node "${aTemporal.replaceAll('\\', '/')}"`, { rol: 'ejecutor', raiz: RAIZ }), null)
+  // Un script del proyecto corre, escriba o no: es un comando del proyecto.
+  assert.equal(motivoComando('node flujos-odd/instalar.mjs --revisar', { rol: 'ejecutor', raiz: RAIZ }), null)
+  // El hook explica qué hacer con la herramienta o con BLOQUEOS.
+  const hook = spawnSync(process.execPath, [GUARDIA, 'ejecutor'], { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'sed -i s/a/b/ AGENTS.md' } }), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: RAIZ } }).stdout
+  assert.match(JSON.parse(hook).hookSpecificOutput.permissionDecisionReason, /edita con Edit o Write.*usa la herramienta que dice.*BLOQUEOS/)
 })
 
 test('guardia: el orquestador solo se guarda con una corrida abierta y fuera de los subagentes', () => {
@@ -587,6 +620,7 @@ test('odd: opcionesDe', () => {
   assert.equal(opcionesDe(['--previsto', '--base', 'abc']).tamano, undefined)
   assert.equal(opcionesDe(['--previsto']).tamano, undefined)
   assert.equal(opcionesDe(['--plan', '--tamano', 'chico']).tamano, 'chico')
+  assert.equal(opcionesDe(['--cancelar']).modo, 'cancelar')
 })
 
 test('odd: criticosLegibles, tareasDe, sumaNumstat y recortar', () => {
@@ -674,6 +708,27 @@ test('odd: --inicio, --diff, --cierre y --ultimos sobre un repo real', () => {
   assert.match(correr(ODD, raiz, '--ultimos', '5').salida, /CORRIDAS \(últimas \d+ de \d+\):\n(?: {2}.*\n)* {2}.* · modos · sin costo · chico · Riesgo: ninguno · revisión omitida · COMPLETO · \+2 −0 · Prueba/)
   // La foto no toca el índice: nada quedó preparado.
   assert.equal(execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: raiz, encoding: 'utf8' }).trim(), '')
+})
+
+test('odd: --cancelar cierra la marca sin anotar la corrida', () => {
+  const raiz = repo('cancelar', { 'a.txt': 'uno\n' })
+  const registro = path.join(PRUEBAS, 'registros', 'odd.jsonl')
+  const leerRegistro = () => (fs.existsSync(registro) ? fs.readFileSync(registro, 'utf8') : '')
+  const antes = leerRegistro()
+  const ini = correr(ODD, raiz, '--inicio')
+  assert.equal(ini.codigo, 0, ini.salida)
+  assert.equal(fs.existsSync(marcaDe(raiz)), true)
+
+  const c = correr(ODD, raiz, '--cancelar')
+  assert.equal(c.codigo, 0, c.salida)
+  assert.equal(c.salida.trim(), 'CANCELADA: corrida cerrada sin anotar')
+  assert.equal(fs.existsSync(marcaDe(raiz)), false)
+  assert.equal(leerRegistro(), antes)
+
+  const otra = correr(ODD, raiz, '--cancelar')
+  assert.equal(otra.codigo, 0, otra.salida)
+  assert.equal(otra.salida.trim(), 'CANCELADA: no había corrida abierta')
+  assert.equal(leerRegistro(), antes)
 })
 
 test('odd: --copia-base copia la BASE y --limpiar borra solo dentro del temporal', () => {
