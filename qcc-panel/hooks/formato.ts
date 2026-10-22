@@ -212,6 +212,30 @@ export function lineaLimite(kind: string, porcentaje: number, reinicio: number |
 }
 
 /**
+ * Las partes de la fila del contexto: etiqueta (5 columnas), barra, cifra («  48%», «   —» sin medir) y cola
+ * (« 96,2k/200k»; sin medir « 1M · tras 1.ª respuesta», o « tras 1.ª respuesta» sin ventana). La barra mide
+ * entre 3 y 12; si con 3 no cabe, la cola sin medir se acorta (« 1M») y después se suelta. Sin medir la barra va vacía.
+ */
+export function lineaContexto(m: { tokens?: number, ventana: number, porcentaje?: number } | null, ancho: number): { etiqueta: string, barra: string, cifra: string, cola: string, medido: boolean } {
+  const etiqueta = 'ctx'.padEnd(5)
+  const medido = m !== null && m.porcentaje !== undefined
+  const porcentaje = medido ? m.porcentaje as number : 0
+  const cifra = (medido ? `${porcentaje}%` : '—').padStart(4)
+  let candidatas: string[]
+
+  if (medido) candidatas = [` ${tokens(m.tokens ?? 0)}/${tokens(m.ventana)}`]
+  else if (m !== null && m.ventana > 0) candidatas = [` ${tokens(m.ventana)} · tras 1.ª respuesta`, ` ${tokens(m.ventana)}`]
+  else candidatas = [' tras 1.ª respuesta']
+
+  // La cola se degrada antes de soltarse: la primera que deje la barra en 3 celdas o más.
+  const cola = candidatas.find(c => ancho - etiqueta.length - 1 - cifra.length - c.length >= 3) ?? ''
+
+  const w = Math.min(12, Math.max(3, ancho - etiqueta.length - 1 - cifra.length - cola.length))
+
+  return { etiqueta, barra: barra(porcentaje, w), cifra, cola, medido }
+}
+
+/**
  * Reparte índices en filas de forma voraz: cada fila suma las medidas más `separacion` entre elementos
  * y no pasa de `ancho`. Un elemento más ancho que `ancho` va solo en su fila.
  */

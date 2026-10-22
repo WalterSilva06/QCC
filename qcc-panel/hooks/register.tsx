@@ -47,6 +47,7 @@ import {
   etiquetasAlineadas,
   falta,
   historialVigente,
+  lineaContexto,
   lineaLimite,
   marcador,
   nombreCorto,
@@ -930,15 +931,17 @@ export const register: Register = on => {
         s !== null ? etiquetasAlineadas(s.filas, Math.max(1, e.props.bodyColumns - COLUMNAS_CIFRAS - 2 * maxCuadros)) : []
 
       return (
-        <Box key={`tabla-${prefijo}`} flexDirection="column" marginTop={1}>
+        <Box key={`tabla-${prefijo}`} flexDirection="column" marginTop={prefijo === 'n' ? 0 : 1}>
           <Box>
             <Box flexGrow={1}>
               <Text bold>{titulo}</Text>
+              {/* Esta sesión vacía cabe en una línea: el título y, detrás, lo que falta. */}
+              {prefijo === 'n' && (s === null || s.filas.length === 0) && <Text dimColor>{' · sin respuestas anotadas'}</Text>}
             </Box>
             {s !== null && s.total > 0 && <Text>{conSalida}</Text>}
           </Box>
           {s === null || s.filas.length === 0 ? (
-            <Text dimColor>sin respuestas anotadas todavía</Text>
+            prefijo === 'n' ? null : <Text dimColor>sin respuestas anotadas todavía</Text>
           ) : (
             <Box flexDirection="column">
               <Box>
@@ -952,7 +955,11 @@ export const register: Register = on => {
                 const parte = s.total > 0 ? (f.total / s.total) * 100 : 0
 
                 return (
-                  <Box key={`${prefijo}-${f.modelo}-${f.esfuerzo}-${f.origen}`} flexDirection="column">
+                  <Box
+                    key={`${prefijo}-${f.modelo}-${f.esfuerzo}-${f.origen}`}
+                    flexDirection="column"
+                    marginTop={prefijo === 'n' && indice > 0 ? 1 : 0}
+                  >
                     <Box>
                       <Box flexGrow={1}>
                         <Text wrap="truncate-end">{etiquetas[indice] ?? ''}</Text>
@@ -1004,9 +1011,9 @@ export const register: Register = on => {
             </Box>
           )}
           {s !== null && (desde !== null || s.total > 0) && (
-            <Text dimColor>
-              {[desde, s.total > 0 ? 'total incluye caché' : null].filter(Boolean).join(' · ')}
-            </Text>
+            <Box key={`nota-${prefijo}`} marginTop={prefijo === 'n' ? 1 : 0}>
+              <Text dimColor>{[desde, s.total > 0 ? 'total incluye caché' : null].filter(Boolean).join(' · ')}</Text>
+            </Box>
           )}
         </Box>
       )
@@ -1217,8 +1224,8 @@ export const register: Register = on => {
       { color: COLOR_FLUJO, nombre: 'orquestador' },
       { color: COLOR_SUB, nombre: 'subagentes' },
     ]
-    const leyenda = (
-      <Box key="leyenda" flexDirection="column" marginTop={1}>
+    const leyenda = (separada: boolean) => (
+      <Box key="leyenda" flexDirection="column" marginTop={separada ? 1 : 0}>
         {repartir(
           entradasLeyenda.map(entrada => 2 + entrada.nombre.length),
           Math.min(e.props.bodyColumns, COLUMNAS),
@@ -1271,7 +1278,7 @@ export const register: Register = on => {
         <Box flexDirection="column">
           {bloqueLimites}
           {filaPestanas}
-          {leyenda}
+          {leyenda(true)}
 
           {tabla(
             'Esta semana',
@@ -1290,39 +1297,39 @@ export const register: Register = on => {
       )
     }
 
+    const sesionUnida = ses === null ? null : unirOrigenes(ses)
+    // Una sola fila como las de los límites: etiqueta, barra (con tramos si hay desglose), cifra y cola.
+    const lineaCtx = lineaContexto(m, e.props.bodyColumns)
+
     return (
       <Box flexDirection="column">
         {bloqueLimites}
         {filaPestanas}
-        <Box>
-          <Box flexGrow={1}>
-            <Text bold>Contexto</Text>
-          </Box>
-          {m?.porcentaje !== undefined && <Text color={tono(m.porcentaje)}>{m.porcentaje}%</Text>}
+        <Box key="contexto-fila">
+          <Text>{`${lineaCtx.etiqueta} `}</Text>
+          {d !== null ? (
+            <Box>
+              {tramos(d.partes, lineaCtx.barra.length).map((tr, i) => (
+                <Text key={`t${i}`} color={tr.color}>
+                  {relleno(tr.tipo).repeat(tr.celdas)}
+                </Text>
+              ))}
+            </Box>
+          ) : lineaCtx.medido && m?.porcentaje !== undefined ? (
+            <Text color={tono(m.porcentaje)}>{lineaCtx.barra}</Text>
+          ) : (
+            <Text color="subtle">{lineaCtx.barra}</Text>
+          )}
+          {lineaCtx.medido && m?.porcentaje !== undefined ? (
+            <Text color={tono(m.porcentaje)}>{lineaCtx.cifra}</Text>
+          ) : (
+            <Text dimColor>{lineaCtx.cifra}</Text>
+          )}
+          {lineaCtx.cola !== '' && <Text dimColor>{lineaCtx.cola}</Text>}
         </Box>
-        {d !== null ? (
-          <Box>
-            {tramos(d.partes, ancho).map((t, i) => (
-              <Text key={`t${i}`} color={t.color}>
-                {relleno(t.tipo).repeat(t.celdas)}
-              </Text>
-            ))}
-          </Box>
-        ) : m?.porcentaje === undefined ? (
-          <Text color="subtle">{barra(0, ancho)}</Text>
-        ) : (
-          <Text color={tono(m.porcentaje)}>{barra(m.porcentaje, ancho)}</Text>
-        )}
-        <Text dimColor>
-          {m === null || m.ventana <= 0
-            ? 'se mide tras la 1.ª respuesta'
-            : m.porcentaje === undefined
-              ? `ventana ${tokens(m.ventana)} · se mide tras la 1.ª respuesta`
-              : `${tokens(m.tokens ?? 0)} de ${tokens(m.ventana)} tokens`}
-        </Text>
 
         {d !== null && (
-          <Box flexDirection="column" marginTop={1}>
+          <Box key="desglose" flexDirection="column" marginTop={1}>
             {d.partes.map(p => (
               <Box key={`p-${p.nombre}`}>
                 <Text color={p.color}>{marcador(p.tipo)} </Text>
@@ -1340,7 +1347,7 @@ export const register: Register = on => {
         )}
 
         {d !== null && d.pesados.length > 0 && (
-          <Box flexDirection="column" marginTop={1}>
+          <Box key="pesados" flexDirection="column" marginTop={1}>
             <Text dimColor>Lo más pesado</Text>
             {d.pesados.map(p => (
               <Box key={`h-${p.nombre}`}>
@@ -1354,7 +1361,7 @@ export const register: Register = on => {
         )}
 
         {d !== null && (
-          <Box marginTop={1}>
+          <Box key="precisar-fila" marginTop={1}>
             <Button
               key="precisar"
               hotkey="p"
@@ -1365,26 +1372,36 @@ export const register: Register = on => {
           </Box>
         )}
 
-        {/* Una sola fila; el modelo se trunca para no saltar de línea en 40 columnas. */}
-        <Box marginTop={1}>
-          <Text bold>Esfuerzo</Text>
-          <Text color="claude">{` ${nivel}`}</Text>
-          {esf !== null && (
-            <Text dimColor wrap="truncate-end">
-              {` · ${esf.modelo}${esf.origen === 'ajustes' ? ' · según ajustes' : ''}`}
-            </Text>
-          )}
-        </Box>
-        <Box key="flujo-resumen">
-          <Text dimColor wrap="truncate-end">
-            {resumenFlujo(fl, t)}
-          </Text>
+        {/* Espacioso: una línea en blanco entre la fila ctx, el desglose, lo más pesado, «Precisar», esfuerzo y flujo, y la sesión. */}
+        <Box key="esfuerzo-flujo" flexDirection="column" marginTop={1}>
+          {/* Una sola fila; el modelo se trunca para no saltar de línea en 40 columnas. */}
+          <Box key="esfuerzo-fila">
+            <Text>{'esf'.padEnd(5) + ' '}</Text>
+            <Text color="claude">{nivel}</Text>
+            {esf !== null && (
+              <Text dimColor wrap="truncate-end">
+                {` · ${esf.modelo}${esf.origen === 'ajustes' ? ' · según ajustes' : ''}`}
+              </Text>
+            )}
+          </Box>
+          <Box>
+            <Text>{'flujo '}</Text>
+            <Box key="flujo-resumen">
+              <Text dimColor wrap="truncate-end">
+                {fl === null ? '—' : resumenFlujo(fl, t)}
+              </Text>
+            </Box>
+          </Box>
         </Box>
 
-        {leyenda}
+        <Box key="sesion-bloque" flexDirection="column" marginTop={1}>
+          {sesionUnida !== null && sesionUnida.filas.length > 0 && leyenda(false)}
 
-        {/* La hora anotada se redondea a la hora entera: «desde» mentiría en la sesión. */}
-        {tabla('Esta sesión', 'n', ses === null ? null : unirOrigenes(ses), null, true, true)}
+          {/* La hora anotada se redondea a la hora entera: «desde» mentiría en la sesión. */}
+          <Box key="sesion-tabla" flexDirection="column" marginTop={sesionUnida !== null && sesionUnida.filas.length > 0 ? 1 : 0}>
+            {tabla('Esta sesión', 'n', sesionUnida, null, true, true)}
+          </Box>
+        </Box>
       </Box>
     )
   })

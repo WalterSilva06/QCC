@@ -36,7 +36,7 @@ import {
 import type { Nodo, Senal } from '../hooks/flujo'
 import { decidirFreno, UMBRAL_FRENO } from '../hooks/freno'
 import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaHistorial, lineasHistorial, promedioHistorial, rutaHistorial, rutaHistorialOdd, unirHistorial } from '../hooks/historial'
-import { aDesglose, barra, barraPartida, barraTramos, desgloseTramos, duracion, etiquetasAlineadas, falta, historialVigente, lineaLimite, pct, pestanaValida, repartir, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
+import { aDesglose, barra, barraPartida, barraTramos, desgloseTramos, duracion, etiquetasAlineadas, falta, historialVigente, lineaContexto, lineaLimite, pct, pestanaValida, repartir, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
   ESPERA_MAX_MS,
   anotar,
@@ -261,6 +261,52 @@ describe('formato', () => {
     expect(lineaLimite('five_hour', 5, reinicio, ahora, 13).barra.length).toBe(3)
   })
 
+  test('lineaContexto: medido, sin medir con y sin ventana, y la cola se suelta si la barra no llega a 3', async () => {
+    const medido = { tokens: 96_200, ventana: 200_000, porcentaje: 48 }
+
+    for (const ancho of [32, 40]) {
+      const l = lineaContexto(medido, ancho)
+
+      expect(l.etiqueta).toBe('ctx  ')
+      expect(l.cifra).toBe(' 48%')
+      expect(l.cola).toBe(' 96,2k/200k')
+      expect(l.medido).toBe(true)
+      expect(l.barra.length).toBe(Math.min(12, ancho - 5 - 1 - 4 - l.cola.length))
+    }
+
+    expect(lineaContexto(medido, 32).barra).toBe(barra(48, 11))
+    expect(lineaContexto(medido, 40).barra).toBe(barra(48, 12))
+    // en 20 la cola dejaría la barra en menos de 3: se suelta
+    expect(lineaContexto(medido, 20)).toMatchObject({ etiqueta: 'ctx  ', cola: '', cifra: ' 48%', medido: true })
+    expect(lineaContexto(medido, 20).barra).toBe(barra(48, 10))
+    expect(lineaContexto({ tokens: 0, ventana: 1_000_000, porcentaje: 0 }, 40)).toMatchObject({ cifra: '  0%', cola: ' 0/1M', barra: barra(0, 12) })
+    expect(lineaContexto({ tokens: 1_000_000, ventana: 1_000_000, porcentaje: 100 }, 40)).toMatchObject({ cifra: '100%', cola: ' 1M/1M', barra: barra(100, 12) })
+
+    for (const ancho of [20, 32, 40]) {
+      const sin = lineaContexto({ ventana: 1_000_000 }, ancho)
+
+      expect(sin).toMatchObject({ etiqueta: 'ctx  ', cifra: '   —', medido: false })
+      expect(sin.barra).toBe(barra(0, sin.barra.length))
+      expect(sin.barra.length).toBe(Math.min(12, Math.max(3, ancho - 5 - 1 - 4 - sin.cola.length)))
+    }
+
+    expect(lineaContexto({ ventana: 1_000_000 }, 40).cola).toBe(' 1M · tras 1.ª respuesta')
+    expect(lineaContexto({ ventana: 1_000_000 }, 40).barra.length).toBe(6)
+    // en 32 la cola entera no deja 3 celdas: se degrada a la ventana sola, que no se pierde
+    expect(lineaContexto({ ventana: 1_000_000 }, 32).cola).toBe(' 1M')
+    expect(lineaContexto({ ventana: 1_000_000 }, 32).barra.length).toBe(12)
+    expect(lineaContexto({ ventana: 1_000_000 }, 20)).toMatchObject({ cola: ' 1M' })
+    // si ni la ventana deja 3 celdas, se suelta
+    expect(lineaContexto({ ventana: 1_000_000 }, 15)).toMatchObject({ cola: '' })
+    // con porcentaje y sin tokens, la cola cuenta 0 tokens como el render
+    expect(lineaContexto({ ventana: 200_000, porcentaje: 48 }, 40)).toMatchObject({ medido: true, cifra: ' 48%', cola: ' 0/200k' })
+    expect(lineaContexto(null, 40)).toMatchObject({ etiqueta: 'ctx  ', cifra: '   —', cola: ' tras 1.ª respuesta', medido: false })
+    expect(lineaContexto(null, 40).barra.length).toBe(11)
+    expect(lineaContexto({ ventana: 0 }, 40).cola).toBe(' tras 1.ª respuesta')
+    expect(lineaContexto(null, 20)).toMatchObject({ cola: '', medido: false })
+    expect(lineaContexto(null, 13).barra.length).toBe(3)
+  })
+
   test('repartir: voraz, con separación y elementos anchos', async () => {
     expect(repartir([], 10)).toEqual([])
     expect(repartir([4, 4, 4], 10)).toEqual([[0, 1], [2]])
@@ -381,8 +427,10 @@ describe('panel', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
-    expect(textos).toContain('Contexto')
-    expect(textos).toContain('96,2k de 200k tokens')
+    // El contexto es una fila como las de los límites: etiqueta, barra, cifra y cola.
+    expect(textos.indexOf('ctx   ')).toBeGreaterThan(textos.indexOf('sem   '))
+    expect(textos.slice(textos.indexOf('ctx   '))).toContain(' 48%')
+    expect(textos).toContain(' 96,2k/200k')
     expect(textos.indexOf('5h    ')).toBeGreaterThanOrEqual(0)
     expect(textos.indexOf('5h    ')).toBeLessThan(textos.indexOf('sem   '))
     expect(textos.some(t => t.includes('2 h 10 min'))).toBe(true)
@@ -398,7 +446,12 @@ describe('panel', () => {
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-    expect(await ui.find({ type: 'Text', text: /se mide tras la 1.ª respuesta/ })).toBeDefined()
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+
+    // En 32 columnas «tras 1.ª respuesta» no cabe: la cola se degrada a la ventana y no la pierde.
+    expect(textos).toContain('ctx   ')
+    expect(textos).toContain('   —')
+    expect(textos).toContain(' 200k')
     expect(await ui.find({ type: 'Text', text: /límites tras la 1.ª respuesta/ })).toBeDefined()
     await ui.unmount()
   })
@@ -449,10 +502,11 @@ describe('panel', () => {
     await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
-    expect(textos).not.toContain('96,2k de 200k tokens')
+    expect(textos).not.toContain(' 96,2k/200k')
     expect(textos).not.toContain('Memoria')
-    expect(textos).not.toContain('48%')
-    expect(textos).toContain('ventana 200k · se mide tras la 1.ª respuesta')
+    expect(textos).not.toContain(' 48%')
+    expect(textos).toContain('   —')
+    expect(textos).toContain(' 200k')
     expect(textos).toContain('5h    ')
     expect(textos).toContain(' 23%')
     await ui.unmount()
@@ -537,7 +591,7 @@ describe('carpeta', () => {
     expect(comandoCarpeta('otro')).toEqual(['xdg-open', '.'])
   })
 
-  test('"Abrir carpeta" va arriba de Contexto y abre la raíz en el Explorador', async ($, on) => {
+  test('"Abrir carpeta" va arriba de la fila ctx y abre la raíz en el Explorador', async ($, on) => {
     const pedidos: string[] = []
     const root = 'D:\\GitHub-Personal\\mods-claude'
     mock.clock(on, { now: AHORA })
@@ -550,7 +604,7 @@ describe('carpeta', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const arbol = await ui.findAll({})
     const boton = arbol.findIndex(n => n.type === 'Button' && n.key === 'carpeta')
-    const contexto = arbol.findIndex(n => n.type === 'Text' && n.text === 'Contexto')
+    const contexto = arbol.findIndex(n => n.type === 'Text' && n.text === 'ctx   ')
 
     expect(boton).toBeGreaterThan(-1)
     expect(contexto).toBeGreaterThan(boton)
@@ -861,7 +915,7 @@ describe('semana', () => {
     // El desglose solo está en la fila con subagente.
     expect(deSesion.filter(t => /^(directo|orquestador|sub) /.test(t))).toEqual(['directo 100k · sub 100k'])
     expect(textos).toContain('   100k')
-    expect(textos.indexOf('Esfuerzo')).toBeLessThan(ses)
+    expect(textos.indexOf('esf   ')).toBeLessThan(ses)
 
     // Gasto semanal: «Esta semana» sin «Esta sesión».
     await ui.press({ key: 'pestana-semana' })
@@ -888,13 +942,13 @@ describe('semana', () => {
     await paso($, 'claude-opus-5-5', 'high')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    const fila = await ui.find({ type: 'Box', text: /^Esfuerzo/ })
+    const fila = await ui.find({ type: 'Box', key: 'esfuerzo-fila' })
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
-    expect(fila?.text).toBe('Esfuerzo high · claude-opus-5-5')
-    expect(textos).toContain('Esfuerzo')
-    // Nivel y modelo ya no son líneas sueltas: viven solo dentro de la fila.
-    expect(textos).not.toContain('high')
+    expect(fila?.text).toBe('esf   high · claude-opus-5-5')
+    expect(textos).toContain('esf   ')
+    expect(textos).not.toContain('Esfuerzo')
+    // El modelo no es una línea suelta: vive solo dentro de la fila, tras el nivel.
     expect(textos).not.toContain('claude-opus-5-5')
     await ui.unmount()
   })
@@ -913,22 +967,22 @@ describe('semana', () => {
     await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    const fila = await ui.find({ type: 'Box', text: /^Esfuerzo/ })
+    const fila = await ui.find({ type: 'Box', key: 'esfuerzo-fila' })
 
-    expect(fila?.text).toBe('Esfuerzo xhigh · claude-opus-5-5 · según ajustes')
+    expect(fila?.text).toBe('esf   xhigh · claude-opus-5-5 · según ajustes')
     await ui.unmount()
   })
 
-  test('esfuerzo: sin dato la fila dice «Esfuerzo —»', async ($, on) => {
+  test('esfuerzo: sin dato la fila dice «esf   —»', async ($, on) => {
     mock.clock(on, { now: AHORA })
     motorMide(on)
     motorUsa(on)
     await $.session.measure(MEDIDA)
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    const fila = await ui.find({ type: 'Box', text: /^Esfuerzo/ })
+    const fila = await ui.find({ type: 'Box', key: 'esfuerzo-fila' })
 
-    expect(fila?.text).toBe('Esfuerzo —')
+    expect(fila?.text).toBe('esf   —')
     await ui.unmount()
   })
 
@@ -1285,7 +1339,7 @@ describe('semana', () => {
     const sem = textos.indexOf('Esta semana')
     expect(textos.slice(sem).map(t => t.trimEnd())).toContain('Sonnet 5.5 low')
     expect(textos[sem + 1]).toBe('400k')
-    expect(textos).not.toContain('Contexto')
+    expect(textos).not.toContain('ctx   ')
     await ui.unmount()
   })
 
@@ -1396,6 +1450,93 @@ describe('semana', () => {
       }
       await ui.unmount()
     }
+  })
+
+  test('Inicio: la fila ctx lleva barra con tramos, cifra con tono y cola; el desglose va debajo y solo los grupos se separan', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const fila = await ui.find({ type: 'Box', key: 'contexto-fila' })
+    const textos = await ui.findAll({ type: 'Text' })
+    const cifra = textos.find(t => t.text === ' 48%')
+    const cola = textos.find(t => t.text === ' 96,2k/200k')
+
+    // 32 columnas: etiqueta 5, espacio, barra 11 (32 − 5 − 1 − 4 − 11), cifra 4 y cola 11.
+    expect(fila?.text).toMatch(/^ctx {3}[█▒░]{11} 48% 96,2k\/200k$/)
+    expect(fila?.text?.length).toBeLessThanOrEqual(32)
+    expect(cifra?.props.color).toBe(tono(48))
+    expect(cola?.props.dimColor).toBe(true)
+    // Espacioso: desglose, lo más pesado, «Precisar», esfuerzo y flujo, y la sesión van cada uno tras una línea en blanco.
+    const cajas = await ui.findAll({ type: 'Box' })
+    expect(cajas.filter(b => b.props.marginTop === 1).map(b => b.key)).toEqual([
+      'desglose',
+      'pesados',
+      'precisar-fila',
+      'esfuerzo-flujo',
+      'sesion-bloque',
+    ])
+    // Las partes siguen ahí, con «Precisar».
+    expect(textos.some(t => t.text === 'Lo más pesado')).toBe(true)
+    expect(await ui.find({ type: 'Button', key: 'precisar' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('Inicio sin medición ni desglose: la fila ctx dibuja la barra vacía en subtle, cifra «—» y la cola', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const fila = await ui.find({ type: 'Box', key: 'contexto-fila' })
+    const linea = lineaContexto(null, 32)
+    const textos = await ui.findAll({ type: 'Text' })
+    const vacia = textos.find(t => t.text === barra(0, linea.barra.length))
+    const cifra = textos.find(t => t.text === linea.cifra)
+    const cola = textos.find(t => t.text === linea.cola)
+
+    expect(fila?.text).toBe(`${linea.etiqueta} ${barra(0, linea.barra.length)}${linea.cifra}${linea.cola}`)
+    expect(linea.cifra).toBe('   —')
+    expect(vacia?.props.color).toBe('subtle')
+    expect(cifra?.props.dimColor).toBe(true)
+    expect(cifra?.props.color).toBeUndefined()
+    expect(cola?.props.dimColor).toBe(true)
+    await ui.unmount()
+  })
+
+  test('Esta sesión vacía cabe en una línea, sin margen propio dentro de su grupo; Esta semana vacía no cambia', async ($, on) => {
+    mock.clock(on, { now: AHORA })
+    motorMide(on)
+    motorUsa(on)
+    mock.store(on)
+    await $.session.measure(MEDIDA)
+
+    // A 40 columnas (ancho al abrirse) la línea completa, título y texto, cabe sin envolverse.
+    const ui40 = await $.ui.mount({ ...PANE_40, surface: 'terminal' })
+    const sesion40 = await ui40.find({ type: 'Box', key: 'tabla-n' })
+
+    expect(sesion40?.text).toBe('Esta sesión · sin respuestas anotadas')
+    expect(sesion40?.text?.length).toBeLessThanOrEqual(40)
+    await ui40.unmount()
+
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const sesion = await ui.find({ type: 'Box', key: 'tabla-n' })
+    const resto = (await ui.findAll({ type: 'Text' })).find(t => t.text === ' · sin respuestas anotadas')
+
+    expect(sesion?.props.marginTop).toBe(0)
+    expect(sesion?.text).toBe('Esta sesión · sin respuestas anotadas')
+    expect(resto?.props.dimColor).toBe(true)
+
+    await ui.press({ key: 'pestana-semana' })
+    const semana = await ui.find({ type: 'Box', key: 'tabla-s' })
+    const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+
+    expect(semana?.props.marginTop).toBe(1)
+    expect(textos).toContain('Esta semana')
+    expect(textos).toContain('sin respuestas anotadas todavía')
+    await ui.unmount()
   })
 
   test('sin uso anotado lo dice', async ($, on) => {
@@ -4047,10 +4188,10 @@ describe('leyenda de colores en el panel', () => {
     motorControlado(on, 'claude-opus-5-5')
   }
 
-  /** Los Text entre «Esfuerzo» y «Esta sesión» (sin ellos). */
+  /** Los Text entre la fila `esf` y «Esta sesión» (sin ellos). */
   async function entreEsfuerzoYSesion(ui: Ui): Promise<{ text?: string | undefined; props: Record<string, unknown> }[]> {
     const textos = await ui.findAll({ type: 'Text' })
-    const desde = textos.findIndex(t => t.text === 'Esfuerzo')
+    const desde = textos.findIndex(t => t.text === 'esf   ')
     const hasta = textos.findIndex(t => t.text === 'Esta sesión')
 
     expect(desde).toBeGreaterThanOrEqual(0)
@@ -4101,7 +4242,7 @@ describe('leyenda de colores en el panel', () => {
     }
   })
 
-  test('la leyenda sale aunque no haya respuestas anotadas', async ($, on) => {
+  test('sin respuestas anotadas Inicio no dibuja la leyenda; Gasto semanal la deja igual', async ($, on) => {
     mock.clock(on, { now: AHORA })
     motorMide(on)
     motorUsa(on)
@@ -4111,7 +4252,52 @@ describe('leyenda de colores en el panel', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const trozo = await entreEsfuerzoYSesion(ui)
 
-    expect(trozo.filter(t => t.text === '■')).toHaveLength(3)
+    expect(trozo.filter(t => t.text === '■')).toHaveLength(0)
+    expect((await ui.findAll({ type: 'Box' })).some(n => n.key === 'leyenda')).toBe(false)
+
+    await ui.press({ key: 'pestana-semana' })
+
+    expect((await ui.findAll({ type: 'Text' })).filter(t => t.text === '■')).toHaveLength(3)
+    await ui.unmount()
+  })
+
+  test('la leyenda de Inicio abre el grupo de la sesión, sin margen propio; en Gasto semanal conserva el margen', async ($, on) => {
+    preparar(on)
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    const inicio = (await ui.findAll({ type: 'Box' })).find(n => n.key === 'leyenda')
+
+    expect(inicio?.props.marginTop).toBe(0)
+    await ui.press({ key: 'pestana-semana' })
+    expect((await ui.findAll({ type: 'Box' })).find(n => n.key === 'leyenda')?.props.marginTop).toBe(1)
+    await ui.unmount()
+  })
+
+  test('Inicio con filas: línea en blanco entre la leyenda y la tabla y antes de «total incluye caché»; la semana no se separa', async ($, on) => {
+    preparar(on)
+    await $.session.measure(MEDIDA)
+    await paso($, 'claude-opus-5-5', 'high')
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    const cajas = await ui.findAll({ type: 'Box' })
+
+    expect(cajas.find(n => n.key === 'sesion-tabla')?.props.marginTop).toBe(1)
+    expect(cajas.find(n => n.key === 'nota-n')?.props.marginTop).toBe(1)
+    expect(cajas.find(n => n.key === 'nota-n')?.text).toBe('total incluye caché')
+    await ui.press({ key: 'pestana-semana' })
+    expect((await ui.findAll({ type: 'Box' })).find(n => n.key === 'nota-s')?.props.marginTop).toBe(0)
+    await ui.unmount()
+  })
+
+  test('Inicio vacío: la tabla de la sesión no lleva margen propio', async ($, on) => {
+    preparar(on)
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+
+    expect((await ui.find({ type: 'Box', key: 'sesion-tabla' }))?.props.marginTop).toBe(0)
     await ui.unmount()
   })
 })
@@ -4802,28 +4988,28 @@ describe('flujo en el panel', () => {
       expect(boton?.props.hotkey).toBe(hotkey)
       expect(boton?.props.label).toBe(label)
     }
-    // Ya no hay título «Flujo» ni el botón Ver/Ocultar: solo el resumen, bajo Esfuerzo.
+    // Ya no hay título «Flujo» ni el botón Ver/Ocultar: solo la fila `flujo`, bajo `esf`.
     expect(await textosDe(ui)).not.toContain('Flujo')
     expect(await ui.find({ type: 'Button', key: 'flujo-plegar' })).toBeUndefined()
-    expect(await desdeResumen(ui, 1)).toEqual(['sin flujo en esta sesión'])
+    expect(await desdeResumen(ui, 1)).toEqual(['—'])
     // Los botones viejos de plegar ya no existen.
     expect(await ui.find({ type: 'Button', key: 's-plegar' })).toBeUndefined()
     expect(await ui.find({ type: 'Button', key: 'historial-plegar' })).toBeUndefined()
 
     await ui.press({ key: 'pestana-flujo' })
     expect(guardados.get('prefs:pestana')).toBe('flujo')
-    expect(await textosDe(ui)).not.toContain('Contexto')
+    expect(await textosDe(ui)).not.toContain('ctx   ')
 
     // Pulsada otra vez, la pestaña sigue abierta.
     await ui.press({ key: 'pestana-flujo' })
     expect(guardados.get('prefs:pestana')).toBe('flujo')
-    expect(await textosDe(ui)).not.toContain('Contexto')
+    expect(await textosDe(ui)).not.toContain('ctx   ')
     expect(await textosDe(ui)).not.toContain('Flujo')
     expect(await ui.find({ type: 'Button', key: 'flujo-plegar' })).toBeUndefined()
 
     await ui.press({ key: 'pestana-inicio' })
     expect(guardados.get('prefs:pestana')).toBe('inicio')
-    expect(await textosDe(ui)).toContain('Contexto')
+    expect(await textosDe(ui)).toContain('ctx   ')
 
     await ui.press({ key: 'pestana-inicio' })
     expect(guardados.get('prefs:pestana')).toBe('inicio')
@@ -4878,7 +5064,7 @@ describe('flujo en el panel', () => {
       const arbol = await ui.findAll({})
 
       return {
-        contexto: textos.includes('Contexto'),
+        contexto: textos.includes('ctx   '),
         sesion: textos.includes('Esta sesión'),
         semana: textos.includes('Esta semana'),
         historial: textos.includes('Historial'),
@@ -4964,17 +5150,17 @@ describe('flujo en el panel', () => {
     // Una pestaña guardada vuelve tal cual.
     const semana = await sesion('semana')
     expect(semana).toContain('Esta semana')
-    expect(semana).not.toContain('Contexto')
+    expect(semana).not.toContain('ctx   ')
 
     // Inválido, de otro tipo, las claves viejas o nada: abre Inicio.
     for (const invalido of ['otra', 7, true, null, { pestana: 'flujo' }, undefined]) {
       const textos = await sesion(invalido)
-      expect(textos).toContain('Contexto')
+      expect(textos).toContain('ctx   ')
       expect(textos).not.toContain('Esta semana')
     }
   })
 
-  test('la fila de pestañas va antes de «Contexto» en Inicio y antes del resumen en Flujo', async ($, on) => {
+  test('la fila de pestañas va antes de la fila ctx en Inicio y antes del resumen en Flujo', async ($, on) => {
     preparar(on)
     await $.session.measure(MEDIDA)
 
@@ -4987,7 +5173,7 @@ describe('flujo en el panel', () => {
       return [pestanas, otro]
     }
 
-    const [inicioPestanas, contexto] = await posiciones(n => n.type === 'Text' && n.text === 'Contexto')
+    const [inicioPestanas, contexto] = await posiciones(n => n.type === 'Text' && n.text === 'ctx   ')
     expect(inicioPestanas).toBeGreaterThan(-1)
     expect(contexto).toBeGreaterThan(inicioPestanas)
 
@@ -4998,7 +5184,7 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('el resumen del flujo va bajo Esfuerzo en Inicio', async ($, on) => {
+  test('la fila flujo va bajo la fila esf en Inicio, con «—» sin flujo y el resumen con él', async ($, on) => {
     preparar(on)
     await $.session.measure(MEDIDA)
 
@@ -5006,25 +5192,25 @@ describe('flujo en el panel', () => {
     const resumen = async () => {
       const arbol = await ui.findAll({})
       const i = arbol.findIndex(n => n.type === 'Box' && n.key === 'flujo-resumen')
-      const esfuerzo = arbol.findIndex(n => n.type === 'Text' && n.text === 'Esfuerzo')
-      const leyenda = arbol.findIndex(n => n.type === 'Text' && n.text === '■')
+      const esfuerzo = arbol.findIndex(n => n.type === 'Text' && n.text === 'esf   ')
+      const etiqueta = arbol.findIndex(n => n.type === 'Text' && n.text === 'flujo ')
       const sesion = arbol.findIndex(n => n.type === 'Text' && n.text === 'Esta sesión')
 
-      return { i, esfuerzo, leyenda, sesion, texto: arbol.slice(i).find(n => n.type === 'Text')?.text }
+      return { i, esfuerzo, etiqueta, sesion, texto: arbol.slice(i).find(n => n.type === 'Text')?.text }
     }
 
     const sin = await resumen()
-    expect(sin.texto).toBe('sin flujo en esta sesión')
+    expect(sin.texto).toBe('—')
     expect(sin.esfuerzo).toBeGreaterThan(-1)
-    expect(sin.i).toBeGreaterThan(sin.esfuerzo)
-    expect(sin.leyenda).toBeGreaterThan(sin.i)
+    expect(sin.etiqueta).toBeGreaterThan(sin.esfuerzo)
+    expect(sin.i).toBeGreaterThan(sin.etiqueta)
     expect(sin.sesion).toBeGreaterThan(sin.i)
 
-    // Los textos de la fila Esfuerzo caen entre el rótulo y el resumen, sin nada más en medio.
+    // Los textos de la fila esf caen entre su etiqueta y la de flujo, sin nada más en medio.
     const arbol = await ui.findAll({})
-    const entre = arbol.slice(sin.esfuerzo + 1, sin.i).filter(n => n.type === 'Text')
+    const entre = arbol.slice(sin.esfuerzo + 1, sin.etiqueta).filter(n => n.type === 'Text')
     expect(entre.length).toBeGreaterThan(0)
-    expect(entre.map(n => n.text).join('')).toMatch(/^ \S+( · .*)?$/)
+    expect(entre.map(n => n.text).join('')).toMatch(/^(—|\S+( · .*)?)$/)
 
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     expect((await resumen()).texto).toBe('/qcc-implementador · Preflight · 0 s')
@@ -5045,7 +5231,7 @@ describe('flujo en el panel', () => {
     expect(corridas).toEqual([{ argv: WINDOWS, cwd: root }])
     expect(avisos).toEqual([])
     expect(guardados.get('prefs:pestana')).toBe('flujo')
-    expect(await textosDe(ui)).not.toContain('Contexto')
+    expect(await textosDe(ui)).not.toContain('ctx   ')
     expect(await ui.find({ type: 'Button', key: 'pestana-inicio' })).toBeDefined()
     await ui.unmount()
   })
@@ -5064,7 +5250,7 @@ describe('flujo en el panel', () => {
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await ui.find({ type: 'Button', key: 'pestana-inicio' })).toBeDefined()
-    expect(await textosDe(ui)).not.toContain('Contexto')
+    expect(await textosDe(ui)).not.toContain('ctx   ')
     expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Preflight · 0 s'])
     expect(await textosDe(ui)).toContain('Preflight')
     await ui.unmount()
@@ -5078,7 +5264,7 @@ describe('flujo en el panel', () => {
     const visibles = async () => {
       const textos = await textosDe(ui)
 
-      return [textos.includes('Contexto'), textos.includes('Esta sesión'), Boolean(await ui.find({ type: 'Button', key: 'carpeta' }))]
+      return [textos.includes('ctx   '), textos.includes('Esta sesión'), Boolean(await ui.find({ type: 'Button', key: 'carpeta' }))]
     }
     // Inicio, el panel entero.
     expect(await visibles()).toEqual([true, true, true])
@@ -5097,7 +5283,7 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('con prefs:pestana guardado en «flujo», la pestaña abre sin «Contexto»', async ($, on) => {
+  test('con prefs:pestana guardado en «flujo», la pestaña abre sin la fila ctx', async ($, on) => {
     preparar(on, [], { 'prefs:pestana': 'flujo' })
     on('session.model', () => ({ value: 'claude-opus-5-5' }))
     on('settings.read', () => ({ value: {} }))
@@ -5109,7 +5295,7 @@ describe('flujo en el panel', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const textos = await textosDe(ui)
     expect(await desdeResumen(ui, 1)).toEqual(['sin flujo en esta sesión'])
-    expect(textos).not.toContain('Contexto')
+    expect(textos).not.toContain('ctx   ')
     expect(textos).not.toContain('Esta sesión')
     await ui.unmount()
   })
@@ -6234,7 +6420,7 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'simplify', text: '' })
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
 
-    expect(await desdeResumen(ui, 1)).toEqual(['sin flujo en esta sesión'])
+    expect(await desdeResumen(ui, 1)).toEqual(['—'])
     await ui.unmount()
   })
 
@@ -6247,7 +6433,7 @@ describe('flujo en el panel', () => {
     expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Preflight · 0 s')
 
     await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
-    expect(await desdeResumen(ui, 1)).toEqual(['sin flujo en esta sesión'])
+    expect(await desdeResumen(ui, 1)).toEqual(['—'])
     await ui.unmount()
   })
 
@@ -7456,7 +7642,7 @@ describe('historial en el panel', () => {
 
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     // Las claves viejas (`prefs:flujo`) se ignoran: abre Inicio, sin historial.
-    expect(await textosDe(ui)).toContain('Contexto')
+    expect(await textosDe(ui)).toContain('ctx   ')
     expect(await filasDe(ui)).toEqual([])
 
     await ui.press({ key: 'pestana-historial' })
