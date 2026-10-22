@@ -167,12 +167,17 @@ export type Flujo = {
   configs?: Record<number, Record<string, string[]>>
 }
 
-/** Una fila del historial de flujos (`~/.claude/flujos/registros/flujos.jsonl`), ya reducida a lo que muestra la pestaña «Historial». */
+/**
+ * Una fila del historial de flujos (`~/.claude/flujos/registros/flujos.jsonl` o `~/.claude/flujos-odd/registros/odd.jsonl`), ya reducida
+ * a lo que muestra la pestaña «Historial».
+ */
 export type FilaHistorial = {
   /** Hora de cierre del flujo, ISO. */
   t: string
   /** Nombre de la carpeta del repo (último tramo de `raiz`); `?` si falta. */
   repo: string
+  /** Qué flujo fue: `normal` (`/qcc-implementador`, de `flujos.jsonl`) u `odd` (`/qcc-implementador-odd`, de `odd.jsonl`). Si falta (caché de una versión anterior), `normal`. */
+  flujo?: 'normal' | 'odd'
   /** Costo real en dólares; falta si no se anotó. */
   usd?: number
   /** Minutos activos; falta si no se anotaron. */
@@ -187,20 +192,24 @@ export type FilaHistorial = {
   aviso: boolean
   /** Título del flujo (o la primera línea del pedido); falta si no hay. */
   titulo?: string
-  /** Costo por rol (`orquestador`, `ejecutor`…) en dólares, del mayor al menor y solo con `usd` mayor que 0; falta si no hay. */
-  roles?: { rol: string; usd: number }[]
+  /** Costo por rol (`orquestador`, `ejecutor`…) en dólares, del mayor al menor y solo con `usd` mayor que 0; falta si no hay. `tokens` es el total de entrada, leídos, escritos y salida del rol; falta si la fila no lo anotó. */
+  roles?: { rol: string; usd: number; tokens?: number }[]
   /** Minutos de espera (v2), solo si son más de 0. */
   espera?: number
   /** Líneas añadidas en total por las subtareas; falta si ninguna lo anotó. */
   mas?: number
   /** Líneas quitadas en total por las subtareas; falta si ninguna lo anotó. */
   menos?: number
+  /** Total de tokens del flujo (entrada, leídos, escritos y salida); falta si la fila no lo anotó. */
+  tokens?: number
+  /** Tokens de salida del flujo; falta si la fila no lo anotó. */
+  salida?: number
 }
 
-/** El historial leído del archivo: su fecha de modificación (ms) y las últimas filas, la más reciente primero. */
+/** El historial leído de los dos registros: la suma de sus fechas de modificación (ms; la de uno que no existe cuenta 0) y las últimas filas, la más reciente primero. */
 export type Historial = {
-  /** Forma de las filas: `2` trae los campos de la fila v2 (título, roles, espera, líneas). Una caché sin `v` se vuelve a leer. */
-  v?: 2
+  /** Forma de lo guardado: `5` trae los tokens de cada fila y no trae `totales`. Una caché sin `v`, o con `2`, `3` o `4`, se vuelve a leer. */
+  v?: 5
   mtimeMs: number
   filas: FilaHistorial[]
 }
@@ -243,6 +252,8 @@ declare module 'claude-code' {
       home?: string | null
       /** El freno de contexto de `prompt.submit`; `null` si no hay nada que recordar. Solo de esta terminal. Si falta (estado de una versión anterior), `null`. */
       freno?: Freno | null
+      /** Hay una corrida de `/qcc-implementador-odd` en este turno: el hilo principal anota sus tokens como los de un flujo. Se borra al terminar el turno del hilo principal. Solo de esta terminal. Si falta (estado de una versión anterior), `false`. */
+      corridaOdd?: boolean
     }
   }
 }

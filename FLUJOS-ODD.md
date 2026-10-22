@@ -154,4 +154,4 @@ node ~/.claude/flujos/costos.mjs --ultimos 10
 
 ## Pendiente
 
-El panel no sigue este flujo: ni sus fases en vivo ni su historial, porque `qcc-panel` solo lee `/qcc-implementador` y su `flujos.jsonl`.
+El panel no sigue las fases en vivo de este flujo (no tiene pestaña Flujo para él). Sí registra los tokens de su orquestador en el gasto semanal (como `flujo|…`) y su historial lee `odd.jsonl` junto a `flujos.jsonl`, con la etiqueta `odd` y los tokens del orquestador; ver [MODS.md](MODS.md).

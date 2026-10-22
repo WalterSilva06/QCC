@@ -71,6 +71,11 @@ function nombreDeSkill(skill: string): string {
   return skill.trim().replace(/^\//, '').split(':').pop() ?? ''
 }
 
+/** Si `skill` es `qcc-implementador-odd` (con o sin `/` y con o sin prefijo `plugin:`). No es un flujo del panel: solo marca sus tokens. */
+export function esSkillOdd(skill: string): boolean {
+  return nombreDeSkill(skill) === 'qcc-implementador-odd'
+}
+
 /**
  * Flujo nuevo si `skill` es `qcc-implementador` (con o sin `/` y con o sin prefijo `plugin:`); `null` si no.
  * `t` es la hora (ms) de inicio.

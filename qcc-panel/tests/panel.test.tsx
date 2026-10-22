@@ -35,7 +35,7 @@ import {
 } from '../hooks/flujo'
 import type { Nodo, Senal } from '../hooks/flujo'
 import { decidirFreno, UMBRAL_FRENO } from '../hooks/freno'
-import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaHistorial, lineasHistorial, promedioHistorial, rutaHistorial } from '../hooks/historial'
+import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaHistorial, lineasHistorial, promedioHistorial, rutaHistorial, rutaHistorialOdd, unirHistorial } from '../hooks/historial'
 import { aDesglose, barra, barraPartida, barraTramos, desgloseTramos, duracion, etiquetasAlineadas, falta, historialVigente, lineaLimite, pct, pestanaValida, repartir, tokens, tono, totalConSalida, tramos } from '../hooks/formato'
 import {
   ESPERA_MAX_MS,
@@ -4533,6 +4533,45 @@ describe('flujo en el panel', () => {
     expect(hora['claude-opus-5-5|high|sub']).toEqual(una)
   })
 
+  test('con /qcc-implementador-odd el hilo principal anota flujo|… hasta el fin del turno; un subagente y una skill ajena, no', async ($, on) => {
+    const { guardados } = preparar(on)
+    on('turn.step', async function* (_$, e) {
+      return {
+        turnId: e.turnId,
+        index: e.index,
+        answer: 'ok',
+        toolUses: [],
+        stopReason: 'end_turn' as const,
+        usage: { ...USO, model: e.model },
+      }
+    })
+    await $.session.measure(MEDIDA)
+    const una = [USO.input_tokens, USO.output_tokens, USO.cache_read_input_tokens, USO.cache_creation_input_tokens]
+    const hora = () => comoRegistro(guardados.get('uso:s1'))[String(inicioDeHora(AHORA))] ?? {}
+
+    // Skills que no son odd (ni vacía, ni prefijo parecido): ninguna marca.
+    await $.skill.prompt({ skill: '', text: '' })
+    await $.skill.prompt({ skill: 'qcc-implementador-odd2', text: '' })
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(Object.keys(hora())).toEqual(['claude-opus-5-5|high'])
+
+    // Con prefijo `plugin:` y barra también vale; el subagente no lleva la marca.
+    await $.skill.prompt({ skill: '/mis:qcc-implementador-odd', text: '' })
+    await paso($, 'claude-opus-5-5', 'high')
+    await paso($, 'claude-opus-5-5', 'high', 'agente-1')
+    expect(hora()['flujo|claude-opus-5-5|high']).toEqual(una)
+    expect(hora()['claude-opus-5-5|high|sub']).toEqual(una)
+
+    // El fin de un turno de subagente no la borra; el del hilo principal sí.
+    await $.turn.complete(respuesta('ok', { agentId: 'agente-1' }))
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(hora()['flujo|claude-opus-5-5|high']).toEqual(una.map(x => x * 2))
+    await $.turn.complete(respuesta('ok'))
+    await paso($, 'claude-opus-5-5', 'high')
+    expect(hora()['flujo|claude-opus-5-5|high']).toEqual(una.map(x => x * 2))
+    expect(hora()['claude-opus-5-5|high']).toEqual(una.map(x => x * 2))
+  })
+
   /** Un `turn.step` final que anota con qué modelo y esfuerzo llegó cada petición y responde con ese modelo. */
   function motorVisto(on: On) {
     const vistos: { model: string; effort: unknown }[] = []
@@ -6739,8 +6778,8 @@ describe('historial', () => {
 
     expect(filas.map(f => f.repo)).toEqual(['repo5', 'repo4', 'repo3', 'repo2', 'repo1'])
     expect(leerHistorial(texto, 6).map(f => f.repo).at(-1)).toBe('proyecto')
-    expect(filaDeRegistro(v1)).toEqual({ t: T, repo: 'proyecto', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
-    expect(filaDeRegistro(v2())).toEqual({ t: T, repo: 'claude-config', usd: 0.98, minutos: 12, revision: '✓', clasificacion: 'CRÍTICO (#1, #5)', subtareas: 2, aviso: false })
+    expect(filaDeRegistro(v1)).toEqual({ t: T, repo: 'proyecto', flujo: 'normal', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
+    expect(filaDeRegistro(v2())).toEqual({ t: T, repo: 'claude-config', flujo: 'normal', usd: 0.98, minutos: 12, revision: '✓', clasificacion: 'CRÍTICO (#1, #5)', subtareas: 2, aviso: false })
     expect(filaDeRegistro(null)).toBeNull()
     expect(filaDeRegistro({ t: 5 })).toBeNull()
     expect(filaDeRegistro({ v: 2, tipo: 'defecto', t: T })).toBeNull()
@@ -6774,29 +6813,49 @@ describe('historial', () => {
     expect(cifraMinutos()).toBe('—m')
   })
 
-  test('línea completa y recortes a 49 y a 32 columnas', () => {
-    const fila = { t: T, repo: 'mi-repositorio-largo', usd: 0.98, minutos: 12, revision: '✓' as const, clasificacion: 'CRÍTICO (#1, #5)', subtareas: 3, aviso: true }
+  test('línea 1: las cuatro cifras destacadas, la marca del flujo y los recortes a 49, 40 y 32 columnas', () => {
+    const fila = { t: T, repo: 'QCC', usd: 1.29, minutos: 11, revision: '✓' as const, clasificacion: 'CRÍTICO (#1, #5)', subtareas: 3, aviso: true, tokens: 2_500_000, salida: 91_000 }
     const largo = (s: string) => Array.from(s).length
 
-    expect(lineaHistorial(fila, 80)).toBe('18/10 09:30 mi-repositorio-largo $0,98 12m ✓ CRÍTICO (#1, #5) ×3 ⚠')
-    expect(lineaHistorial({ ...fila, subtareas: undefined, aviso: false }, 80)).toBe('18/10 09:30 mi-repositorio-largo $0,98 12m ✓ CRÍTICO (#1, #5)')
+    // Ancho de sobra: fecha, repo, marca, revisión y las cifras con « · » (el aviso, la clasificación y ×n van en la línea 2).
+    expect(lineaHistorial(fila, 80)).toBe('18/10 09:30 QCC n ✓ · $1,29 · 11m · 2,5M tok · sal 91k')
+    expect(lineaHistorial({ ...fila, flujo: 'odd' }, 80)).toBe('18/10 09:30 QCC odd ✓ · $1,29 · 11m · 2,5M tok · sal 91k')
+    expect(lineaHistorial({ ...fila, flujo: 'normal' }, 80)).toBe(lineaHistorial(fila, 80))
     expect(lineaHistorial({ ...fila, t: 'nada' }, 80).startsWith('??/?? ??:?? ')).toBe(true)
+    // Un dato sin valor se muestra `—`.
+    expect(lineaHistorial({ ...fila, usd: undefined, minutos: undefined, tokens: undefined, salida: undefined }, 80)).toBe('18/10 09:30 QCC n ✓ · $— · —m · — tok · sal —')
+    expect(lineaHistorial({ ...fila, tokens: 0, salida: 0 }, 80)).toBe('18/10 09:30 QCC n ✓ · $1,29 · 11m · 0 tok · sal 0')
 
-    const a49 = lineaHistorial(fila, 49)
-    expect(largo(a49)).toBeLessThanOrEqual(49)
-    expect(a49).toMatch(/^18\/10 09:30 \S*… \$0,98 12m ✓ CRÍTICO \(#1, #5\) ×3 ⚠$/)
+    // 49: con la fecha no caben las cifras con « · », así que van con un espacio y el repo se conserva.
+    expect(lineaHistorial(fila, 49)).toBe('18/10 09:30 QCC n ✓ $1,29 11m 2,5M tok sal 91k')
+    // El repo largo se acorta con «…» antes que cualquier cifra.
+    const larga = { ...fila, repo: 'mi-repositorio-largo' }
+    expect(lineaHistorial(larga, 49)).toBe('18/10 09:30 mi-re… n ✓ $1,29 11m 2,5M tok sal 91k')
+    expect(lineaHistorial(larga, 80)).toBe('18/10 09:30 mi-repositorio-largo n ✓ · $1,29 · 11m · 2,5M tok · sal 91k')
+    // 40: sin fecha (con ella no caben las cifras), con el repo mientras tenga sitio.
+    expect(lineaHistorial(fila, 40)).toBe('QCC n ✓ $1,29 11m 2,5M tok sal 91k')
+    expect(lineaHistorial({ ...fila, flujo: 'odd' }, 40)).toBe('QCC odd ✓ $1,29 11m 2,5M tok sal 91k')
+    expect(lineaHistorial(larga, 40)).toBe('mi-repos… n ✓ $1,29 11m 2,5M tok sal 91k')
+    // 32: sin fecha ni repo; las cifras enteras, la marca y la revisión.
+    expect(lineaHistorial(fila, 32)).toBe('n ✓ $1,29 11m 2,5M tok sal 91k')
+    expect(lineaHistorial({ ...fila, flujo: 'odd' }, 32)).toBe('odd ✓ $1,29 11m 2,5M tok sal 91k')
+    // Sin sitio para 2 caracteres del repo más «…», el repo se quita (no queda un `n…` confuso junto a la marca).
+    expect(lineaHistorial(larga, 45)).toBe('18/10 09:30 n ✓ $1,29 11m 2,5M tok sal 91k')
+    // Cifras grandes a 32 columnas: caben. Si no cabe la marca con el glifo, se pierde el glifo y no la marca; si ni así, quedan las cifras enteras.
+    const grande = { ...fila, usd: 12.34, minutos: 125, tokens: 12_000_000, salida: 480_000 }
+    expect(lineaHistorial(grande, 32)).toBe('n ✓ $12,34 125m 12M tok sal 480k')
+    expect(lineaHistorial({ ...grande, flujo: 'odd' }, 32)).toBe('odd $12,34 125m 12M tok sal 480k')
+    expect(lineaHistorial({ ...grande, flujo: 'odd' }, 31)).toBe('$12,34 125m 12M tok sal 480k')
+    expect(lineaHistorial({ ...grande, flujo: 'odd' }, 28)).toBe('$12,34 125m 12M tok sal 480k')
+    // Una corrida odd real (4,99 USD, 36 min, 11,7M tokens, 166k de salida) a 32 columnas conserva la marca `odd`.
+    const real = { ...fila, flujo: 'odd' as const, usd: 4.99, minutos: 36, tokens: 11_700_000, salida: 166_000 }
+    expect(lineaHistorial(real, 32)).toBe('odd $4,99 36m 11,7M tok sal 166k')
+    expect(lineaHistorial({ ...real, flujo: 'normal' }, 32)).toBe('n ✓ $4,99 36m 11,7M tok sal 166k')
 
-    const corta = { ...fila, clasificacion: 'sin criterios' }
-    const a32 = lineaHistorial(corta, 32)
-    expect(largo(a32)).toBeLessThanOrEqual(32)
-    expect(a32).not.toContain('mi-')
-    expect(a32.startsWith('18/10 09:30 $0,98 12m ✓')).toBe(true)
-    expect(a32.endsWith(' ×3 ⚠')).toBe(true)
-
-    for (const ancho of [60, 49, 40, 32, 28, 20, 10, 1]) expect(largo(lineaHistorial(fila, ancho))).toBeLessThanOrEqual(ancho)
+    for (const ancho of [80, 60, 49, 40, 32, 28, 20, 10, 1, 0]) for (const f of [fila, larga, grande, { ...fila, flujo: 'odd' as const }]) expect(largo(lineaHistorial(f, ancho))).toBeLessThanOrEqual(ancho)
   })
 
-  test('filaDeRegistro: titulo, roles, espera y líneas de una fila v2', () => {
+  test('filaDeRegistro: titulo, roles y espera de una fila v2, y sus dos líneas sin roles ni espera', () => {
     const roles = { orquestador: { usd: 0.3 }, ejecutor: { usd: 0.5 }, revisor: { usd: 0 }, explorador: { usd: 'x' }, planificador: { usd: 0.1 } }
     const f = filaDeRegistro(
       v2({
@@ -6810,24 +6869,131 @@ describe('historial', () => {
 
     expect(f).toMatchObject({ titulo: 'Historial detallado', espera: 2.5, mas: 15, menos: 2, subtareas: 3 })
     expect(f?.roles).toEqual([{ rol: 'ejecutor', usd: 0.5 }, { rol: 'orquestador', usd: 0.3 }, { rol: 'planificador', usd: 0.1 }])
-    expect(lineasHistorial(f!, 80)).toEqual([
-      lineaHistorial(f!, 80),
-      '  Historial detallado',
-      '  ejec $0,50 · orq $0,30 · plan $0,10 · espera 3m · +15 −2',
-    ])
+    // Los roles y la espera se leen y se guardan, pero ya no se dibujan: la 2.ª línea es el título con los cambios y lo que quepa.
+    expect(lineasHistorial(f!, 80)).toEqual([lineaHistorial(f!, 80), '  Historial detallado · +15 −2 · ×3 · CRÍTICO (#1, #5)'])
+    expect(lineasHistorial(f!, 80).join('\n')).not.toMatch(/ejec|orq|plan|espera/)
 
     const sinTitulo = filaDeRegistro(v2({ pedido: '\n  Primera línea del pedido  \nsegunda' }))
     expect(sinTitulo?.titulo).toBe('Primera línea del pedido')
     expect(filaDeRegistro(v2({ titulo: '', pedido: 'x'.repeat(200) }))?.titulo).toBe(`${'x'.repeat(119)}…`)
     expect(filaDeRegistro(v2({ titulo: '', pedido: '  \n ' }))?.titulo).toBeUndefined()
     expect(filaDeRegistro(v2({ tiempos: { activo: 720, espera: 0 } }))?.espera).toBeUndefined()
-    expect(lineasHistorial({ ...f!, roles: [{ rol: 'raro', usd: 1 }], espera: undefined, mas: undefined, menos: 4 }, 80)[2]).toBe('  raro $1,00 · +0 −4')
+    expect(lineasHistorial({ ...f!, roles: [{ rol: 'raro', usd: 1 }], espera: undefined, mas: undefined, menos: 4 }, 80)[1]).toBe('  Historial detallado · +0 −4 · ×3 · CRÍTICO (#1, #5)')
+  })
+
+  /** Una corrida de `odd.jsonl` como la anota `odd.mjs --cierre` (fila v1). */
+  const odd = (r: Record<string, unknown> = {}) => ({
+    v: 1,
+    t: T,
+    raiz: 'D:\\GitHub-Personal\\QCC',
+    base: 'abc',
+    titulo: 'Mejoras de odd',
+    resultado: 'COMPLETO',
+    tamano: 'grande',
+    riesgo: 'ítem 2 (guardia)',
+    revision: 'APROBADO',
+    cambios: { archivos: 13, mas: 846, menos: 56 },
+    costo: {
+      minutos: 36.2,
+      usd: 4.98,
+      roles: {
+        orquestador: { pedidos: 31, usd: 1.39, agentes: 0, tokens: { entrada: 64, leidos: 4_584_373, escritos: 144_298, salida: 36_033 } },
+        ejecutor: { pedidos: 78, usd: 2.12, agentes: 3, tokens: { entrada: 160, leidos: 4_502_191, escritos: 361_396, salida: 77_026 } },
+      },
+      veredictos: { ejecutor: ['HECHO'], revisor: ['APROBADO'] },
+    },
+    ...r,
+  })
+
+  test('filaDeRegistro: una corrida odd trae flujo odd, tamaño, cambios y los tokens de cada rol', () => {
+    const f = filaDeRegistro(odd(), 'odd')
+
+    expect(f).toEqual({
+      t: T,
+      repo: 'QCC',
+      flujo: 'odd',
+      usd: 4.98,
+      minutos: 36.2,
+      revision: '✓',
+      clasificacion: 'grande',
+      aviso: false,
+      titulo: 'Mejoras de odd',
+      roles: [
+        { rol: 'ejecutor', usd: 2.12, tokens: 4_940_773 },
+        { rol: 'orquestador', usd: 1.39, tokens: 4_764_768 },
+      ],
+      mas: 846,
+      menos: 56,
+    })
+    expect(filaDeRegistro(odd({ costo: { usd: 1, veredictos: { revisor: ['RECHAZADO', 'APROBADO'] } } }), 'odd')?.revision).toBe('↻')
+    expect(filaDeRegistro(odd({ costo: { usd: 1 } }), 'odd')?.revision).toBe('✓')
+    expect(filaDeRegistro(odd({ costo: { usd: 1 }, revision: 'omitida' }), 'odd')?.revision).toBe('·')
+    expect(filaDeRegistro(odd({ resultado: 'DETENIDO' }), 'odd')).toMatchObject({ revision: '✗' })
+    // Sin costo, roles, tokens o cambios: la fila vale igual y no inventa campos.
+    const pelada = filaDeRegistro({ v: 1, t: T }, 'odd')
+    expect(pelada).toEqual({ t: T, repo: '?', flujo: 'odd', revision: '·', clasificacion: '', aviso: false })
+    // Tokens que no son números o rol sin tokens: el rol sigue, sin tokens.
+    const rara = filaDeRegistro(odd({ costo: { roles: { orquestador: { usd: 1, tokens: { entrada: 'x' } }, ejecutor: { usd: 2, tokens: 5 } } } }), 'odd')
+    expect(rara?.roles).toEqual([{ rol: 'ejecutor', usd: 2 }, { rol: 'orquestador', usd: 1 }])
+    // Una fila del historial normal también puede traer tokens por rol.
+    const normal = filaDeRegistro(v2({ costo: { roles: { orquestador: { usd: 0.3, tokens: { entrada: 1, leidos: 2, escritos: 3, salida: 4 } } } } }))
+    expect(normal?.flujo).toBe('normal')
+    expect(normal?.roles).toEqual([{ rol: 'orquestador', usd: 0.3, tokens: 10 }])
+  })
+
+  test('lineasHistorial: la marca de flujo va en la línea 1, igual para los dos flujos, y no hay tercera línea', () => {
+    const f = filaDeRegistro(odd({ costo: { ...odd().costo, tokens: { entrada: 64, leidos: 2_400_000, escritos: 0, salida: 91_000 } } }), 'odd')!
+    const normal = { ...f, flujo: 'normal' as const }
+
+    expect(lineasHistorial(f, 100)).toEqual([
+      '18/10 09:30 QCC odd ✓ · $4,98 · 36m · 2,5M tok · sal 91k',
+      '  Mejoras de odd · +846 −56 · grande',
+    ])
+    expect(lineasHistorial(normal, 100)[0]).toBe('18/10 09:30 QCC n ✓ · $4,98 · 36m · 2,5M tok · sal 91k')
+    // Los dos flujos tienen el mismo formato: solo cambia la marca.
+    expect(lineasHistorial(normal, 100)[0].replace(' n ', ' odd ')).toBe(lineasHistorial(f, 100)[0])
+    // Una fila sin `flujo` (caché de una versión anterior) se dibuja como normal. Sin título, `sin título`.
+    expect(lineasHistorial({ ...f, flujo: undefined, roles: undefined, mas: undefined, menos: undefined, titulo: undefined, clasificacion: '' }, 80)).toEqual([
+      '18/10 09:30 QCC n ✓ · $4,98 · 36m · 2,5M tok · sal 91k',
+      '  sin título',
+    ])
+  })
+
+  test('unirHistorial: mezcla las listas por fecha, la más reciente primero, y corta a `cuantos`', () => {
+    const base = { repo: 'r', revision: '✓' as const, clasificacion: 'x', aviso: false }
+    const a = [{ ...base, t: '2026-10-20T10:00:00.000Z', flujo: 'normal' as const }, { ...base, t: '2026-10-18T10:00:00.000Z', flujo: 'normal' as const }]
+    const b = [{ ...base, t: '2026-10-19T10:00:00.000Z', flujo: 'odd' as const }, { ...base, t: 'rota', flujo: 'odd' as const }]
+
+    expect(unirHistorial([a, b], 10).map(f => f.t)).toEqual(['2026-10-20T10:00:00.000Z', '2026-10-19T10:00:00.000Z', '2026-10-18T10:00:00.000Z', 'rota'])
+    expect(unirHistorial([a, b], 2).map(f => f.flujo)).toEqual(['normal', 'odd'])
+    expect(unirHistorial([], 3)).toEqual([])
+    expect(unirHistorial([a], 0)).toEqual([])
+  })
+
+  test('leerHistorial con flujo odd marca las filas y salta las rotas', () => {
+    const texto = [JSON.stringify(odd()), '{ roto', '', JSON.stringify(odd({ raiz: 'D:\\x\\otro' }))].join('\n')
+
+    expect(leerHistorial(texto, 5, 'odd').map(f => [f.repo, f.flujo])).toEqual([['otro', 'odd'], ['QCC', 'odd']])
+    expect(leerHistorial(texto, 5).map(f => f.flujo)).toEqual(['normal', 'normal'])
+  })
+
+  test('tokens por fila: odd los anota en costo.tokens y el flujo normal en uso.tokens', () => {
+    const tok = (salida: number) => ({ entrada: 1, leidos: 100, escritos: 10, salida })
+    // Odd anota `costo.tokens`; el flujo normal (v2), `uso.tokens`.
+    expect(filaDeRegistro(odd({ costo: { usd: 1, minutos: 10, tokens: tok(9) } }), 'odd')).toMatchObject({ tokens: 120, salida: 9 })
+    expect(filaDeRegistro(v2({ uso: { tokens: tok(5) } }))).toMatchObject({ tokens: 116, salida: 5 })
+    expect(filaDeRegistro(v2())).not.toHaveProperty('tokens')
+    expect(filaDeRegistro(v2())).not.toHaveProperty('salida')
+    expect(filaDeRegistro(v2({ uso: { tokens: 'x' } }))).not.toHaveProperty('tokens')
+    // Un solo campo de tokens que sea número basta para el total; la salida falta si ese campo no está.
+    expect(filaDeRegistro(v2({ uso: { tokens: { entrada: 7 } } }))).toMatchObject({ tokens: 7 })
+    expect(filaDeRegistro(v2({ uso: { tokens: { entrada: 7 } } }))).not.toHaveProperty('salida')
   })
 
   test('filaDeRegistro: una fila v1 no trae campos nuevos', () => {
     const v1 = { v: 1, t: T, raiz: '/home/x/proyecto', clasificacion: 'sin criterios', costo: { usd: 1.5, minutos: 20, roles: { ejecutor: { usd: 1 } } }, tiempos: { espera: 600 }, subtareas: 3 }
 
-    expect(filaDeRegistro({ ...v1, costo: { usd: 1.5, minutos: 20 }, tiempos: undefined })).toEqual({ t: T, repo: 'proyecto', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
+    expect(filaDeRegistro({ ...v1, costo: { usd: 1.5, minutos: 20 }, tiempos: undefined })).toEqual({ t: T, repo: 'proyecto', flujo: 'normal', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
     expect(filaDeRegistro(v1)).not.toHaveProperty('espera')
     expect(filaDeRegistro(v2())).not.toHaveProperty('titulo')
     expect(filaDeRegistro(v2())).not.toHaveProperty('roles')
@@ -6835,7 +7001,7 @@ describe('historial', () => {
     expect(filaDeRegistro(v2())).not.toHaveProperty('menos')
   })
 
-  test('lineasHistorial: 1 a 3 líneas, ninguna más larga que el ancho, a 32 y 49', () => {
+  test('lineasHistorial: siempre 2 líneas, ninguna más larga que el ancho, a 49, 40 y 32', () => {
     const base = { t: T, repo: 'mi-repo', usd: 0.98, minutos: 12, revision: '✓' as const, clasificacion: 'sin criterios', aviso: false }
     const rica = {
       ...base,
@@ -6847,17 +7013,26 @@ describe('historial', () => {
     }
     const largo = (s: string) => Array.from(s).length
 
-    expect(lineasHistorial(base, 49)).toEqual([lineaHistorial(base, 49)])
-    expect(lineasHistorial({ ...base, titulo: 'solo título' }, 49)).toEqual([lineaHistorial(base, 49), '  solo título'])
-    expect(lineasHistorial({ ...base, espera: 2 }, 49)).toEqual([lineaHistorial(base, 49), '  espera 2m'])
-    expect(lineasHistorial(rica, 80)[2]).toBe('  orq $0,30 · rplan $0,20 · expl $0,10 · espera 4m · +120 −30')
+    // Sin título, `sin título`; con título corto, detrás van `+mas −menos` y la clasificación mientras quepan.
+    expect(lineasHistorial(base, 49)).toEqual([lineaHistorial(base, 49), '  sin título · sin criterios'])
+    expect(lineasHistorial({ ...base, titulo: 'solo título' }, 49)).toEqual([lineaHistorial(base, 49), '  solo título · sin criterios'])
+    expect(lineasHistorial({ ...base, titulo: 'solo título', mas: 3, subtareas: 2 }, 80)[1]).toBe('  solo título · +3 −0 · ×2 · sin criterios')
+    // Cada parte entra solo si cabe: a 19 columnas `×2` entra aunque `+3 −0` ya no.
+    expect(lineasHistorial({ ...base, titulo: 'solo título', mas: 3, subtareas: 2 }, 25)[1]).toBe('  solo título · +3 −0')
+    expect(lineasHistorial({ ...base, titulo: 'solo título', mas: 3, subtareas: 2 }, 19)[1]).toBe('  solo título · ×2')
+    // El aviso abre la línea 2.
+    expect(lineasHistorial({ ...base, titulo: 'solo título', aviso: true }, 49)[1]).toBe('  ⚠ solo título · sin criterios')
+    // Ni los roles ni la espera se dibujan.
+    expect(lineasHistorial({ ...base, espera: 2 }, 49)).toEqual(lineasHistorial(base, 49))
+    expect(lineasHistorial(rica, 80)[1]).toBe('  Un título bastante largo con ñandú y 🙂 emojis para forzar recorte · +120 −30')
 
-    for (const ancho of [49, 32]) {
+    for (const ancho of [49, 40, 32]) {
       const ls = lineasHistorial(rica, ancho)
-      expect(ls).toHaveLength(3)
+      expect(ls).toHaveLength(2)
       for (const l of ls) expect(largo(l)).toBeLessThanOrEqual(ancho)
+      // Un título que no cabe se corta con «…» y no lleva cola.
       expect(ls[1].endsWith('…')).toBe(true)
-      expect(ls[2].endsWith('…')).toBe(true)
+      expect(ls[1]).not.toContain('+120')
     }
 
     for (const ancho of [80, 60, 49, 40, 32, 20, 10, 1, 0]) for (const l of lineasHistorial(rica, ancho)) expect(largo(l)).toBeLessThanOrEqual(Math.max(ancho, 0))
@@ -6868,6 +7043,9 @@ describe('historial', () => {
     expect(rutaHistorial('/home/x/')).toBe('/home/x/.claude/flujos/registros/flujos.jsonl')
     expect(rutaHistorial('  ')).toBeNull()
     expect(rutaHistorial('')).toBeNull()
+    expect(rutaHistorialOdd('C:\\Users\\x')).toBe('C:\\Users\\x\\.claude\\flujos-odd\\registros\\odd.jsonl')
+    expect(rutaHistorialOdd('/home/x/')).toBe('/home/x/.claude/flujos-odd/registros/odd.jsonl')
+    expect(rutaHistorialOdd('  ')).toBeNull()
   })
 })
 
@@ -6898,7 +7076,8 @@ describe('historial en el panel', () => {
     tiempos: { activo: 600, espera: 120 },
     subtareas: [{ n: 1, estado: 'HECHO', mas: 30, menos: 4 }],
   })
-  const ES_FILA = /^\d\d\/\d\d \d\d:\d\d /
+  /** La línea 1 de un flujo: sus cifras (`… tok sal <salida>`), con o sin fecha delante; la de `promedio` y el título no la cumplen. */
+  const ES_FILA = /^\S.* tok (· )?sal \S+$/
   const respuesta = (answer: string) => ({ reason: 'answer' as const, answer, durationMs: 10, isAborted: false, turnId: 't' })
 
   /**
@@ -6915,8 +7094,10 @@ describe('historial en el panel', () => {
     on('skill.prompt', (_$, e) => ({ text: e.text }))
     on('turn.complete', (_$, e) => ({ text: e.answer }))
     const guardados = motorStore(on, inicial)
-    const archivo = { texto: SEIS, mtimeMs: 1_000, ilegible: false, home: 'C:\\Users\\x', nodeFalla: false, nodeEspera: null as Promise<void> | null }
-    const llamadas = { node: 0, stat: [] as string[], read: [] as string[] }
+    // `odd` es `odd.jsonl`: `null` si no existe. `llamadas.stat` y `llamadas.read` cuentan solo `flujos.jsonl`; `llamadas.odd`, el otro archivo.
+    const archivo = { texto: SEIS, mtimeMs: 1_000, ilegible: false, home: 'C:\\Users\\x', nodeFalla: false, nodeEspera: null as Promise<void> | null, odd: null as { texto: string; mtimeMs: number } | null }
+    const llamadas = { node: 0, stat: [] as string[], read: [] as string[], odd: [] as string[] }
+    const esOdd = (ruta: string) => ruta.endsWith('odd.jsonl')
     on('process.run', async () => {
       llamadas.node++
       if (archivo.nodeEspera !== null) await archivo.nodeEspera
@@ -6925,11 +7106,23 @@ describe('historial en el panel', () => {
       return { value: { exitCode: 0, stdout: `${archivo.home}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     })
     on('fs.stat', (_$, e) => {
+      if (esOdd(e.path)) {
+        llamadas.odd.push(`stat ${e.path}`)
+
+        return archivo.odd === null ? { deny: 'no existe' } : { value: { kind: 'file' as const, size: archivo.odd.texto.length, mtimeMs: archivo.odd.mtimeMs, isLink: false } }
+      }
+
       llamadas.stat.push(e.path)
 
       return { value: { kind: 'file' as const, size: archivo.texto.length, mtimeMs: archivo.mtimeMs, isLink: false } }
     })
     on('fs.read', (_$, e) => {
+      if (esOdd(e.path)) {
+        llamadas.odd.push(`read ${e.path}`)
+
+        return archivo.odd === null ? { deny: 'no existe' } : { value: archivo.odd.texto }
+      }
+
       llamadas.read.push(e.path)
 
       return archivo.ilegible ? { deny: 'ilegible' } : { value: archivo.texto }
@@ -7020,15 +7213,17 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  test('historial: una caché sin v se vuelve a leer', async ($, on) => {
-    // Una caché de una versión anterior (sin `v`, sin los campos de la fila v2) no sirve aunque el mtimeMs coincida.
+  test('historial: una caché de cualquier versión anterior se vuelve a leer', async ($, on) => {
+    // Una caché de una versión anterior (sin `v`, `v: 2` sin las filas de odd, `v: 3` sin los tokens de cada fila o `v: 4` con `totales`)
+    // no sirve aunque el mtimeMs coincida; sobrevive a /reload-plugins, así que solo vale la forma actual.
     expect(historialVigente({ mtimeMs: 1_000 }, 1_000)).toBe(false)
-    expect(historialVigente({ mtimeMs: 1_000, v: 2 }, 1_000)).toBe(true)
-    expect(historialVigente({ mtimeMs: 1_000, v: 2 }, 2_000)).toBe(false)
+    for (const v of [0, 1, 2, 3, 4, 6, '5']) expect(historialVigente({ mtimeMs: 1_000, v } as never, 1_000)).toBe(false)
+    expect(historialVigente({ mtimeMs: 1_000, v: 5 }, 1_000)).toBe(true)
+    expect(historialVigente({ mtimeMs: 1_000, v: 5 }, 2_000)).toBe(false)
     expect(historialVigente(null, 1_000)).toBe(false)
     expect(historialVigente(undefined, 1_000)).toBe(false)
 
-    // En el panel, lo que se lee queda con `v: 2`: con el mismo mtimeMs no se vuelve a leer.
+    // En el panel, lo que se lee queda con `v: 5` (la forma vigente): con el mismo mtimeMs no se vuelve a leer.
     const { llamadas } = motorHistorial(on)
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
@@ -7059,7 +7254,7 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  test('Historial: 2-3 líneas por flujo y aviso sin filas', async ($, on) => {
+  test('Historial: 2 líneas por flujo (cifras y resumen) y aviso sin filas', async ($, on) => {
     const { archivo } = motorHistorial(on)
     // Un archivo sin filas de flujo: título y aviso, sin promedio.
     archivo.texto = '{ roto\n'
@@ -7072,7 +7267,7 @@ describe('historial en el panel', () => {
     expect(vacio).toContain(AVISO_VACIO)
     expect(vacio.some(t => t.startsWith('promedio'))).toBe(false)
 
-    // Tres flujos: uno con título, roles y líneas (3 líneas), uno solo con título (2), uno sin nada extra (1).
+    // Tres flujos: uno con título, roles y líneas, uno solo con título y uno sin título. Todos con 2 líneas.
     const completo = JSON.stringify({
       v: 2,
       t: T,
@@ -7093,22 +7288,81 @@ describe('historial en el panel', () => {
     const arbol = await ui.findAll({ type: 'Text' })
     const textos = arbol.map(t => t.text ?? '')
     expect(textos).toContain('promedio $1,33 · 11m · 3 flujos')
-    // El más reciente (la última línea del archivo) primero: su 1.ª línea normal y las otras dos atenuadas.
+    // El más reciente (la última línea del archivo) primero: sus cifras normales (sin tokens: `—`) y el resumen atenuado, sin roles ni espera.
     const i = textos.findIndex(t => t.includes('repoA'))
-    expect(textos.slice(i, i + 3)).toEqual([expect.stringContaining('repoA'), '  Historial como pestaña', '  orq $1,25 · ejec $0,50 · espera 2m · +30 −4'])
-    expect(arbol.slice(i, i + 3).map(t => t.props.dimColor === true)).toEqual([false, true, true])
-    // El segundo: 2 líneas.
+    expect(textos.slice(i, i + 2)).toEqual(['18/10 09:30 repoA n ✓ $2,00 10m — tok sal —', '  Historial como pestaña · +30 −4 · ×1'])
+    expect(arbol.slice(i, i + 2).map(t => t.props.dimColor === true)).toEqual([false, true])
+    // El segundo: solo el título.
     const j = textos.findIndex(t => t.includes('repoB'))
-    expect(j).toBeGreaterThan(i + 2)
+    expect(j).toBeGreaterThan(i + 1)
+    expect(textos[j]).toBe('18/10 09:30 repoB n · $1,00 —m — tok sal —')
     expect(textos[j + 1]).toBe('  Solo título')
     expect(arbol[j]?.props.dimColor).not.toBe(true)
-    // El tercero: 1 línea; lo que le sigue ya no es suyo.
+    // El tercero: sin título; lo que le sigue ya no es suyo.
     const k = textos.findIndex(t => t.includes('repo3'))
     expect(k).toBeGreaterThan(j + 1)
-    expect(textos.slice(k + 1).some(t => t.startsWith('  '))).toBe(false)
+    expect(textos[k + 1]).toBe('  sin título · ×1 · CRÍTICO (#1, #5)')
+    expect(textos.slice(k + 2).some(t => t.startsWith('  '))).toBe(false)
+    // Nada de roles, espera ni la etiqueta de flujo como tercera línea.
+    expect(textos.some(t => /\b(orq|ejec|espera)\b/.test(t) || t.startsWith('  normal'))).toBe(false)
     // Entre flujos hay una línea en blanco (marginTop 1) y el primero no la lleva.
     const cajas = (await ui.findAll({ type: 'Box' })).filter(b => (b.key ?? '').startsWith('historial-'))
     expect(cajas.map(b => b.props.marginTop ?? 0)).toEqual([0, 1, 1])
+    await ui.unmount()
+  })
+
+  test('el historial mezcla odd.jsonl con flujos.jsonl: misma línea de cifras con su marca, sin totales, y relectura si cambia solo odd', async ($, on) => {
+    const { archivo, llamadas } = motorHistorial(on)
+    const corrida = (dia: number, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        v: 1,
+        t: new Date(2026, 9, dia, 9, 30).toISOString(),
+        raiz: 'D:\\GitHub-Personal\\repoOdd',
+        resultado: 'COMPLETO',
+        titulo: 'Corrida odd',
+        tamano: 'chico',
+        revision: 'omitida',
+        costo: { usd: 0.5, minutos: 5, tokens: { entrada: 1, leidos: 1_200_000, escritos: 0, salida: 3 }, roles: { orquestador: { usd: 0.5, tokens: { entrada: 1, leidos: 1_200_000, escritos: 0, salida: 3 } } } },
+        ...extra,
+      })
+    archivo.texto = fila(1)
+    archivo.odd = { texto: corrida(19), mtimeMs: 500 }
+    await $.session.measure(MEDIDA)
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await abrirHistorial(ui)
+    let textos = await textosDe(ui)
+    expect(await filasDe(ui)).toHaveLength(2)
+    // Ya no hay bloque de totales sumados.
+    expect(textos.some(t => /^(normal|odd) ×\d/.test(t) || /^\s*\S+ tok · sal /.test(t))).toBe(false)
+    expect(await ui.find({ type: 'Box', key: 'totales' })).toBeUndefined()
+    // La corrida odd (19/10) va antes que el flujo normal (18/10); las dos con el mismo formato y su marca, y 2 líneas cada una.
+    const i = textos.findIndex(t => t.includes('repoOdd'))
+    expect(textos.slice(i, i + 2)).toEqual(['19/10 09:30 repoOdd odd · $0,50 5m 1,2M tok sal 3', '  Corrida odd · chico'])
+    const j = textos.findIndex(t => t.includes('repo1'))
+    expect(j).toBe(i + 2)
+    expect(textos.slice(j, j + 2)).toEqual(['18/10 09:30 repo1 n ✓ $0,98 12m — tok sal —', '  sin título · ×1 · CRÍTICO (#1, #5)'])
+    expect(textos).toContain('promedio $0,74 · 9m · 2 flujos')
+    expect(llamadas.odd).toEqual(['stat C:\\Users\\x\\.claude\\flujos-odd\\registros\\odd.jsonl', 'read C:\\Users\\x\\.claude\\flujos-odd\\registros\\odd.jsonl'])
+
+    // Con las mismas fechas no vuelve a leer ninguno de los dos; si cambia solo odd.jsonl, sí.
+    await abrirHistorial(ui)
+    expect(llamadas.read).toHaveLength(1)
+    expect(llamadas.odd.filter(l => l.startsWith('read'))).toHaveLength(1)
+    archivo.odd = { texto: [corrida(19), corrida(20, { raiz: 'D:\\GitHub-Personal\\repoNew' })].join('\n'), mtimeMs: 600 }
+    await abrirHistorial(ui)
+    expect(llamadas.odd.filter(l => l.startsWith('read'))).toHaveLength(2)
+    expect((await filasDe(ui))[0]).toContain('repoNew')
+
+    // Un odd.jsonl roto no quita las filas normales; uno que desaparece, tampoco.
+    archivo.odd = { texto: '{ roto\n', mtimeMs: 700 }
+    await abrirHistorial(ui)
+    expect(await filasDe(ui)).toHaveLength(1)
+    archivo.odd = null
+    await abrirHistorial(ui)
+    textos = await textosDe(ui)
+    expect(await filasDe(ui)).toHaveLength(1)
+    expect(textos).not.toContain(AVISO_VACIO)
     await ui.unmount()
   })
 
@@ -7234,19 +7488,67 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  test('a 49, 40 y 32 columnas ninguna línea de un flujo pasa del ancho, ni la del título ni la de los roles', async ($, on) => {
+  test('el fin de una corrida de odd por turn.complete relee el historial; un turno sin corrida no', async ($, on) => {
+    const { archivo, llamadas } = motorHistorial(on)
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await abrirHistorial(ui)
+    expect(await filasDe(ui)).toHaveLength(6)
+
+    // `odd.mjs --cierre` anota la corrida antes de la respuesta final.
+    archivo.odd = { texto: JSON.stringify({ v: 1, t: new Date(2026, 9, 19, 9, 30).toISOString(), raiz: 'D:\\x\\repoOdd', titulo: 'Corrida', costo: { usd: 1 } }), mtimeMs: 500 }
+    await $.turn.complete(respuesta('sin skill'))
+    expect(llamadas.odd.filter(l => l.startsWith('read'))).toHaveLength(0)
+
+    await $.skill.prompt({ skill: 'qcc-implementador-odd', text: '' })
+    await $.turn.complete(respuesta('listo'))
+    expect(llamadas.odd.filter(l => l.startsWith('read'))).toHaveLength(1)
+    expect((await filasDe(ui))[0]).toContain('repoOdd')
+
+    // Ya terminada: otro turno no vuelve a mirar los archivos.
+    const antes = llamadas.stat.length
+    await $.turn.complete(respuesta('otra cosa'))
+    expect(llamadas.stat).toHaveLength(antes)
+    await ui.unmount()
+  })
+
+  test('a 49, 40 y 32 columnas ninguna línea de un flujo pasa del ancho y las cifras de cada flujo quedan enteras', async ($, on) => {
     const { archivo } = motorHistorial(on)
+    // Una corrida odd con cifras grandes (11,98M tokens en total, que se ven como `12M`): a 32 columnas es la que más aprieta.
+    const corridaOdd = JSON.stringify({
+      v: 1,
+      t: new Date(2026, 9, 20, 9, 30).toISOString(),
+      raiz: 'D:\\x\\r9',
+      titulo: 'Corrida odd con un título largo para cualquier ancho',
+      tamano: 'grande',
+      revision: 'APROBADO',
+      cambios: { mas: 846, menos: 56 },
+      costo: { usd: 4.98, minutos: 36, tokens: { entrada: 1, leidos: 11_000_000, escritos: 500_000, salida: 480_000 } },
+    })
     archivo.texto = [fila(1), FLUJO_COMPLETO, fila(3)].join('\n')
+    archivo.odd = { texto: corridaOdd, mtimeMs: 500 }
     await $.session.measure(MEDIDA)
 
     for (const pane of [PANE_ANCHO, PANE_40, PANE]) {
       const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
       await abrirHistorial(ui)
 
-      const lineas = (await textosDe(ui)).filter(t => ES_FILA.test(t) || t.startsWith('  '))
-      // 3 flujos: 1 + 3 + 1 líneas.
-      expect(lineas).toHaveLength(5)
-      for (const l of lineas) expect(Array.from(l).length).toBeLessThanOrEqual(pane.props.bodyColumns)
+      const textos = await textosDe(ui)
+      // Sin totales sumados. 4 flujos (odd, 1, A y 3), 2 líneas cada uno: la de cifras y la de resumen, esta con dos espacios.
+      expect(textos.some(t => /^(normal|odd) ×\d|^odd · sin flujos/.test(t))).toBe(false)
+      const cifras = textos.filter(t => ES_FILA.test(t))
+      const resumenes = textos.filter(t => t.startsWith('  '))
+      expect(cifras).toHaveLength(4)
+      expect(resumenes).toHaveLength(4)
+      for (const l of [...cifras, ...resumenes]) expect(Array.from(l).length).toBeLessThanOrEqual(pane.props.bodyColumns)
+      // Las cuatro cifras están en toda línea 1, sea cual sea el ancho; sin tokens anotados van con `—`.
+      expect(cifras.every(l => / tok (· )?sal \S+$/.test(l) && /\$\S+/.test(l) && /\d+m|—m/.test(l))).toBe(true)
+      // La corrida odd va primero (20/10) y mantiene sus cifras enteras y su marca hasta a 32 columnas; las normales, la suya.
+      expect(cifras[0]).toMatch(/(^| )odd ✓ (\$4,98 · 36m · 12M tok · sal 480k|\$4,98 36m 12M tok sal 480k)$/)
+      expect(cifras.slice(1).every(l => /(^| )n [✓·] /.test(l))).toBe(true)
+      // Resumen: título cortado con «…» al ancho, sin roles ni espera.
+      expect(resumenes.some(l => l.includes('Historial como pestaña'))).toBe(true)
+      expect(textos.some(t => /\b(orq|ejec|espera)\b/.test(t))).toBe(false)
       await ui.unmount()
     }
   })
