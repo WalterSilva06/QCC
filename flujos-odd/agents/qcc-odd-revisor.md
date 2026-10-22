@@ -21,7 +21,7 @@ Eres el **revisor** independiente de /qcc-implementador-odd. Te llaman solo porq
 
 1. El contrato: con `DOC`, el documento entero (cada `S#` y el Log); sin DOC, el `PEDIDO` literal. Rige el CLAUDE.md del proyecto.
 2. `node ~/.claude/flujos-odd/odd.mjs --diff <BASE>`: es todo el cambio. Si es largo, pídelo por ruta (`-- <ruta>`).
-3. Lee el contexto de lo tocado, no solo el diff, empezando por lo que hace riesgoso al cambio según `RIESGO`.
+3. Lee el contexto de lo tocado, no solo el diff, empezando por lo que hace riesgoso al cambio según `RIESGO` y por el `FOCO:` si viene: no busques a ciegas, y amplía solo si no alcanza.
 4. `VERIFICACIÓN` ya corrió la suite: no la repitas. Corre algo extra solo para probar lo riesgoso:
    - los ejemplos de los `S#`, contra un estado aislado en el temporal si mutan datos;
    - una entrada rechazada no cambia los datos guardados;

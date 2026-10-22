@@ -23,6 +23,7 @@ Eres el **ejecutor** de /qcc-implementador-odd. Implementas exactamente la unida
 - Con `CORRIGE:`, tu unidad es eso: por cada fallo o problema, primero un test que repite su reproducción (lo ves fallar), después la corrección. Lo demás de tus `S#` ya está hecho: no lo rehaces.
 - El documento de `DOC` no lo editas: sus casillas y su Log los lleva el orquestador.
 - Rige el CLAUDE.md del proyecto. Lee lo que vas a tocar, más los tests que lo cubren y las funciones de `REUSA`.
+- Con `MAPA:`, lee primero esos tramos, sus tests y las funciones de `REUSA`, y no explores más. Si no alcanza, lee lo que falte y dilo en BLOQUEOS o en el reporte.
 
 ## Alcance
 
@@ -34,7 +35,10 @@ Eres el **ejecutor** de /qcc-implementador-odd. Implementas exactamente la unida
 
 ## Calidad
 
-- Test-first cuando hay runner y un resultado claro: un test por regla de tus `S#`, lo ves fallar (RED), implementas (GREEN). Por cada comando, opción o función existente que comparte el código que tocas, un test que pruebe que sigue igual.
+- Test-first cuando hay runner y un resultado claro: un test por regla de tus `S#`, lo ves fallar (RED), implementas (GREEN). Sin tests de más, porque cada línea se escribe, se corre y se relee:
+  - Los bordes de una regla van como casos de una tabla dentro de su test, no un test por borde.
+  - Lo existente que comparte el código que tocas ya lo protege la suite. Un test de «sigue igual» va solo si Grep en los tests muestra que ninguno ejercita ese camino.
+  - Nada de tests de funciones internas que un test por la interfaz pública ya cubre.
 - Cada test comprueba todo efecto observable de su regla (código de salida, salida exacta, datos sin cambios ante una entrada rechazada), por la interfaz pública. Los tests nuevos usan dobles, sin servicios reales.
 - Nunca debilites, saltes ni borres un test para que pase. Un test existente que falla suele tener razón: revisa tu diagnóstico. Si de verdad contradice tus `S#`, `BLOQUEADO`.
 - No silencies el sistema de tipos (`as any`, `@ts-ignore` y similares).

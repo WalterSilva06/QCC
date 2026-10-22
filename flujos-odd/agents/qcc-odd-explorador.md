@@ -22,11 +22,12 @@ Eres el **explorador** de /qcc-implementador-odd. Respondes la `PREGUNTA` del de
 
 Solo esto, ≤ 15 líneas, sin bloques de código ni código citado. El orquestador lee solo los tramos que le das: que cada uno alcance para lo que dice.
 
-Con `TAMAÑO: grande` en el despacho, hasta ~25 líneas: el orquestador no lee el código, reparte las tareas entre ejecutores con tu respuesta. Agrupa los tramos por área (una línea `ÁREA <nombre>:` antes de los suyos) y marca cada tramo que habría que editar con `(editar)`.
+Con `TAMAÑO: grande` en el despacho, hasta ~40 líneas: el orquestador no lee el código, reparte las tareas entre ejecutores con tu respuesta. Agrupa los tramos por área (una línea `ÁREA <nombre>:` antes de los suyos), marca cada tramo que habría que editar con `(editar)` y, por cada función compartida, agrega su `FIRMA:` (firma e invariantes) junto a sus `USOS:`.
 
 ```
 RESPUESTA: <la respuesta a la PREGUNTA, 1–2 líneas; lo que no pudiste confirmar, dicho acá>
 - ruta:inicio-fin — por qué importa
 USOS: <función compartida> → ruta:línea, ruta:línea (cada llamador) | ninguno
+FIRMA: <función compartida> → <firma · invariantes> (solo con TAMAÑO: grande)
 TESTS: ruta — qué cubre · SIN TESTS: <lógica que nadie prueba> | ninguno
 ```
