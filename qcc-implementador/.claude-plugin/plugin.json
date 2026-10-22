@@ -1,0 +1,6 @@
+{
+  "name": "qcc-implementador",
+  "version": "0.1.0",
+  "description": "/qcc-implementador: flujo multi-agente que explora, planifica, ejecuta por subtareas, verifica y cierra con una revisión final independiente",
+  "author": { "name": "WalterSilva06" }
+}

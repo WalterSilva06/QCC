@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// Copia /qcc-implementador-odd de este repo a ~/.claude, donde Claude Code lo lee. Aparte del instalador de flujos/.
+// Copia /qcc-implementador-odd de este repo a ~/.claude, donde Claude Code lo lee. Aparte del instalador de qcc-implementador/.
 //
 //   skills/<nombre>/SKILL.md  →  ~/.claude/skills/<nombre>/SKILL.md
 //   agents/<nombre>.md        →  ~/.claude/agents/<nombre>.md
 //   herramientas/<archivo>    →  ~/.claude/flujos-odd/<archivo>
 //
-//   node flujos-odd/instalar.mjs              copia lo que cambió
-//   node flujos-odd/instalar.mjs --revisar    muestra qué cambiaría, sin copiar
-//   node flujos-odd/instalar.mjs --traer      al revés: trae a este repo lo editado en ~/.claude
-//   node flujos-odd/instalar.mjs --forzar     copia aunque la copia instalada sea más nueva
+//   node qcc-implementador-odd/instalar.mjs              copia lo que cambió
+//   node qcc-implementador-odd/instalar.mjs --revisar    muestra qué cambiaría, sin copiar
+//   node qcc-implementador-odd/instalar.mjs --traer      al revés: trae a este repo lo editado en ~/.claude
+//   node qcc-implementador-odd/instalar.mjs --forzar     copia aunque la copia instalada sea más nueva
 //
 // Una copia instalada distinta y más nueva que la del repo se editó en ~/.claude: no se pisa sin --forzar (se
 // guarda con --traer). Nunca borra y no toca ~/.claude/flujos-odd/registros. `CLAUDE_CONFIG_DIR` cambia el destino.

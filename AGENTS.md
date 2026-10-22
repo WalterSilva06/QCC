@@ -1,10 +1,14 @@
 # QCC (Quorum Claude Code)
 
-Herramientas personales para Claude Code, en tres partes separadas:
+Herramientas personales para Claude Code, en cinco plugins de un marketplace (`qcc`, en `.claude-plugin/marketplace.json`). Cada plugin lleva `.claude-plugin/plugin.json`, `skills/`, `agents/`, `hooks/hooks.json` y `herramientas/`:
 
-- **`qcc-panel/`**: mod (plugin) con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Ver [MODS.md](MODS.md).
-- **`flujos/`**: los flujos `/qcc-implementador` (con un solo modo) y `/qcc-commit`, con sus agentes y herramientas. Se instalan copiándolos a `~/.claude`. Ver [FLUJOS.md](FLUJOS.md).
-- **`flujos-odd/`**: el flujo `/qcc-implementador-odd`, en prueba, separado por completo de `flujos/`. Tiene su skill, sus agentes, sus herramientas, su instalador, su config (`.claude/qcc-implementador-odd.json`) y su registro. Ninguno de los dos flujos usa archivos del otro. Ver [FLUJOS-ODD.md](FLUJOS-ODD.md).
+- **`qcc-panel/`**: mod con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Ver [MODS.md](MODS.md).
+- **`qcc-implementador/`**: el flujo `/qcc-implementador` (con un solo modo), con sus agentes y herramientas. Ver [FLUJOS.md](FLUJOS.md).
+- **`qcc-commit/`**: el flujo `/qcc-commit`, con su agente y su guardia `solo-git`. Ver [FLUJOS.md](FLUJOS.md).
+- **`qcc-implementador-odd/`**: el flujo `/qcc-implementador-odd`, en prueba, separado por completo de `qcc-implementador/`. Tiene su skill, sus agentes, sus herramientas, su instalador, su config (`.claude/qcc-implementador-odd.json`) y su registro. Ninguno de los dos flujos usa archivos del otro. Ver [FLUJOS-ODD.md](FLUJOS-ODD.md).
+- **`qcc/`**: el paquete, un plugin solo con `dependencies` que instala los otros cuatro.
+
+Mientras la migración a plugins sigue (fases 3 a 5), los flujos aún se instalan copiándolos a `~/.claude` con `qcc-implementador/instalar.mjs` (que también instala `qcc-commit/`) y `qcc-implementador-odd/instalar.mjs`.
 
 [README.md](README.md) es la entrada al repo: resume la instalación y enlaza a todo.
 
@@ -19,24 +23,31 @@ FLUJOS-ODD.md                     documentación de /qcc-implementador-odd
 .claude/qcc-implementador-odd.json verificación y críticos para /qcc-implementador-odd
 .claude/qcc-implementador.json    pasos de verificación para /qcc-implementador
 .claude/qcc-implementador/        reglas de /qcc-implementador para este repo (un archivo por sección)
-flujos/
-  instalar.mjs                    copia los flujos a ~/.claude (o los trae con --traer)
-  skills/<nombre>/SKILL.md        → ~/.claude/skills/<nombre>/SKILL.md
-  agents/<nombre>.md              → ~/.claude/agents/<nombre>.md
+.claude-plugin/marketplace.json   marketplace «qcc» con los cinco plugins
+qcc/
+  .claude-plugin/plugin.json      paquete: solo dependencies
+qcc-implementador/
+  .claude-plugin/plugin.json      manifiesto
+  hooks/hooks.json                vacío por ahora (la guardia pasa aquí en la fase 3)
+  instalar.mjs                    copia /qcc-implementador y /qcc-commit a ~/.claude (o los trae con --traer)
   skills/qcc-implementador/SKILL.md → ~/.claude/skills/qcc-implementador/SKILL.md (/qcc-implementador)
-  skills/qcc-commit/SKILL.md      → ~/.claude/skills/qcc-commit/SKILL.md (/qcc-commit)
-  agents/qcc-*.md                 → ~/.claude/agents/qcc-*.md (explorador, planificador, ejecutor, revisor y el de /qcc-commit)
-  agents/qcc-generador-commit.md  agente Haiku high de /qcc-commit
+  agents/qcc-*.md                 → ~/.claude/agents/ (explorador, planificador, ejecutor, revisor)
   herramientas/                   → ~/.claude/flujos/ (estado, verificar, guardia, costos, guardia.test, comun.md, plan.md, pasos.md, config.ejemplo.md)
-  herramientas/qcc-commit/        → ~/.claude/flujos/qcc-commit/ (solo-git.mjs y su test)
-flujos-odd/
+qcc-commit/
+  .claude-plugin/plugin.json      manifiesto
+  hooks/hooks.json                vacío por ahora
+  skills/qcc-commit/SKILL.md      → ~/.claude/skills/qcc-commit/SKILL.md (/qcc-commit)
+  agents/qcc-generador-commit.md  → ~/.claude/agents/ (agente Haiku high de /qcc-commit)
+  herramientas/                   → ~/.claude/flujos/qcc-commit/ (solo-git.mjs y su test)
+qcc-implementador-odd/
+  .claude-plugin/plugin.json      manifiesto
+  hooks/hooks.json                vacío por ahora
   instalar.mjs                    copia el flujo odd a ~/.claude (o lo trae con --traer)
   skills/qcc-implementador-odd/SKILL.md → ~/.claude/skills/qcc-implementador-odd/SKILL.md (todas sus reglas)
   agents/qcc-odd-*.md             → ~/.claude/agents/ (explorador, ejecutor, revisor)
   herramientas/                   → ~/.claude/flujos-odd/ (odd, verificar, guardia, costo, proceso, copia, odd.test)
 qcc-panel/
   .claude-plugin/plugin.json      manifiesto (nombre, versión, types)
-  .claude-plugin/marketplace.json marketplace «mods-locales»
   hooks/hooks.json                { "modules": ["./register.tsx"] }
   hooks/register.tsx              hooks, estado (atoms) y dibujo del panel
   hooks/semana.ts                 puro: registro de tokens por hora, resumen por modelo·esfuerzo
@@ -54,9 +65,9 @@ qcc-panel/
 ```
 claude plugin validate qcc-panel
 claude plugin test qcc-panel
-node --test flujos/herramientas/guardia.test.mjs
-node --test flujos/herramientas/qcc-commit/solo-git.test.mjs
-node --test flujos-odd/herramientas/odd.test.mjs
+node --test qcc-implementador/herramientas/guardia.test.mjs
+node --test qcc-commit/herramientas/solo-git.test.mjs
+node --test qcc-implementador-odd/herramientas/odd.test.mjs
 ```
 
 Los cinco tienen que terminar sin errores antes de dar algo por hecho. Qué no prueban los tests del panel está en [MODS.md](MODS.md#verificar).
@@ -64,9 +75,9 @@ Los cinco tienen que terminar sin errores antes de dar algo por hecho. Qué no p
 ## Convenciones
 
 - Código, comentarios, nombres y textos de UI en **español** (`medida`, `releerSemana`, «sin respuestas anotadas todavía»). Los términos técnicos y los niveles de esfuerzo quedan en inglés.
-- Estilo: sin punto y coma, comillas simples y JSDoc breve en español. La línea en blanco antes de `return` rige solo en `qcc-panel/`; `flujos/` y `flujos-odd/` no la usan.
+- Estilo: sin punto y coma, comillas simples y JSDoc breve en español. La línea en blanco antes de `return` rige solo en `qcc-panel/`; `qcc-implementador/`, `qcc-commit/` y `qcc-implementador-odd/` no la usan.
 - Las del panel (atoms, hotkeys, versión) están en [MODS.md](MODS.md#convenciones-del-panel).
 
 ## Flujo con /qcc-implementador
 
-`.claude/qcc-implementador.json` define la verificación (validate → test → test flujos → test qcc-commit). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/qcc-implementador/` y mandan sobre las comunes. Las herramientas siguen leyendo `.claude/implementador.json` y `.claude/implementador/` si el nombre nuevo no existe. `/qcc-implementador` tiene un solo modo, con los pasos de `flujos/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica; medium si la exploración no toca rutas críticas), ejecutor Sonnet (medium en subtareas `Crítica: no`) y revisión final siempre, Opus high, sin revisor por subtarea. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.
+`.claude/qcc-implementador.json` define la verificación (validate → test → test flujos → test qcc-commit). Las reglas propias del repo (qué es CRÍTICO, cómo buscar, motivos de rechazo) están en `.claude/qcc-implementador/` y mandan sobre las comunes. Las herramientas siguen leyendo `.claude/implementador.json` y `.claude/implementador/` si el nombre nuevo no existe. `/qcc-implementador` tiene un solo modo, con los pasos de `qcc-implementador/herramientas/pasos.md`: orquestador Sonnet high, planificador Opus high (que además clasifica; medium si la exploración no toca rutas críticas), ejecutor Sonnet (medium en subtareas `Crítica: no`) y revisión final siempre, Opus high, sin revisor por subtarea. Para cambios de documentación o pequeños, conviene trabajar directo en vez de usar el flujo completo.

@@ -1,15 +1,17 @@
 #!/usr/bin/env node
-// Copia los flujos de este repo a ~/.claude, donde Claude Code los lee.
+// Copia /qcc-implementador y /qcc-commit de este repo a ~/.claude, donde Claude Code los lee.
 //
 //   skills/<nombre>/SKILL.md  →  ~/.claude/skills/<nombre>/SKILL.md
 //   agents/<nombre>.md        →  ~/.claude/agents/<nombre>.md
 //   herramientas/<archivo>    →  ~/.claude/flujos/<archivo>
+//   ../qcc-commit/{skills,agents}      →  igual que arriba
+//   ../qcc-commit/herramientas/<archivo>  →  ~/.claude/flujos/qcc-commit/<archivo>
 //
-//   node flujos/instalar.mjs              copia lo que cambió
-//   node flujos/instalar.mjs --revisar    muestra qué cambiaría, sin copiar
-//   node flujos/instalar.mjs --traer      al revés: trae a este repo lo editado en ~/.claude
-//   node flujos/instalar.mjs --forzar     copia aunque la copia instalada se haya editado ahí
-//   node flujos/instalar.mjs --limpiar    borra lo instalado que ya no está en el repo, si nadie lo editó
+//   node qcc-implementador/instalar.mjs              copia lo que cambió
+//   node qcc-implementador/instalar.mjs --revisar    muestra qué cambiaría, sin copiar
+//   node qcc-implementador/instalar.mjs --traer      al revés: trae a este repo lo editado en ~/.claude
+//   node qcc-implementador/instalar.mjs --forzar     copia aunque la copia instalada se haya editado ahí
+//   node qcc-implementador/instalar.mjs --limpiar    borra lo instalado que ya no está en el repo, si nadie lo editó
 //
 // Cada copia anota su hash en ~/.claude/flujos/.instalado.json: una copia instalada que ya no coincide
 // con lo instalado se editó en ~/.claude y no se pisa sin --forzar (se guarda con --traer). Lo que
@@ -27,10 +29,15 @@ const REPO = path.dirname(fileURLToPath(import.meta.url))
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const ETIQUETA = process.env.CLAUDE_CONFIG_DIR ? CLAUDE.replaceAll('\\', '/') : '~/.claude'
 const MANIFIESTO = path.join(CLAUDE, 'flujos', '.instalado.json')
+const COMMIT = path.join(REPO, '..', 'qcc-commit')
+// [carpeta en el repo, carpeta en ~/.claude]; /qcc-commit vive en su propio plugin pero se instala con el mismo manifiesto.
 const CARPETAS = [
-  ['skills', 'skills'],
-  ['agents', 'agents'],
-  ['herramientas', 'flujos'],
+  [path.join(REPO, 'skills'), 'skills'],
+  [path.join(REPO, 'agents'), 'agents'],
+  [path.join(REPO, 'herramientas'), 'flujos'],
+  [path.join(COMMIT, 'skills'), 'skills'],
+  [path.join(COMMIT, 'agents'), 'agents'],
+  [path.join(COMMIT, 'herramientas'), path.join('flujos', 'qcc-commit')],
 ]
 const IGNORAR = new Set(['instalar.mjs', 'README.md', 'registros'])
 
@@ -70,8 +77,8 @@ function leerManifiesto() {
 function pares() {
   const lista = []
   for (const [enRepo, enClaude] of CARPETAS) {
-    for (const rel of archivosDe(path.join(REPO, enRepo))) {
-      lista.push({ repo: path.join(REPO, enRepo, rel), instalado: path.join(CLAUDE, enClaude, rel) })
+    for (const rel of archivosDe(enRepo)) {
+      lista.push({ repo: path.join(enRepo, rel), instalado: path.join(CLAUDE, enClaude, rel) })
     }
   }
   return lista

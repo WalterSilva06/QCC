@@ -2,18 +2,18 @@
   "verificar": [
     { "nombre": "validate", "cmd": "claude plugin validate qcc-panel" },
     { "nombre": "test", "cmd": "claude plugin test qcc-panel" },
-    { "nombre": "test flujos", "cmd": "node --test flujos/herramientas/guardia.test.mjs" },
-    { "nombre": "test qcc-commit", "cmd": "node --test flujos/herramientas/qcc-commit/solo-git.test.mjs" }
+    { "nombre": "test flujos", "cmd": "node --test qcc-implementador/herramientas/guardia.test.mjs" },
+    { "nombre": "test qcc-commit", "cmd": "node --test qcc-commit/herramientas/solo-git.test.mjs" }
   ],
   "criticos": [
     {
-      "rutas": ["flujos/"],
-      "excepto": ["flujos/agents/*.md", "flujos/herramientas/config.ejemplo.md"],
+      "rutas": ["qcc-implementador/", "qcc-commit/"],
+      "excepto": ["qcc-implementador/agents/*.md", "qcc-commit/agents/*.md", "qcc-implementador/herramientas/config.ejemplo.md"],
       "criterios": [1, 5],
       "motivo": "guardia.mjs es la seguridad de los subagentes; lo demás lo usan todos los proyectos del usuario"
     },
     {
-      "rutas": ["flujos/agents/*.md"],
+      "rutas": ["qcc-implementador/agents/*.md", "qcc-commit/agents/*.md"],
       "criterios": [1, 5],
       "si": "cambia su frontmatter (herramientas, modelo)",
       "motivo": "definición de los agentes del flujo"

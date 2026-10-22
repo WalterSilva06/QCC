@@ -1,0 +1,7 @@
+{
+  "name": "qcc",
+  "version": "0.1.0",
+  "description": "Paquete QCC: instala el panel, /qcc-commit y los dos implementadores (/qcc-implementador y /qcc-implementador-odd)",
+  "author": { "name": "WalterSilva06" },
+  "dependencies": ["qcc-panel", "qcc-commit", "qcc-implementador", "qcc-implementador-odd"]
+}

@@ -300,7 +300,7 @@ const NIEGAN = {
     [`python3 - <<'EOF'\nopen('AGENTS.md', 'w').write('x')\nEOF`, /script que escribe archivos/],
     [`node -e "require('fs').appendFileSync('a', 'b')"`, /script que escribe archivos/],
     ['cat AGENTS.md', /lee con Read \(offset\/limit\) o Grep, no con cat/],
-    ['head -50 flujos-odd/herramientas/odd.mjs', /lee con Read/],
+    ['head -50 qcc-implementador-odd/herramientas/odd.mjs', /lee con Read/],
     ['git status && sed -n 1,20p AGENTS.md', /lee con Read/],
     ['Get-Content AGENTS.md', /lee con Read/],
     ['git push', /git push/],
@@ -1356,7 +1356,7 @@ test('proceso: odd.mjs --diferencial lo repite verificar.mjs, así que editar de
 
 test('instalar: copia, no pisa lo editado en ~/.claude y --traer no corre sin edición', () => {
   const claude = path.join(PRUEBAS, 'claude-instalar')
-  const instalar = (...args) => spawnSync(process.execPath, [path.join(RAIZ, 'flujos-odd', 'instalar.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: claude } })
+  const instalar = (...args) => spawnSync(process.execPath, [path.join(RAIZ, 'qcc-implementador-odd', 'instalar.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: claude } })
   const revisar = instalar('--revisar')
   assert.match(revisar.stdout, /nuevo .*skills\/qcc-implementador-odd\/SKILL\.md/)
   assert.ok(!fs.existsSync(path.join(claude, 'flujos-odd')))
@@ -1369,7 +1369,7 @@ test('instalar: copia, no pisa lo editado en ~/.claude y --traer no corre sin ed
   const frenado = instalar()
   assert.equal(frenado.status, 1)
   assert.match(frenado.stdout, /FRENADO .*flujos-odd\/odd\.mjs/)
-  assert.match(instalar('--traer', '--revisar').stdout, /cambia .*odd\.mjs → .*flujos-odd[\\/]herramientas[\\/]odd\.mjs|cambia .*→ herramientas\/odd\.mjs/)
+  assert.match(instalar('--traer', '--revisar').stdout, /cambia .*odd\.mjs → .*qcc-implementador-odd[\\/]herramientas[\\/]odd\.mjs|cambia .*→ herramientas\/odd\.mjs/)
 })
 
 test('guardia: Agent/Task al explorador con TAMAÑO: grande anota «grande» en la marca y nunca niega', () => {
