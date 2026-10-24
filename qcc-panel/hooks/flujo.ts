@@ -61,9 +61,12 @@ export function pasosDe(f: Flujo): readonly string[] {
   return PASOS[f.nombre] ?? []
 }
 
-/** El rol corto de un agente: su nombre sin espacios ni prefijo `qcc-` (`qcc-explorador` → `explorador`). */
+/**
+ * El rol corto de un agente: su nombre sin espacios, sin el prefijo de su plugin (`qcc-implementador:`) ni `qcc-`
+ * (`qcc-implementador:qcc-explorador` y `qcc-explorador` → `explorador`). Solo se quita un prefijo de plugin que empiece por `qcc`.
+ */
 export function rolDeAgente(nombre: string): string {
-  return nombre.trim().replace(/^qcc-/, '')
+  return nombre.trim().replace(/^(?:qcc(?:-[a-z]+)*:)?qcc-/, '')
 }
 
 /** El nombre de la skill sin `/` ni prefijo `plugin:`. */
@@ -121,7 +124,7 @@ function argumentosDeScript(comandos: string[][], nombre: string): string[] | nu
   return null
 }
 
-const MODOS_ESTADO = { '--base': 'base', '--cambios': 'cambios', '--diff': 'diff', '--guardar': 'otro', '--estado': 'otro', '--cancelar': 'otro', '--reglas': 'otro' } as const
+const MODOS_ESTADO = { '--base': 'base', '--cambios': 'cambios', '--diff': 'diff', '--guardar': 'otro', '--estado': 'otro', '--cancelar': 'otro', '--reglas': 'otro', '--guia': 'otro' } as const
 
 /**
  * El `--paso <n>` de los argumentos de `estado.mjs`: el entero no negativo que sigue a la marca, mirando solo lo anterior a `--`
@@ -814,7 +817,7 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
 
 /**
  * Agente y configuración (modelo y esfuerzo) de cada línea de agente que dibuja el panel.
- * Copia de la tabla «Agentes» de `flujos/skills/qcc-implementador/SKILL.md` y del frontmatter de `flujos/agents/*.md`: si cambian allí, cambian aquí.
+ * Copia de la tabla «Agentes» de `qcc-implementador/skills/qcc-implementador/SKILL.md` y del frontmatter de `qcc-implementador/agents/*.md`: si cambian allí, cambian aquí.
  * `revisorSubtarea` queda para flujos de versiones anteriores, que lanzaban un revisor por subtarea.
  */
 export const AGENTE_DE_PASO = {

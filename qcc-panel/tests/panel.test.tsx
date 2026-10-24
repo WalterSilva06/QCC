@@ -1968,6 +1968,8 @@ describe('flujo (puro)', () => {
   test('iniciarFlujo acepta qcc-implementador y rechaza implementador', async () => {
     expect(iniciarFlujo('qcc-implementador', '')?.nombre).toBe('qcc-implementador')
     expect(iniciarFlujo('/qcc:qcc-implementador', '')?.nombre).toBe('qcc-implementador')
+    expect(iniciarFlujo('qcc-implementador:qcc-implementador', '')?.nombre).toBe('qcc-implementador')
+    expect(iniciarFlujo('/qcc-implementador-odd:qcc-implementador-odd', '')).toBeNull()
     expect(iniciarFlujo('implementador', '')).toBeNull()
     expect(iniciarFlujo('/qcc:implementador', '')).toBeNull()
     expect(PASOS).not.toHaveProperty('implementador')
@@ -1985,6 +1987,21 @@ describe('flujo (puro)', () => {
     expect(senalDeHerramienta('Agent', { subagent_type: 'qcc-' }, undefined)).toBeNull()
   })
 
+  test('subagent_type con el prefijo del plugin (qcc-implementador:qcc-explorador) da el mismo rol; el de otro plugin no', async () => {
+    for (const rol of ['explorador', 'planificador', 'ejecutor', 'revisor']) {
+      expect(rolDeAgente(`qcc-implementador:qcc-${rol}`)).toBe(rol)
+      expect(rolDeAgente(` qcc-implementador:qcc-${rol} `)).toBe(rol)
+      expect(senalDeHerramienta('Agent', { subagent_type: `qcc-implementador:qcc-${rol}` }, undefined)).toEqual(agente(rol))
+    }
+
+    // Los agentes de odd y de commit llevan su propio prefijo y no se confunden con los del flujo.
+    expect(rolDeAgente('qcc-implementador-odd:qcc-odd-explorador')).toBe('odd-explorador')
+    expect(rolDeAgente('qcc-commit:qcc-generador-commit')).toBe('generador-commit')
+    expect(rolDeAgente('otro:qcc-explorador')).toBe('otro:qcc-explorador')
+    expect(senalDeHerramienta('Agent', { subagent_type: 'otro:qcc-explorador' }, undefined)).not.toEqual(agente('explorador'))
+    expect(senalDeHerramienta('Agent', { subagent_type: 'qcc-implementador:qcc-' }, undefined)).toBeNull()
+  })
+
   test('iniciarFlujo: el texto del pedido no cambia el flujo', async () => {
     const base = { paso: 0, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null }
     const relevo = '**Pedido:** RELEVO · inicio\nPEDIDO: arreglar el panel'
@@ -2000,50 +2017,57 @@ describe('flujo (puro)', () => {
   })
 
   test('senalDeHerramienta: estado.mjs con sus opciones, verificar.mjs, ~ y $HOME, y no un cat', async () => {
-    expect(bash('node ~/.claude/flujos/estado.mjs')).toEqual(estado('preflight'))
-    expect(bash('node ~/.claude/flujos/estado.mjs --base')).toEqual(estado('base'))
-    expect(bash('node "$HOME/.claude/flujos/estado.mjs" --cambios')).toEqual(estado('cambios'))
-    expect(bash('node ~/.claude/flujos/estado.mjs --diff 2>&1')).toEqual(estado('diff'))
-    expect(bash('cd repo && node ~/.claude/flujos/estado.mjs --base')).toEqual(estado('base'))
-    expect(bash('node ~/.claude/flujos/verificar.mjs')).toEqual(verificar)
-    expect(bash('node "$HOME/.claude/flujos/verificar.mjs"')).toEqual(verificar)
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')).toEqual(estado('preflight'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')).toEqual(estado('base'))
+    expect(bash('node "$HOME/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs" --cambios')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --diff 2>&1')).toEqual(estado('diff'))
+    expect(bash('cd repo && node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')).toEqual(estado('base'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs')).toEqual(verificar)
+    expect(bash('node "$HOME/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs"')).toEqual(verificar)
     // Si aparecen los dos, manda estado.
-    expect(bash('node ~/.claude/flujos/verificar.mjs && node ~/.claude/flujos/estado.mjs --cambios')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs && node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cambios')).toEqual(estado('cambios'))
 
     // Casos negativos: leer el script no es correrlo, y una opción dentro de una ruta no cuenta.
-    expect(bash('cat ~/.claude/flujos/estado.mjs')).toBeNull()
-    expect(bash('cat ~/.claude/flujos/verificar.mjs | node')).toBeNull()
-    expect(bash('node ~/.claude/flujos/otro.mjs')).toBeNull()
-    expect(bash('node ~/.claude/flujos/mi-estado.mjs')).toBeNull()
+    expect(bash('cat ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')).toBeNull()
+    expect(bash('cat ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs | node')).toBeNull()
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/otro.mjs')).toBeNull()
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/mi-estado.mjs')).toBeNull()
     expect(bash('node x.mjs | cat estado.mjs')).toBeNull()
-    expect(bash('node ~/.claude/flujos/estado.mjs --basement')).toEqual(estado('preflight'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --basement')).toEqual(estado('preflight'))
     expect(bash('node ~/--base/.claude/flujos/estado.mjs')).toEqual(estado('preflight'))
     expect(bash('ls')).toBeNull()
+
+    // En un plugin: ruta absoluta con `/` (la que deja ${CLAUDE_PLUGIN_ROOT}), entre comillas y con espacios en una carpeta.
+    expect(bash('node "C:/Users/Juan Pérez/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs" --base --paso 5')).toEqual({ tipo: 'estado', modo: 'base', paso: 5 })
+    expect(bash('node "C:\\Users\\x\\.claude\\plugins\\cache\\qcc\\qcc-implementador\\0.1.0\\herramientas\\estado.mjs" --cambios')).toEqual(estado('cambios'))
+    expect(bash('node "/home/x/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs"')).toEqual(verificar)
+    // La guía que inyecta la skill (--guia) no es el preflight.
+    expect(bash('node "/home/x/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs" --guia comun')).toEqual(estado('otro'))
     expect(senalDeHerramienta('Bash', {}, undefined)).toBeNull()
     expect(senalDeHerramienta('Bash', { command: 3 }, undefined)).toBeNull()
   })
 
   test('senalDeHerramienta: estado.mjs con --paso trae el paso; sin él, con un valor roto o después de -- no', async () => {
-    expect(bash('node ~/.claude/flujos/estado.mjs --cambios abc123 --desde x --paso 6')).toEqual({ tipo: 'estado', modo: 'cambios', paso: 6 })
-    expect(bash('node ~/.claude/flujos/estado.mjs --base --paso 5')).toEqual({ tipo: 'estado', modo: 'base', paso: 5 })
-    expect(bash('node ~/.claude/flujos/estado.mjs --paso 0')).toEqual({ tipo: 'estado', modo: 'preflight', paso: 0 })
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cambios abc123 --desde x --paso 6')).toEqual({ tipo: 'estado', modo: 'cambios', paso: 6 })
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base --paso 5')).toEqual({ tipo: 'estado', modo: 'base', paso: 5 })
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --paso 0')).toEqual({ tipo: 'estado', modo: 'preflight', paso: 0 })
 
     // Sin marca o con un valor que no es un entero: la misma señal de siempre, sin el campo.
-    expect(bash('node ~/.claude/flujos/estado.mjs --cambios')).toEqual(estado('cambios'))
-    expect(bash('node ~/.claude/flujos/estado.mjs --cambios --paso x')).toEqual(estado('cambios'))
-    expect(bash('node ~/.claude/flujos/estado.mjs --cambios --paso')).toEqual(estado('cambios'))
-    expect(bash('node ~/.claude/flujos/estado.mjs --cambios --paso -1')).toEqual(estado('cambios'))
-    expect(bash('node ~/.claude/flujos/estado.mjs --cambios --paso 6x')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cambios')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cambios --paso x')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cambios --paso')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cambios --paso -1')).toEqual(estado('cambios'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cambios --paso 6x')).toEqual(estado('cambios'))
 
     // Después de `--` son rutas: no cuenta.
-    expect(bash('node ~/.claude/flujos/estado.mjs --diff abc123 -- --paso 6')).toEqual(estado('diff'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --diff abc123 -- --paso 6')).toEqual(estado('diff'))
 
     // --guardar, --estado, --cancelar y --reglas son «otro»: no son el preflight, con o sin --paso.
-    expect(bash('node ~/.claude/flujos/estado.mjs --guardar a86c3e plan --paso 2')).toEqual({ tipo: 'estado', modo: 'otro', paso: 2 })
-    expect(bash('node ~/.claude/flujos/estado.mjs --cancelar --paso 4')).toEqual({ tipo: 'estado', modo: 'otro', paso: 4 })
-    expect(bash('node ~/.claude/flujos/estado.mjs --cancelar')).toEqual(estado('otro'))
-    expect(bash('node ~/.claude/flujos/estado.mjs --estado')).toEqual(estado('otro'))
-    expect(bash('node "$HOME/.claude/flujos/estado.mjs" --reglas')).toEqual(estado('otro'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --guardar a86c3e plan --paso 2')).toEqual({ tipo: 'estado', modo: 'otro', paso: 2 })
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cancelar --paso 4')).toEqual({ tipo: 'estado', modo: 'otro', paso: 4 })
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cancelar')).toEqual(estado('otro'))
+    expect(bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --estado')).toEqual(estado('otro'))
+    expect(bash('node "$HOME/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs" --reglas')).toEqual(estado('otro'))
   })
 
   test('estado con --paso: manda sobre la heurística; sin marca o fuera de rango, la heurística', async () => {
@@ -2064,12 +2088,12 @@ describe('flujo (puro)', () => {
 
   test('una sola subtarea con marcas: la revisión final cuenta en Verificación final', async () => {
     const senales = [
-      bash('node ~/.claude/flujos/estado.mjs --base --paso 5'),
+      bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base --paso 5'),
       agente('ejecutor'),
-      bash('node ~/.claude/flujos/estado.mjs --cambios abc --desde x --paso 6'),
-      bash('node ~/.claude/flujos/verificar.mjs'),
+      bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cambios abc --desde x --paso 6'),
+      bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs'),
       agente('revisor'),
-      bash('node ~/.claude/flujos/estado.mjs --cambios abc --desde x --paso 7'),
+      bash('node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --cambios abc --desde x --paso 7'),
     ]
 
     let flujo = iniciarFlujo('qcc-implementador', '')
@@ -2111,7 +2135,7 @@ describe('flujo (puro)', () => {
     expect(senalDeHerramienta('Grep', {}, undefined)).toBeNull()
 
     // Lo que hace un subagente no mueve el flujo.
-    expect(senalDeHerramienta('Bash', { command: 'node ~/.claude/flujos/estado.mjs' }, 'agente-1')).toBeNull()
+    expect(senalDeHerramienta('Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs' }, 'agente-1')).toBeNull()
     expect(senalDeHerramienta('Agent', { subagent_type: 'ejecutor' }, 'agente-1')).toBeNull()
     expect(senalDeHerramienta('Edit', { file_path: '/repo/a.ts' }, 'agente-1')).toBeNull()
     expect(senalDeHerramienta('AskUserQuestion', { questions: [{ header: 'Plan' }] }, 'agente-1')).toBeNull()
@@ -4659,7 +4683,7 @@ describe('flujo en el panel', () => {
     // La sesión ya gastó 100k (2k de salida) antes del flujo: no cuenta, y mientras nada gaste no hay bloque.
     await paso($, 'claude-opus-5-5', 'high')
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
     expect(await textos()).not.toContain('consumo')
     expect(await textos()).not.toContain('orquestador Opus 5.5 high')
 
@@ -5320,7 +5344,7 @@ describe('flujo en el panel', () => {
     await $.session.measure(MEDIDA)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     await paso($, 'claude-sonnet-5-5', 'medium')
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
     reloj.t += 5_000
     await agente($, 'explorador', 'A')
     await agente($, 'explorador', 'B')
@@ -5331,7 +5355,7 @@ describe('flujo en el panel', () => {
     reloj.t += 2_000
     await preguntarPlan($)
     reloj.t += 1_000
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
     await agente($, 'ejecutor', 'E1')
     await agente($, 'revisor', 'R0')
     reloj.t += 60_000
@@ -5452,7 +5476,7 @@ describe('flujo en el panel', () => {
     })
     await $.session.measure(MEDIDA)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
 
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
@@ -5477,7 +5501,7 @@ describe('flujo en el panel', () => {
     await agente($, 'planificador')
     await agente($, 'revisor-plan')
     await preguntarPlan($)
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
   }
 
   /** Un ejecutor que responde con sonnet high y vuelve, para dejar a Ejecución con su línea. */
@@ -5605,7 +5629,7 @@ describe('flujo en el panel', () => {
     bajo.fallan.add('ag-R1')
     await $.session.measure(MEDIDA)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
     // El hilo principal responde antes (sin agentId) para que la fila de Esta sesión exista.
     await paso($, 'claude-sonnet-5-5', 'high')
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
@@ -5711,7 +5735,7 @@ describe('flujo en el panel', () => {
     const antes = pedidos.length
 
     await $.skill.prompt({ skill: 'qcc-implementador', text: '**Pedido:** algo' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
     reloj.t += 5_000
     const abrir = detener('explorador')
     const corriendo = agente($, 'explorador')
@@ -5735,10 +5759,10 @@ describe('flujo en el panel', () => {
       ],
     })
     reloj.t += 60_000
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
     reloj.t += 90_000
     // El paso en curso se refresca con el próximo evento (otro `--base` en Ejecución no cambia el paso).
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
 
     expect(await desdeResumen(ui, FLUJO_EJECUCION.length)).toEqual(FLUJO_EJECUCION)
 
@@ -5765,14 +5789,14 @@ describe('flujo en el panel', () => {
     // Sin eventos el dibujo no cambia (hasta el tick de 30 s); con uno, se pone al día.
     reloj.t += 45_000
     expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Preflight · 0 s')
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
     expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Preflight · 45 s')
 
     // En Inicio no hay nodos: ningún tiempo suelto fuera de la línea resumen.
     expect(await textosDe(ui)).not.toContain(' 45 s')
     await ui.press({ key: 'pestana-flujo' })
     reloj.t += 15_000
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
     expect(await desdeResumen(ui, 4)).toEqual(['/qcc-implementador · Preflight · 1 min', '▸ ', 'Preflight', ' 1 min'])
     await ui.unmount()
   })
@@ -5805,7 +5829,7 @@ describe('flujo en el panel', () => {
   test('mientras corre el explorador el paso es Exploración; al volver, Plan', async ($, on) => {
     const motor = preparar(on)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Preflight · 0 s'])
@@ -5829,7 +5853,7 @@ describe('flujo en el panel', () => {
     expect(await $.skill.prompt({ skill: 'simplify', text: 'otra' })).toEqual({ text: 'otra' })
 
     const resultados = [
-      await bash($, 'node ~/.claude/flujos/estado.mjs'),
+      await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs'),
       await bash($, 'ls'),
       await agente($, 'explorador'),
       await agente($, 'planificador'),
@@ -5871,7 +5895,7 @@ describe('flujo en el panel', () => {
     })
     await $.session.measure(MEDIDA)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
 
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
@@ -6067,7 +6091,7 @@ describe('flujo en el panel', () => {
     await agente($, 'planificador')
     motor.reloj.t += 60_000
     expect(await lineasDeHaiku(ui)).toEqual(['  F · Haiku high · 5 s'])
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
     motor.reloj.t += 60_000
     expect(await lineasDeHaiku(ui)).toEqual(['  F · Haiku high · 5 s'])
     await ui.unmount()
@@ -6085,7 +6109,7 @@ describe('flujo en el panel', () => {
     await agente($, 'planificador')
     motor.reloj.t += 60_000
     expect(await lineasDeHaiku(ui)).toEqual(['  G · Haiku high · 5 s'])
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
     motor.reloj.t += 60_000
     expect(await lineasDeHaiku(ui)).toEqual(['  G · Haiku high · 5 s'])
     await ui.unmount()
@@ -6131,7 +6155,7 @@ describe('flujo en el panel', () => {
     expect((await pregunta).result).toBe('listo')
 
     reloj.t += 10_000
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
     reloj.t += 30_000
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
 
@@ -6158,7 +6182,7 @@ describe('flujo en el panel', () => {
     reloj.t += 5_000
     await preguntarPlan($)
     reloj.t += 10_000
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
 
     expect((await textosDe(ui)).some(t => t.includes('espera'))).toBe(false)
     expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Ejecución · 15 s')
@@ -6202,7 +6226,7 @@ describe('flujo en el panel', () => {
   test('tres exploradores en paralelo: el paso sigue en Exploración hasta que vuelve el último, en cualquier orden', async ($, on) => {
     const motor = preparar(on)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const abrirA = motor.detener('A')
@@ -6232,7 +6256,7 @@ describe('flujo en el panel', () => {
     const motor = preparar(on)
     await $.session.measure(MEDIDA)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
@@ -6270,7 +6294,7 @@ describe('flujo en el panel', () => {
     const motor = preparar(on)
     await $.session.measure(MEDIDA)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     await ui.press({ key: 'pestana-flujo' })
@@ -6302,7 +6326,7 @@ describe('flujo en el panel', () => {
         },
       ],
     })
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
     await agente($, 'ejecutor', 'E1')
 
     // La corrección falla: el error llega intacto y el lanzamiento cuenta igual.
@@ -6315,7 +6339,7 @@ describe('flujo en el panel', () => {
     expect((error as Error).message).not.toMatch(/panel/)
 
     await agente($, 'revisor', 'R0')
-    await bash($, 'node ~/.claude/flujos/verificar.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs')
 
     // Dos revisores en paralelo en la verificación final.
     const abrirR1 = motor.detener('R1')
@@ -6416,7 +6440,7 @@ describe('flujo en el panel', () => {
     preparar(on)
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
     await agente($, 'explorador')
     await $.skill.prompt({ skill: 'simplify', text: '' })
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
@@ -6477,7 +6501,7 @@ describe('flujo en el panel', () => {
     on('ui.open', () => ({ value: { isPlaced: true } }))
     await $.session.measure(MEDIDA)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
 
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
     const abrir = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
@@ -6600,17 +6624,17 @@ describe('flujo en el panel', () => {
     on('ui.open', () => ({ value: { isPlaced: true } }))
     await $.session.measure(MEDIDA)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
 
     return { motor, ui: await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' }) }
   }
 
   /** Lleva el flujo a Verificación final (`estado --base` → ejecutor → revisor de la subtarea → `verificar`) y lanza tres revisores retenidos (R1, R2 y R3). */
   async function lanzandoRevisores($: Engine, motor: ReturnType<typeof preparar>) {
-    await bash($, 'node ~/.claude/flujos/estado.mjs --base')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base')
     await agente($, 'ejecutor', 'E1')
     await agente($, 'revisor', 'R0')
-    await bash($, 'node ~/.claude/flujos/verificar.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs')
 
     const abrir = { R1: motor.detener('R1'), R2: motor.detener('R2'), R3: motor.detener('R3') }
     const vuelos = { R1: agente($, 'revisor', 'R1'), R2: agente($, 'revisor', 'R2'), R3: agente($, 'revisor', 'R3') }
@@ -6740,7 +6764,7 @@ describe('flujo en el panel', () => {
     expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
 
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
     const abrirD = motor.detener('D')
     const abrirE = motor.detener('E')
     const d = agente($, 'explorador', 'D')
@@ -6784,7 +6808,7 @@ describe('flujo en el panel', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
     await $.skill.prompt({ skill: 'qcc-implementador', text: '**Pedido:** algo' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
     reloj.t += 5_000
     await agente($, 'planificador')
     expect(await desdeResumen(ui, 1)).toEqual(['/qcc-implementador · Plan · 5 s'])
@@ -6837,7 +6861,7 @@ describe('flujo en el panel', () => {
     on('ui.open', () => ({ value: { isPlaced: true } }))
     await $.session.measure(MEDIDA)
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    await bash($, 'node ~/.claude/flujos/estado.mjs')
+    await bash($, 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs')
 
     const ui = await $.ui.mount({ ...pane, surface: 'terminal' })
     const abrir = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
@@ -8061,6 +8085,9 @@ describe('freno', () => {
   test('freno con qcc-implementador: frena con el nombre nuevo y deja pasar el viejo', () => {
     expect(decidirFreno({ texto: '/qcc-implementador x', comando: 'qcc-implementador' }, 96_200, null, null)).toEqual({ motivo: MOTIVO_A, freno: { frenado: true } })
     expect(decidirFreno({ texto: '/qcc:qcc-implementador x', comando: 'qcc:qcc-implementador' }, 96_200, null, null).motivo).toBe(MOTIVO_A)
+    // La forma del plugin `qcc-implementador` frena; la del odd (`qcc-implementador-odd`) no es este flujo.
+    expect(decidirFreno({ texto: '/qcc-implementador:qcc-implementador x', comando: 'qcc-implementador:qcc-implementador' }, 96_200, null, null).motivo).toBe(MOTIVO_A)
+    expect(decidirFreno({ texto: '/qcc-implementador-odd:qcc-implementador-odd x', comando: 'qcc-implementador-odd:qcc-implementador-odd' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
     expect(decidirFreno({ texto: '/implementador x', comando: 'implementador' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
     expect(decidirFreno({ texto: '/qcc:implementador x', comando: 'qcc:implementador' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
   })
@@ -8326,7 +8353,7 @@ describe('freno y avisos en el panel', () => {
     expect(entradas).toEqual(['sigue'])
 
     // `estado.mjs` lo vuelve a poner en curso: el cierre real avisa de nuevo (solo avisa un flujo que estaba en curso).
-    await $.tool.call({ tool: 'Bash', command: 'node ~/.claude/flujos/estado.mjs --base --sub 4 --paso 5' })
+    await $.tool.call({ tool: 'Bash', command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --base --sub 4 --paso 5' })
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
     expect(avisos).toEqual(['Flujo terminado: interrumpido', 'Flujo terminado: completo'])
 
