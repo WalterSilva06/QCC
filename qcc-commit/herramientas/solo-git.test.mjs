@@ -1,9 +1,10 @@
 // Tests de la guardia solo-git: comandos permitidos, negados, rodeos y corrida real por stdin.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { motivoDe } from './solo-git.mjs'
+import { motivoDe, esAgenteDeCommit } from './solo-git.mjs'
 
 const RUTA = fileURLToPath(new URL('./solo-git.mjs', import.meta.url))
 
@@ -88,25 +89,27 @@ test('motivoDe niega lo que no es texto', () => {
   }
 })
 
+const AGENTE = 'qcc-commit:qcc-generador-commit'
+
 /** Corre la guardia como hook real y devuelve el resultado. */
 function correr(input) {
   return spawnSync(process.execPath, [RUTA], { input, encoding: 'utf8' })
 }
 
 test('hook real: Bash con git push se niega', () => {
-  const r = correr(JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push' } }))
+  const r = correr(JSON.stringify({ agent_type: AGENTE, tool_name: 'Bash', tool_input: { command: 'git push' } }))
   const salida = JSON.parse(r.stdout)
   assert.equal(salida.hookSpecificOutput.permissionDecision, 'deny')
   assert.equal(salida.hookSpecificOutput.hookEventName, 'PreToolUse')
 })
 
 test('hook real: PowerShell con git status --short pasa sin salida', () => {
-  const r = correr(JSON.stringify({ tool_name: 'PowerShell', tool_input: { command: 'git status --short' } }))
+  const r = correr(JSON.stringify({ agent_type: AGENTE, tool_name: 'PowerShell', tool_input: { command: 'git status --short' } }))
   assert.equal(r.stdout, '')
 })
 
 test('hook real: otra herramienta pasa sin salida', () => {
-  const r = correr(JSON.stringify({ tool_name: 'Read', tool_input: { file_path: 'x' } }))
+  const r = correr(JSON.stringify({ agent_type: AGENTE, tool_name: 'Read', tool_input: { file_path: 'x' } }))
   assert.equal(r.stdout, '')
 })
 
@@ -114,4 +117,36 @@ test('hook real: un input que no es JSON no imprime y sale en 0', () => {
   const r = correr('no es json')
   assert.equal(r.stdout, '')
   assert.equal(r.status, 0)
+})
+
+test('esAgenteDeCommit: el agente del plugin y su nombre sin plugin; ningún otro', () => {
+  assert.equal(esAgenteDeCommit('qcc-commit:qcc-generador-commit'), true)
+  assert.equal(esAgenteDeCommit('qcc-generador-commit'), true)
+  for (const otro of [undefined, null, '', 'qcc-implementador:qcc-ejecutor', 'otro:qcc-generador-commit', 'qcc-commit:otro', 'xqcc-generador-commit', 42]) {
+    assert.equal(esAgenteDeCommit(otro), false, String(otro))
+  }
+})
+
+test('hook real: sin agent_type (sesión principal) o con otro agente, ni un git push se niega', () => {
+  for (const evento of [{ tool_name: 'Bash', tool_input: { command: 'git push' } }, { agent_type: 'qcc-implementador:qcc-ejecutor', tool_name: 'Bash', tool_input: { command: 'git commit -m x' } }, { agent_type: 'otro', tool_name: 'PowerShell', tool_input: { command: 'rm -rf x' } }]) {
+    const r = correr(JSON.stringify(evento))
+    assert.equal(r.stdout, '')
+    assert.equal(r.status, 0)
+  }
+})
+
+test('hook real: PowerShell del agente de commits con git commit se niega', () => {
+  const r = correr(JSON.stringify({ agent_type: AGENTE, tool_name: 'PowerShell', tool_input: { command: 'git commit -m x' } }))
+  assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny')
+})
+
+test('hooks.json declara solo-git para Bash y PowerShell, y el agente no declara hooks', () => {
+  const hooks = JSON.parse(fs.readFileSync(new URL('../hooks/hooks.json', import.meta.url), 'utf8'))
+  const entradas = hooks.hooks.PreToolUse.filter((h) => h.hooks.some((x) => /solo-git\.mjs/.test(x.command)))
+  assert.equal(entradas.length, 1)
+  assert.match(entradas[0].hooks[0].command, /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/herramientas\/solo-git\.mjs"$/)
+  for (const herramienta of ['Bash', 'PowerShell']) assert.match(herramienta, new RegExp(`^(?:${entradas[0].matcher})$`), herramienta)
+  // Los agentes de un plugin ignoran `hooks:`: declararlo ahí daría una falsa seguridad.
+  const cabecera = fs.readFileSync(new URL('../agents/qcc-generador-commit.md', import.meta.url), 'utf8').split('\n---')[0]
+  assert.doesNotMatch(cabecera, /^hooks:/m)
 })

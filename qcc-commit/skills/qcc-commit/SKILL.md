@@ -34,7 +34,7 @@ Eres el orquestador: preguntas una sola cosa, delegas la lectura de los cambios 
    3. **Commit en una rama nueva**: crea una rama con nombre según los cambios, hace el commit ahí y la sube con push.
 
    Si no se puede preguntar (por ejemplo, con `claude -p`), sigue con «Solo commit». Si el usuario escribe otra respuesta, síguela solo si elige claramente una de las tres; si no, termina con «sin commit».
-3. No leas el diff tú. Despacha el agente con `subagent_type: qcc-generador-commit`, `model: "haiku"`, `run_in_background: false` y este prompt, nada más:
+3. No leas el diff tú. Despacha el agente con `subagent_type: qcc-commit:qcc-generador-commit`, `model: "haiku"`, `run_in_background: false` y este prompt, nada más:
 
    ```
    POR QUÉ: <el «Por qué del cambio» de arriba, literal; si está vacío, «no lo dio»>

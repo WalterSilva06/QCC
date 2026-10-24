@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // Guardia PreToolUse del agente qcc-generador-commit: solo deja pasar git status, diff, log y show simples.
 // La única opción global permitida es `-c core.quotePath=false`, para ver las rutas con tildes sin escapar.
+// Hook del plugin (`hooks/hooks.json`): corre en cada Bash y PowerShell de la sesión, y solo vigila cuando el `agent_type`
+// del evento es `qcc-commit:qcc-generador-commit` (los agentes de un plugin ignoran `hooks:` en su frontmatter). Con otro
+// agente, o sin él (la sesión principal), no hace nada: si no, bloquearía todo Bash.
 // Lee el evento por stdin y, si el comando no se permite, imprime un deny. No escribe registros.
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,6 +30,15 @@ function esOpcionProhibida(token) {
     return LARGAS_PROHIBIDAS.some((larga) => larga.startsWith(nombre))
   }
   return token.startsWith('-o')
+}
+
+/**
+ * Si `agentType` es el agente de commits: `qcc-commit:qcc-generador-commit`, o `qcc-generador-commit` sin plugin.
+ * @param {unknown} agentType
+ * @returns {boolean}
+ */
+export function esAgenteDeCommit(agentType) {
+  return typeof agentType === 'string' && /^(?:qcc-commit:)?qcc-generador-commit$/.test(agentType.trim())
 }
 
 /**
@@ -57,6 +69,7 @@ async function main() {
   } catch {
     return
   }
+  if (!esAgenteDeCommit(evento?.agent_type)) return
   if (evento?.tool_name !== 'Bash' && evento?.tool_name !== 'PowerShell') return
   const motivo = motivoDe(evento.tool_input?.command)
   if (!motivo) return
