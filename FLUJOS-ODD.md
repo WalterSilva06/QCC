@@ -6,6 +6,8 @@ Toma las ideas del ODD (Organic Driven Development) de [gentle-ai](https://githu
 
 ## Principio
 
+Dos reglas de fondo, para el orquestador y los ejecutores (ideas de [hola-ai](https://github.com/nschurmann/hola-ai)): **no inventar** (si falta información sobre qué tiene que pasar, se pregunta o se reporta `BLOQUEADO`; lo técnico se decide y se anota) y **lo más simple que cumpla el pedido** (sin abstracciones, capas, configuración ni patrones «para el futuro»).
+
 En una tarea chica, el orquestador trabaja inline: un subagente se lanza solo por un motivo nombrado, porque relee todo desde cero y eso cuesta tokens. En una grande, el orquestador solo coordina: el explorador lee el código y los ejecutores lo editan. Así su contexto no crece con cada pedido, que en las corridas grandes era ~75% del costo. Fuera de la tabla, la cantidad de líneas o de tests no lanza un agente.
 
 | Rol | Modelo · esfuerzo | Cuándo |
@@ -21,8 +23,9 @@ En una tarea chica, el orquestador trabaja inline: un subagente se lanza solo po
 2. **Explorar:** primero, solo con el pedido, el tamaño previsto: grande con más de ~8 reglas, una feature que no nombra sus archivos o una tarea retomada de `odd/tasks/`. Grande → el explorador con `TAMAÑO: grande`, antes de leer código: la guardia ve el despacho y anota `grande` sola (`odd.mjs --previsto grande` explícito sigue valiendo). Chica → inline, o con el explorador por su condición. El explorador responde en ≤ 15 líneas (~40, por área, en una grande) con tramos `ruta:inicio-fin`, `USOS:` (cada llamador de una función compartida, candidato al ítem 3), `FIRMA:` (firma e invariantes, solo en una grande), `TESTS:` y `FIJAN:` (los tests que fijan constantes, listas o `deepEqual` que el cambio altera: el orquestador los suma a los `ARCHIVOS PERMITIDOS` del despacho que toca ese valor). El orquestador lee solo esos tramos. Una decisión de producto abierta se pregunta una vez. Termina con `odd.mjs --plan`, que deja visibles dos decisiones:
    - **Tamaño:** `chico` si se puede retomar solo con el pedido y el `git diff`; `grande` si no. Con `grande`, la guardia le niega al orquestador editar fuera de `odd/tasks/`.
    - **Riesgo:** los 6 ítems de la skill (datos o irreversible, seguridad, contratos que otros consumen, concurrencia, entrega o entorno, sin tests), más los `criticos` del proyecto, cada uno con `sí <motivo>` o `no`, y los bordes si hay alguno.
-3. **Implementar:** test-first cuando hay runner, un test por regla. Los bordes de una regla van como tabla de casos dentro de su test. Un test de «sigue igual» va solo si ningún test existente ejercita ese camino. Una chica, inline. Una grande lleva primero `odd/tasks/<feature>.md` en el repo del proyecto:
+3. **Implementar:** test-first cuando hay runner, un test por regla. El valor esperado sale del `S#` o del ejemplo del pedido, nunca de la lógica que se prueba. Dos intentos seguidos sin GREEN en el mismo test cortan: sin una causa nueva, el flujo cierra `DETENIDO` (o el ejecutor reporta `BLOQUEADO`) con la evidencia. Los bordes de una regla van como tabla de casos dentro de su test. Un test de «sigue igual» va solo si ningún test existente ejercita ese camino. Una chica, inline. Una grande lleva primero `odd/tasks/<feature>.md` en el repo del proyecto:
    - `## Specs` con `S#` que citan literal el pedido;
+   - `## Fuera de alcance`, lo que el usuario excluyó y lo vecino que el pedido no pide: el ejecutor no lo implementa y el revisor lo rechaza si aparece en el diff;
    - `## Tasks`, cada tarea con su `Qué:` (por archivo, el cambio y las decisiones técnicas con su porqué);
    - `## Mapa`, la respuesta del explorador por `ÁREA` (tramos `(editar)`, `FIRMA:`, `USOS:`, `TESTS:`), escrita una vez;
    - `## Log`, donde `L1` es el pedido textual.

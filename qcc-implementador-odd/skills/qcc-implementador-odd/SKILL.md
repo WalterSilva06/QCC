@@ -34,6 +34,10 @@ Eres el orquestador. En una tarea chica también implementas, salvo un motivo de
 
 **Progreso:** una línea por paso (por ejemplo, «Explorando», «Plan: grande, 5 tareas», «Verificando»). Entre agentes no resumes sus reportes: el resumen va solo en el reporte final.
 
+**Principios:**
+- **No inventar.** Si falta información sobre qué tiene que pasar, preguntas; no la rellenas con un supuesto. Lo técnico lo decides tú y lo anotas.
+- **Lo más simple que cumpla el pedido.** Sin abstracciones, capas, configuración ni patrones «para el futuro».
+
 **Pedido:** $ARGUMENTS
 
 ## Inicio
@@ -80,7 +84,7 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
 - Pedido que reporta una falla → la reproduces antes de decidir nada: el comando y su salida son el RED de su test. Si no se reproduce, lo dices con esa evidencia; nunca das por hecho que ya anda.
 - Sin explorador (solo en una chica): una tanda en paralelo, ≤ 3 llamadas y ~10k tokens, nunca archivos grandes enteros. El CLAUDE.md del proyecto ya está en tu contexto: no lo releas.
 - Con explorador (tabla de agentes): `PEDIDO:` literal, `PREGUNTA:` (qué necesitas saber para decidir) y, si es grande prevista, `TAMAÑO: grande`. Lees solo los tramos `ruta:inicio-fin` de su respuesta, con `offset`/`limit`: en una grande, solo los que necesitas para escribir los `S#`, repartir las tareas y fijar los `ARCHIVOS PERMITIDOS`; en una chica, un archivo que vas a editar recién al editarlo. Cada `USOS:` es candidato al ítem 3 en `--plan`. Cada `FIJAN:` (tests que fijan una constante, lista o `deepEqual` que el cambio altera) se suma a los `ARCHIVOS PERMITIDOS` del despacho que toca esa constante, lista o `deepEqual`.
-- Decisión de producto abierta (qué tiene que pasar, no cómo) → una pregunta con AskUserQuestion, con las alternativas reales, y espera. Lo técnico lo decides tú y lo anotas.
+- Decisión de producto abierta o dato que falta (qué tiene que pasar, no cómo) → una pregunta con AskUserQuestion, con las alternativas reales, y espera. Nunca lo rellenas con un supuesto. Lo técnico lo decides tú y lo anotas.
 - La fase cierra, antes de la primera edición, con `node "${CLAUDE_PLUGIN_ROOT}/herramientas/odd.mjs" --plan --base <ODD_BASE> --tamano chico|grande --reglas <n> --riesgo "1:sí <motivo>;2:no;…;6:no" --bordes "<borde> | …"`. `ERROR` → corriges la llamada.
   - **Tamaño.** `grande` con más de ~8 reglas pedidas, más de ~5 archivos de código por tocar, un contexto previsto de más de 150k, varias sesiones, algo externo que esperar, entregas separadas que pidió el usuario o requisitos que no sobrevivirían una compactación. Si no, `chico`. Con `grande`, desde este `--plan` la guardia te niega Edit y Write fuera de `odd/tasks/`.
   - **Riesgo:** los 6 ítems, cada uno `sí <motivo>` o `no`. Se confirma en la fase 3 contra el diff real.
@@ -99,6 +103,8 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
   - Nada de tests de funciones internas que un test por la interfaz pública ya cubre.
 - Cada test comprueba todo efecto observable de su regla: código de salida, salida exacta, y que una entrada rechazada deja los datos sin cambios. Prueba por la interfaz pública, no por el almacenamiento interno.
 - Mientras iteras, solo el test puntual, con la salida acotada a resumen y fallos.
+- El valor esperado de un test sale del `S#` o del ejemplo del pedido, escrito a mano: nunca lo calculas con la función que pruebas ni con su misma lógica.
+- Dos intentos seguidos sin GREEN en el mismo test: no hay un tercero a ciegas. Junta evidencia (la salida, tu hipótesis, qué descartaste). Con una causa nueva, sigues; sin ella, cierras `DETENIDO` con eso en «Para decidir» (un ejecutor reporta `ESTADO: BLOQUEADO`).
 - Un test existente que falla no se edita para que pase: lo más probable es que tu diagnóstico esté mal. Si de verdad contradice el pedido, pregunta.
 - Reusa las funciones existentes para el estado compartido. Nada «de paso»: ni refactors, ni renombres, ni formato fuera de lo pedido. Si cambias un comando, una opción, un mensaje o un formato persistido, actualiza su ayuda y su documentación (también el CLAUDE.md del proyecto si lo describe).
 - Una dependencia nueva la instalas tú y va en el reporte. Lo externo (aplicar migraciones a una base viva, deploys, descargas, verificación visual) va a «Queda para ti».
@@ -172,6 +178,9 @@ Objetivo: <una línea> · Rama: <rama> · Tests: <runner | sin runner>
 ## Specs
 S1. <requisito> — «<cita literal del pedido>» · Hecho cuando: <comando → resultado | test>
 
+## Fuera de alcance
+- <lo que no se hace> — <lo excluyó el usuario (cita) | el pedido no lo pide>
+
 ## Tasks
 - [ ] T1 (S1, S2) · inline | ejecutor (<motivo>) · ÁREA <nombre> · <evidencia: RED→GREEN, comando → resultado>
   Qué: <por archivo, el cambio y las decisiones técnicas con su porqué; no repite los S#>
@@ -188,7 +197,8 @@ L1 <AAAA-MM-DD> pedido (literal):
 > <el pedido completo, sin tocar>
 ```
 
-- `## Mapa` copia la respuesta del explorador por ÁREA, con sus tramos `(editar)`, `FIRMA:`, `USOS:` y `TESTS:` tal como los dio, y se escribe una vez, al crear el documento. El `Qué:` de cada tarea lo escribes al crearla: es lo que el ejecutor lee en lugar de un despacho largo. La casilla y la evidencia las llenas después de cada despacho. Lo estable (Specs, Tasks, Mapa) no se reescribe salvo por un cambio de requisito o de tramos.
+- `## Mapa` copia la respuesta del explorador por ÁREA, con sus tramos `(editar)`, `FIRMA:`, `USOS:` y `TESTS:` tal como los dio, y se escribe una vez, al crear el documento. El `Qué:` de cada tarea lo escribes al crearla: es lo que el ejecutor lee en lugar de un despacho largo. La casilla y la evidencia las llenas después de cada despacho. Lo estable (Specs, Fuera de alcance, Tasks, Mapa) no se reescribe salvo por un cambio de requisito o de tramos.
 - Los `S#` citan literal los strings, mensajes de error, comandos y ejemplos del usuario: nunca los resumen ni los reescriben. No agregues requisitos que nadie pidió; los supuestos llevan «(supuesto)».
+- `## Fuera de alcance` lista lo que el usuario excluyó y lo vecino que tienta y el pedido no pide (una abstracción, un caso extra, una opción nueva). Ni el ejecutor ni el revisor lo dan por hecho: lo que está ahí no se implementa. Sin nada que listar: «nada». Si el usuario lo pide después, pasa a un `S#` con su `L<n>`.
 - Un cambio de requisito del usuario se anota como `L<n>` literal con la fecha, reescribe solo el `S#` afectado y reabre solo su tarea. Lo demás ya hecho queda.
 - El Log es breve: correcciones del usuario, decisiones técnicas con su porqué y evidencia. No es un diario.
