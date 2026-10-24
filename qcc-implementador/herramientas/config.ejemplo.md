@@ -1,6 +1,6 @@
 # Configurar un proyecto para /qcc-implementador
 
-Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `package.json`, Cargo, Go o pytest) y la guardia usa sus valores por defecto. `node ~/.claude/flujos/estado.mjs` (desde el repo) muestra qué tomó.
+Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `package.json`, Cargo, Go o pytest) y la guardia usa sus valores por defecto. `node <plugin>/herramientas/estado.mjs` (desde el repo) muestra qué tomó.
 
 ## `.claude/qcc-implementador.json`
 

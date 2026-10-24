@@ -1,14 +1,16 @@
 #!/usr/bin/env node
-// Guardia de los subagentes de /qcc-implementador (nivel usuario: sirve
-// para cualquier proyecto).
+// Guardia de los subagentes de /qcc-implementador (sirve para cualquier proyecto).
 //
-// Hook PreToolUse que declaran en su frontmatter `ejecutor` (argumento `ejecutor`) y
-// `revisor` (argumento `revisor`): Claude Code lo corre solo mientras ese agente trabaja.
-// Niega lo que un subagente no hace nunca —git que modifica, servicios externos y despliegues,
-// dependencias, secretos, borrados recursivos, servidores que no terminan, archivos
-// protegidos (en `.claude/`, solo settings y agentes); y al revisor, escribir fuera de los temporales— y deja cada llamada en el registro del proyecto
-// (`registros/<proyecto>-<hash>.jsonl`), que `estado.mjs --cambios` cruza con el árbol para el
-// chequeo de alcance (cubre rutas que git ignora).
+// Hook PreToolUse del plugin (`hooks/hooks.json`): Claude Code lo corre en cada llamada de herramienta de la
+// sesión, y la guardia decide por el `agent_type` del evento (`qcc-implementador:qcc-ejecutor`…) a quién
+// vigila. Los agentes de un plugin ignoran `hooks:` en su frontmatter, por eso no se declara allí. Sin
+// `agent_type` (la sesión principal) o con el de otro agente, no hace nada: ni niega, ni anota, ni toca git.
+//
+// Al `ejecutor` y al `revisor` les niega lo que un subagente no hace nunca —git que modifica, servicios
+// externos y despliegues, dependencias, secretos, borrados recursivos, servidores que no terminan, archivos
+// protegidos (en `.claude/`, solo settings y agentes); y al revisor, escribir fuera de los temporales— y deja
+// cada llamada en el registro del proyecto (`registros/<proyecto>-<hash>.jsonl`), que `estado.mjs --cambios`
+// cruza con el árbol para el chequeo de alcance (cubre rutas que git ignora).
 // `explorador` y `planificador` (solo lectura) solo anotan sus Read, Glob y Grep
 // con decision `lectura`: nunca niegan ni imprimen nada.
 //
@@ -22,7 +24,7 @@
 // Ante la duda, deja pasar: un guardia que castra al ejecutor cuesta la tarea entera.
 // Un error de parseo nunca niega.
 //
-// Casos: `node --test ~/.claude/flujos/guardia.test.mjs`.
+// Casos: `node --test qcc-implementador/herramientas/guardia.test.mjs`.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -31,7 +33,8 @@ import crypto from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-const DIR = path.dirname(fileURLToPath(import.meta.url))
+/** Carpeta de Claude Code del usuario (`CLAUDE_CONFIG_DIR` o `~/.claude`). */
+const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const TOPE_REGISTRO = 2 * 1024 * 1024
 const WIN = process.platform === 'win32'
 
@@ -49,19 +52,24 @@ export function raizDe(dir) {
   return d
 }
 
-/** Proyecto actual: CLAUDE_PROJECT_DIR (hooks) o el cwd, subido a la raíz del repo. */
-export const RAIZ = raizDe(process.env.CLAUDE_PROJECT_DIR || process.cwd())
+/**
+ * Proyecto actual: CLAUDE_PROJECT_DIR (hooks) o el cwd, subido a la raíz del repo. Como hook no se usa (`main` calcula la
+ * suya con el `cwd` del evento), y ahorra un `git` por cada llamada de herramienta de la sesión.
+ */
+export const RAIZ = esPrincipal() ? '' : raizDe(process.env.CLAUDE_PROJECT_DIR || process.cwd())
 
 /**
  * Registro de llamadas de los subagentes, uno por proyecto. Junto a él viven la carpeta del flujo, la caché de
- * verificar y `flujos.jsonl`. `FLUJOS_REGISTROS` cambia la carpeta (los tests la llevan a un temporal).
+ * verificar y `flujos.jsonl`. Está en `<CLAUDE_CONFIG_DIR o ~/.claude>/flujos/registros`, fuera de la carpeta del plugin
+ * (que cambia con cada versión) para que el historial sobreviva a las actualizaciones. `FLUJOS_REGISTROS` cambia la
+ * carpeta (los tests la llevan a un temporal).
  */
 export function registroDe(raiz) {
   const norma = path.resolve(raiz)
   const clave = WIN ? norma.toLowerCase() : norma
   const hash = crypto.createHash('sha1').update(clave).digest('hex').slice(0, 10)
   const nombre = (path.basename(norma) || 'raiz').replace(/[^\w.-]+/g, '_')
-  return path.join(process.env.FLUJOS_REGISTROS || path.join(DIR, 'registros'), `${nombre}-${hash}.jsonl`)
+  return path.join(process.env.FLUJOS_REGISTROS || path.join(CLAUDE, 'flujos', 'registros'), `${nombre}-${hash}.jsonl`)
 }
 
 /** Carpeta del flujo en curso del proyecto (estado, plan y subtareas), junto a su registro. */
@@ -1038,6 +1046,20 @@ export function evaluar(evento, rol, raiz = RAIZ) {
 /** Roles de solo lectura: la guardia solo anota lo que leen, nunca niega. */
 export const ROLES_LECTURA = ['explorador', 'planificador']
 
+/** Los agentes de /qcc-implementador y su rol. */
+const ROLES = new Set([...ROLES_LECTURA, 'ejecutor', 'revisor'])
+
+/**
+ * El rol del agente que hizo la llamada, según el `agent_type` del evento: `qcc-implementador:qcc-ejecutor` → `ejecutor`.
+ * Acepta también el nombre sin plugin (`qcc-ejecutor`, de una copia en `~/.claude/agents`). `null` si no es un agente de
+ * este flujo: la sesión principal (sin `agent_type`), el odd (`qcc-odd-*`), uno de otro plugin o uno del usuario.
+ */
+export function rolDeAgente(agentType) {
+  if (typeof agentType !== 'string') return null
+  const m = /^(?:qcc-implementador:)?qcc-([a-z]+)$/.exec(agentType.trim())
+  return m && ROLES.has(m[1]) ? m[1] : null
+}
+
 /** `{ objetivo }` de una lectura (Read, Glob, Grep) o null si la herramienta es otra o no trae objetivo. */
 export function lecturaDe(evento, raiz = RAIZ) {
   const herramienta = evento?.tool_name ?? ''
@@ -1074,9 +1096,6 @@ function registrar(raiz, fila) {
 }
 
 async function main() {
-  const argumento = process.argv[2]
-  const lectura = ROLES_LECTURA.includes(argumento)
-  const rol = lectura ? argumento : argumento === 'revisor' ? 'revisor' : 'ejecutor'
   let crudo = ''
   for await (const trozo of process.stdin) crudo += trozo
   let evento
@@ -1085,6 +1104,10 @@ async function main() {
   } catch {
     return
   }
+  const rol = rolDeAgente(evento?.agent_type)
+  // Este hook corre en toda la sesión: lo que no es de un agente del flujo pasa sin tocarlo.
+  if (!rol) return
+  const lectura = ROLES_LECTURA.includes(rol)
   const raiz = raizDe(process.env.CLAUDE_PROJECT_DIR || evento?.cwd || process.cwd())
   if (lectura) {
     // Solo anota: nunca imprime ni niega, y se traga cualquier error.

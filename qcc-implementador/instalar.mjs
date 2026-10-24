@@ -1,167 +1,100 @@
 #!/usr/bin/env node
-// Copia /qcc-implementador y /qcc-commit de este repo a ~/.claude, donde Claude Code los lee.
+// Limpia de ~/.claude las copias de /qcc-implementador y /qcc-commit que instalaba la versión anterior de este archivo.
+// Los dos flujos ahora son plugins (`claude plugin install qcc-implementador@qcc`): esas copias duplicarían sus comandos y
+// agentes, y los agentes viejos llaman a una guardia que ya no se instala ahí.
 //
-//   skills/<nombre>/SKILL.md  →  ~/.claude/skills/<nombre>/SKILL.md
-//   agents/<nombre>.md        →  ~/.claude/agents/<nombre>.md
-//   herramientas/<archivo>    →  ~/.claude/flujos/<archivo>
-//   ../qcc-commit/{skills,agents}      →  igual que arriba
-//   ../qcc-commit/herramientas/<archivo>  →  ~/.claude/flujos/qcc-commit/<archivo>
+//   node qcc-implementador/instalar.mjs              lista lo que archivaría, sin tocar nada
+//   node qcc-implementador/instalar.mjs --limpiar    mueve las copias a ~/.claude/_archivo-limpieza-<fecha>/
 //
-//   node qcc-implementador/instalar.mjs              copia lo que cambió
-//   node qcc-implementador/instalar.mjs --revisar    muestra qué cambiaría, sin copiar
-//   node qcc-implementador/instalar.mjs --traer      al revés: trae a este repo lo editado en ~/.claude
-//   node qcc-implementador/instalar.mjs --forzar     copia aunque la copia instalada se haya editado ahí
-//   node qcc-implementador/instalar.mjs --limpiar    borra lo instalado que ya no está en el repo, si nadie lo editó
-//
-// Cada copia anota su hash en ~/.claude/flujos/.instalado.json: una copia instalada que ya no coincide
-// con lo instalado se editó en ~/.claude y no se pisa sin --forzar (se guarda con --traer). Lo que
-// todavía no está anotado (instalaciones anteriores) se compara por fecha, como antes.
-// Sin --limpiar nunca borra. No toca ~/.claude/flujos/registros (bitácoras locales del flujo).
-// `CLAUDE_CONFIG_DIR` cambia la carpeta de destino.
+// Las copias son las que anota ~/.claude/flujos/.instalado.json. Una que se editó ahí desde la instalación no se toca (se
+// avisa: revísala y bórrala a mano). Nada se borra: lo archivado se recupera moviéndolo de vuelta. No toca
+// ~/.claude/flujos/registros (el historial y las bitácoras de los flujos). `CLAUDE_CONFIG_DIR` cambia la carpeta.
 
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const REPO = path.dirname(fileURLToPath(import.meta.url))
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const ETIQUETA = process.env.CLAUDE_CONFIG_DIR ? CLAUDE.replaceAll('\\', '/') : '~/.claude'
 const MANIFIESTO = path.join(CLAUDE, 'flujos', '.instalado.json')
-const COMMIT = path.join(REPO, '..', 'qcc-commit')
-// [carpeta en el repo, carpeta en ~/.claude]; /qcc-commit vive en su propio plugin pero se instala con el mismo manifiesto.
-const CARPETAS = [
-  [path.join(REPO, 'skills'), 'skills'],
-  [path.join(REPO, 'agents'), 'agents'],
-  [path.join(REPO, 'herramientas'), 'flujos'],
-  [path.join(COMMIT, 'skills'), 'skills'],
-  [path.join(COMMIT, 'agents'), 'agents'],
-  [path.join(COMMIT, 'herramientas'), path.join('flujos', 'qcc-commit')],
-]
-const IGNORAR = new Set(['instalar.mjs', 'README.md', 'registros'])
+const ARCHIVO = path.join(CLAUDE, `_archivo-limpieza-${new Date().toISOString().slice(0, 10)}`)
+// Carpetas que la instalación creó y que quedan vacías al archivar sus copias.
+const CARPETAS = ['skills/qcc-implementador', 'skills/qcc-commit', 'flujos/qcc-commit']
 
-const args = new Set(process.argv.slice(2))
-const revisar = args.has('--revisar')
-const traer = args.has('--traer')
-const forzar = args.has('--forzar')
-const limpiar = args.has('--limpiar')
+const limpiar = process.argv.includes('--limpiar')
 
 const hashDe = (archivo) => crypto.createHash('sha1').update(fs.readFileSync(archivo)).digest('hex')
-/** Clave del manifiesto: la ruta instalada relativa a ~/.claude, con `/`. */
-const claveDe = (instalado) => path.relative(CLAUDE, instalado).split(path.sep).join('/')
-const corto = (p) => (p.startsWith(CLAUDE) ? ETIQUETA + p.slice(CLAUDE.length) : path.relative(REPO, p)).replaceAll('\\', '/')
+const corto = (p) => ETIQUETA + p.slice(CLAUDE.length).replaceAll('\\', '/')
 
-/** Archivos de una carpeta, recursivo, como rutas relativas a ella (sin `registros/` ni lo de IGNORAR). */
-function archivosDe(dir) {
-  if (!fs.existsSync(dir)) return []
-  const salida = []
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (IGNORAR.has(e.name)) continue
-    if (e.isDirectory()) salida.push(...archivosDe(path.join(dir, e.name)).map((r) => path.join(e.name, r)))
-    else salida.push(e.name)
+/** Mueve `origen` a `destino` creando las carpetas; si están en discos distintos, copia y borra. */
+function mover(origen, destino) {
+  fs.mkdirSync(path.dirname(destino), { recursive: true })
+  try {
+    fs.renameSync(origen, destino)
+  } catch {
+    fs.copyFileSync(origen, destino)
+    fs.rmSync(origen)
   }
-  return salida
 }
 
 function leerManifiesto() {
   try {
     const m = JSON.parse(fs.readFileSync(MANIFIESTO, 'utf8'))
-    return m && typeof m === 'object' && !Array.isArray(m) ? m : {}
+    return m && typeof m === 'object' && !Array.isArray(m) ? m : null
   } catch {
-    return {}
+    return null
   }
-}
-
-/** Todo lo que el repo instala, como `{ repo, instalado }`. */
-function pares() {
-  const lista = []
-  for (const [enRepo, enClaude] of CARPETAS) {
-    for (const rel of archivosDe(enRepo)) {
-      lista.push({ repo: path.join(enRepo, rel), instalado: path.join(CLAUDE, enClaude, rel) })
-    }
-  }
-  return lista
-}
-
-/**
- * Qué hacer con un par: `igual`, `nuevo` o `cambia` (se copia), `editado` (se perdería una edición: se frena),
- * `repo más nuevo` (con --traer, no hay nada que traer) o `falta` (no existe el origen).
- */
-function estadoDe({ repo, instalado }, manifiesto) {
-  const [origen, destino] = traer ? [instalado, repo] : [repo, instalado]
-  if (!fs.existsSync(origen)) return 'falta'
-  if (!fs.existsSync(destino)) return 'nuevo'
-  if (hashDe(origen) === hashDe(destino)) return 'igual'
-  if (forzar) return 'cambia'
-  const anotado = manifiesto[claveDe(instalado)]
-  if (anotado === undefined) return fs.statSync(destino).mtimeMs > fs.statSync(origen).mtimeMs ? 'editado' : 'cambia'
-  const instaladoEditado = hashDe(instalado) !== anotado
-  if (!traer) return instaladoEditado ? 'editado' : 'cambia'
-  if (!instaladoEditado) return 'repo más nuevo'
-  return hashDe(repo) !== anotado ? 'editado' : 'cambia'
 }
 
 const manifiesto = leerManifiesto()
-const vistos = new Set()
-let copiados = 0
-let frenados = 0
-let huerfanos = 0
-for (const par of pares()) {
-  const clave = claveDe(par.instalado)
-  vistos.add(clave)
-  const [origen, destino] = traer ? [par.instalado, par.repo] : [par.repo, par.instalado]
-  const estado = estadoDe(par, manifiesto)
-  if (estado === 'igual') {
-    // Repo e instalado coinciden: eso es lo instalado (así se anotan también las instalaciones anteriores al manifiesto).
-    manifiesto[clave] = hashDe(par.instalado)
-    continue
-  }
-  if (estado === 'falta') {
-    if (!traer) console.log(`  falta    ${corto(origen)} (está en el repo pero no instalado)`)
-    continue
-  }
-  if (estado === 'repo más nuevo') {
-    console.log(`  omitido  ${corto(par.repo)} es más nuevo que ${corto(par.instalado)}: se instala sin --traer`)
-    continue
-  }
-  if (estado === 'editado') {
-    frenados++
-    const consejo = traer ? 'cambió en el repo y en la copia instalada: revísalo a mano (o --forzar)' : 'se editó ahí desde la última instalación: usa --traer para guardarlo en el repo, o --forzar para pisarlo'
-    console.log(`  FRENADO  ${corto(par.instalado)} ${consejo}`)
-    continue
-  }
-  console.log(`  ${estado.padEnd(8)} ${corto(origen)} → ${corto(destino)}`)
-  if (revisar) continue
-  fs.mkdirSync(path.dirname(destino), { recursive: true })
-  fs.copyFileSync(origen, destino)
-  manifiesto[clave] = hashDe(par.instalado)
-  copiados++
+if (!manifiesto) {
+  console.log(`RESULTADO: nada que limpiar (no hay ${corto(MANIFIESTO)})`)
+  process.exit(0)
 }
 
-for (const clave of Object.keys(manifiesto)) {
-  if (vistos.has(clave)) continue
+let pendientes = 0
+let archivados = 0
+let editados = 0
+for (const [clave, hash] of Object.entries(manifiesto)) {
   const archivo = path.join(CLAUDE, ...clave.split('/'))
   if (!fs.existsSync(archivo)) {
     delete manifiesto[clave]
     continue
   }
-  const editado = hashDe(archivo) !== manifiesto[clave]
-  if (limpiar && !revisar && !editado) {
-    fs.rmSync(archivo)
-    delete manifiesto[clave]
-    console.log(`  borrado  ${corto(archivo)} (ya no está en el repo)`)
+  if (hashDe(archivo) !== hash) {
+    editados++
+    console.log(`  editado  ${corto(archivo)} se editó ahí: no se toca; revísalo y bórralo a mano`)
     continue
   }
-  huerfanos++
-  console.log(`  huérfano ${corto(archivo)}: ya no está en el repo${editado ? ' y se editó ahí; bórralo a mano' : ' (--limpiar lo borra)'}`)
+  const destino = path.join(ARCHIVO, ...clave.split('/'))
+  console.log(`  ${limpiar ? 'archiva ' : 'archivaría'} ${corto(archivo)} → ${corto(destino)}`)
+  if (!limpiar) {
+    pendientes++
+    continue
+  }
+  if (fs.existsSync(destino)) {
+    console.log(`  FRENADO  ${corto(destino)} ya existe: muévelo o bórralo y repite`)
+    editados++
+    continue
+  }
+  mover(archivo, destino)
+  delete manifiesto[clave]
+  archivados++
 }
 
-if (!revisar) {
-  fs.mkdirSync(path.dirname(MANIFIESTO), { recursive: true })
-  fs.writeFileSync(MANIFIESTO, JSON.stringify(Object.fromEntries(Object.entries(manifiesto).sort()), null, 2) + '\n')
+if (limpiar) {
+  for (const carpeta of CARPETAS) {
+    try {
+      fs.rmdirSync(path.join(CLAUDE, ...carpeta.split('/')))
+    } catch {
+      // No está o no queda vacía.
+    }
+  }
+  if (Object.keys(manifiesto).length) fs.writeFileSync(MANIFIESTO, JSON.stringify(Object.fromEntries(Object.entries(manifiesto).sort()), null, 2) + '\n')
+  else mover(MANIFIESTO, path.join(ARCHIVO, 'flujos', '.instalado.json'))
 }
 
-const verbo = revisar ? 'sin copiar (--revisar)' : `${copiados} copiado(s)`
-console.log(`RESULTADO: ${verbo}${frenados ? ` · ${frenados} frenado(s)` : ''}${huerfanos ? ` · ${huerfanos} huérfano(s)` : ''}`)
-process.exit(frenados ? 1 : 0)
+const resumen = limpiar ? `${archivados} archivado(s) en ${corto(ARCHIVO)}` : `${pendientes} por archivar (--limpiar lo hace)`
+console.log(`RESULTADO: ${resumen}${editados ? ` · ${editados} sin tocar` : ''}`)
+process.exit(editados ? 1 : 0)

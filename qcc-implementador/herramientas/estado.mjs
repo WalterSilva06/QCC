@@ -2,16 +2,17 @@
 // Estado git del flujo /qcc-implementador (nivel usuario: sirve para
 // cualquier proyecto con git). El proyecto es el repo que contiene el directorio actual.
 //
-//   node ~/.claude/flujos/estado.mjs [--paso <n>] [--forzar]  preflight + foto global; abre la carpeta del flujo
-//   node ~/.claude/flujos/estado.mjs --base [--paso <n>]   foto nueva: BASE=<sha> DESDE=<iso>
-//   node ~/.claude/flujos/estado.mjs --base --sub <n> [--paso <n>]   foto de la subtarea n, guardada en la carpeta del flujo (si ya hay, conserva la primera)
-//   node ~/.claude/flujos/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"] [--resultado COMPLETO|DETENIDO:<0-7>]
-//   node ~/.claude/flujos/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo
-//   node ~/.claude/flujos/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
-//   node ~/.claude/flujos/estado.mjs --guardar <agentId> plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s)
-//   node ~/.claude/flujos/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan y la VERIFICACIÓN INICIAL)
-//   node ~/.claude/flujos/estado.mjs --cancelar [--paso <n>]  cierra un flujo abierto sin subtareas ejecutadas (resultado CANCELADO) y libera el candado
-//   node ~/.claude/flujos/estado.mjs --reglas                reglas del proyecto para el orquestador
+//   node <plugin>/herramientas/estado.mjs [--paso <n>] [--forzar]  preflight + foto global; abre la carpeta del flujo
+//   node <plugin>/herramientas/estado.mjs --base [--paso <n>]   foto nueva: BASE=<sha> DESDE=<iso>
+//   node <plugin>/herramientas/estado.mjs --base --sub <n> [--paso <n>]   foto de la subtarea n, guardada en la carpeta del flujo (si ya hay, conserva la primera)
+//   node <plugin>/herramientas/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"] [--resultado COMPLETO|DETENIDO:<0-7>]
+//   node <plugin>/herramientas/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo
+//   node <plugin>/herramientas/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
+//   node <plugin>/herramientas/estado.mjs --guardar <agentId> plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s)
+//   node <plugin>/herramientas/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan y la VERIFICACIÓN INICIAL)
+//   node <plugin>/herramientas/estado.mjs --cancelar [--paso <n>]  cierra un flujo abierto sin subtareas ejecutadas (resultado CANCELADO) y libera el candado
+//   node <plugin>/herramientas/estado.mjs --reglas                reglas del proyecto para el orquestador
+//   node <plugin>/herramientas/estado.mjs --guia comun|pasos      imprime comun.md o pasos.md con `${CLAUDE_PLUGIN_ROOT}` ya resuelto (los inyecta la skill)
 //
 // `--paso <n>` (0 a 7) anota en qué paso del flujo se llama; la salida no cambia. Otro valor
 // se avisa con `AVISO:` y se ignora.
@@ -37,13 +38,12 @@
 // `--guardar` toma el informe de un agente de su transcript, en `projects/*/*/subagents/agent-<id>.jsonl`
 // dentro de `CLAUDE_CONFIG_DIR` (o `~/.claude`).
 
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { evaluar, registroDe, flujoDe, arbolDe, configDe, coincide, relativaAlRepo, rutaNativa, RAIZ } from './guardia.mjs'
+import { evaluar, rolDeAgente, registroDe, flujoDe, arbolDe, configDe, coincide, relativaAlRepo, rutaNativa, RAIZ } from './guardia.mjs'
 import { pasosDe, ultimaVerde, vivo, salidasDe, cambiosDe } from './verificar.mjs'
 import { metricasDelFlujo, precioDe, resumenDeCosto, resumenDeVeredictos } from './costos.mjs'
 
@@ -629,6 +629,24 @@ function mostrarEstado() {
 
 // ── Modos ───────────────────────────────────────────────────────────────────
 
+/** `hooks/hooks.json` del plugin. */
+const HOOKS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'hooks.json')
+
+/** Por qué `hooks/hooks.json` no deja la guardia puesta para las herramientas que vigila (Bash, Edit, Read…); null si está bien. */
+function hooksSinGuardia() {
+  let entradas
+  try {
+    entradas = JSON.parse(fs.readFileSync(HOOKS, 'utf8'))?.hooks?.PreToolUse
+  } catch (e) {
+    return `no se pudo leer hooks/hooks.json: ${e.message}`
+  }
+  const guardias = (Array.isArray(entradas) ? entradas : []).filter((h) => (h?.hooks ?? []).some((x) => x?.type === 'command' && /guardia\.mjs/.test(String(x.command))))
+  for (const herramienta of ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit', 'Read', 'Glob', 'Grep']) {
+    if (!guardias.some((h) => new RegExp('^(?:' + (h.matcher ?? '.*') + ')$').test(herramienta))) return `hooks/hooks.json no declara la guardia para ${herramienta}`
+  }
+  return null
+}
+
 function autoprueba() {
   const avisos = []
   try {
@@ -643,20 +661,15 @@ function autoprueba() {
         return `FALLA (${rol} ${evento.tool_name} ${JSON.stringify(evento.tool_input)})`
       }
     }
-    for (const agente of ['ejecutor', 'revisor']) {
-      const definicion = fs.readFileSync(path.join(AGENTES, `qcc-${agente}.md`), 'utf8')
-      if (!definicion.includes('guardia.mjs')) return `FALLA (~/.claude/agents/qcc-${agente}.md no declara el hook)`
+    for (const rol of ['explorador', 'planificador', 'ejecutor', 'revisor']) {
+      if (rolDeAgente(`qcc-implementador:qcc-${rol}`) !== rol) return `FALLA (la guardia no reconoce al agente qcc-implementador:qcc-${rol})`
     }
+    // Los agentes de un plugin ignoran `hooks:`: sin `hooks/hooks.json` declarando la guardia, correrían sin ella.
+    const sinGuardia = hooksSinGuardia()
+    if (sinGuardia) return `FALLA (${sinGuardia})`
+    // Una copia vieja en ~/.claude/agents duplica a los agentes del plugin y llama a una guardia que ya no está.
     for (const agente of ['explorador', 'planificador', 'ejecutor', 'revisor']) {
-      const viejo = path.join(RAIZ, '.claude', 'agents', `${agente}.md`)
-      if (fs.existsSync(viejo)) avisos.push(`.claude/agents/${agente}.md ya no redefine nada: los agentes se llaman qcc-${agente}`)
-      const propio = path.join(RAIZ, '.claude', 'agents', `qcc-${agente}.md`)
-      if (!fs.existsSync(propio)) continue
-      // La definición del proyecto manda sobre la global: sin el hook, ese agente corre sin guardia.
-      if ((agente === 'ejecutor' || agente === 'revisor') && !fs.readFileSync(propio, 'utf8').includes('guardia.mjs')) {
-        return `FALLA (el proyecto redefine qcc-${agente} en .claude/agents/qcc-${agente}.md sin la guardia)`
-      }
-      avisos.push(`el proyecto redefine qcc-${agente} (.claude/agents/qcc-${agente}.md) y manda sobre el global`)
+      if (fs.existsSync(path.join(AGENTES, `qcc-${agente}.md`))) avisos.push(`~/.claude/agents/qcc-${agente}.md es una copia vieja del agente: instalar.mjs --limpiar la archiva`)
     }
     if (configDe(RAIZ).invalido) avisos.push(`${configDe(RAIZ).nombre} no es JSON válido: rigen los valores por defecto`)
     return avisos.length ? `OK con avisos: ${avisos.join(' · ')}` : 'OK'
@@ -813,6 +826,24 @@ function imprimirReglas() {
   const unico = reglas ? leerTexto(path.join(RAIZ, reglas.ruta))?.trimEnd() : undefined
   console.log(`REGLAS DEL PROYECTO: ${unico === undefined ? 'ninguna' : reglas.ruta}\n`)
   console.log(unico ?? SIN_REGLAS)
+}
+
+const GUIAS = ['comun', 'pasos']
+
+/**
+ * Imprime `comun.md` o `pasos.md` (junto a este archivo) con `${CLAUDE_PLUGIN_ROOT}` cambiado por la carpeta del plugin, con `/`.
+ * Claude Code solo resuelve esa variable en el texto de la skill, no en lo que ella inyecta con un comando, y el Bash del
+ * modelo no la tiene: así las rutas de estos archivos llegan completas.
+ */
+export function imprimirGuia(nombre) {
+  const herramientas = path.dirname(fileURLToPath(import.meta.url))
+  const texto = GUIAS.includes(nombre) ? leerTexto(path.join(herramientas, `${nombre}.md`)) : undefined
+  if (texto === undefined) {
+    console.log(`ERROR: --guia pide ${GUIAS.join(' o ')} y que el archivo exista`)
+    process.exitCode = 2
+    return
+  }
+  process.stdout.write(texto.replaceAll('${CLAUDE_PLUGIN_ROOT}', () => path.dirname(herramientas).replaceAll('\\', '/')))
 }
 
 /** Agrupa rutas por carpeta, subiendo de nivel hasta que no pasen de `tope` grupos: `[{ carpeta, rutas }]`. */
@@ -1036,11 +1067,12 @@ const RE_RESULTADO = /^(COMPLETO|DETENIDO:[0-7])$/
 const HISTORIAL_MAX = 30
 const RE_CARPETA_HISTORIAL = /^\d{8}T\d{6}-/
 
-/** Los primeros 10 caracteres del sha1 de `.instalado.json` (junto a este archivo); null si no está. */
+/** La `version` de `.claude-plugin/plugin.json` del plugin que contiene este archivo; null si no se puede leer. */
 function versionInstalada() {
   try {
-    const manifiesto = path.join(path.dirname(fileURLToPath(import.meta.url)), '.instalado.json')
-    return crypto.createHash('sha1').update(fs.readFileSync(manifiesto)).digest('hex').slice(0, 10)
+    const manifiesto = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '.claude-plugin', 'plugin.json')
+    const version = JSON.parse(fs.readFileSync(manifiesto, 'utf8')).version
+    return typeof version === 'string' && version ? version : null
   } catch {
     return null
   }
@@ -1324,10 +1356,10 @@ function diff(base, permitidos, rutas) {
 
 /**
  * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar }`. Las opciones
- * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --estado > --cancelar > --guardar > --base > --cambios > --diff > preflight.
+ * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --estado > --cancelar > --guardar > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
  * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar`.
- * `--sub <n>` agrega `sub` (el entero ≥ 1, o null si no lo es) y `--global` agrega `global: true`; sin el flag no aparece la clave.
+ * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta). `--sub <n>` agrega `sub` (el entero ≥ 1, o null si no lo es) y `--global` agrega `global: true`; sin el flag no aparece la clave.
  * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
 export function opcionesDe(args) {
@@ -1341,6 +1373,7 @@ export function opcionesDe(args) {
   let modo = 'preflight'
   let base
   if (opciones.includes('--reglas')) modo = 'reglas'
+  else if (opciones.includes('--guia')) modo = 'guia'
   else if (opciones.includes('--estado')) modo = 'estado'
   else if (opciones.includes('--cancelar')) modo = 'cancelar'
   else if (opciones.includes('--guardar')) modo = 'guardar'
@@ -1378,6 +1411,7 @@ export function opcionesDe(args) {
     forzar: opciones.includes('--forzar'),
     ...(conSub ? { sub: /^\d+$/.test(valor('--sub') ?? '') && Number.isSafeInteger(Number(valor('--sub'))) && Number(valor('--sub')) >= 1 ? Number(valor('--sub')) : null } : {}),
     ...(conGlobal ? { global: true } : {}),
+    ...(modo === 'guia' ? { guia: valor('--guia') ?? '' } : {}),
   }
 }
 
@@ -1406,11 +1440,15 @@ export function anotarFlujo(archivo, fila) {
 }
 
 function main() {
-  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   // Ni las reglas ni el estado necesitan git: las reglas se inyectan antes del preflight.
   if (modo === 'reglas') {
     imprimirReglas()
+    return
+  }
+  if (modo === 'guia') {
+    imprimirGuia(guia)
     return
   }
   if (modo === 'estado') {

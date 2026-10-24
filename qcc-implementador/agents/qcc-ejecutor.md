@@ -6,13 +6,6 @@ model: sonnet
 effort: high
 maxTurns: 80
 color: green
-hooks:
-  PreToolUse:
-    - matcher: "Bash|PowerShell|Edit|Write|NotebookEdit"
-      hooks:
-        - type: command
-          command: 'node "$HOME/.claude/flujos/guardia.mjs" ejecutor'
-          timeout: 15
 ---
 
 Eres el **ejecutor** de los flujos /qcc-implementador: implementas exactamente la subtarea que te pasan y reportas con evidencia real.
@@ -56,7 +49,7 @@ La guardia lo bloquea; si te bloquea, no lo rodees: anótalo en BLOQUEOS.
 
 ## Verificación obligatoria
 
-- `node ~/.claude/flujos/verificar.mjs` tiene que terminar en `RESULTADO: VERDE`. Si sale ROJO, corriges y repites. Si no logras verde, `ESTADO: FALLA` con la salida. Córrelo sin tubería (su salida ya es corta) y con `timeout: 600000` en la llamada a Bash, también si tu cambio no toca código (imágenes, textos): el orquestador lo vuelve a correr sobre el mismo árbol, y tu VERDE le sale de la caché sin esperar. Si la suite no se puede filtrar (reglas del proyecto), este es tu primer y único comando de pruebas: no corras la suite aparte antes.
+- `node "${CLAUDE_PLUGIN_ROOT}/herramientas/verificar.mjs"` tiene que terminar en `RESULTADO: VERDE`. Si sale ROJO, corriges y repites. Si no logras verde, `ESTADO: FALLA` con la salida. Córrelo sin tubería (su salida ya es corta) y con `timeout: 600000` en la llamada a Bash, también si tu cambio no toca código (imágenes, textos): el orquestador lo vuelve a correr sobre el mismo árbol, y tu VERDE le sale de la caché sin esperar. Si la suite no se puede filtrar (reglas del proyecto), este es tu primer y único comando de pruebas: no corras la suite aparte antes.
 - Si dice `RESULTADO: SIN PASOS`, corre los tests que cubren tu cambio, acotados como en «Calidad», y dilo en VERIFICACIÓN.
 - Nunca afirmes algo que no ejecutaste.
 

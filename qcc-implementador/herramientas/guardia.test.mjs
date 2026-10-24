@@ -1,5 +1,5 @@
 // Casos de la guardia, del chequeo de alcance, de estado y de verificar de /qcc-implementador.
-// Correr: node --test ~/.claude/flujos/guardia.test.mjs
+// Correr: node --test qcc-implementador/herramientas/guardia.test.mjs
 //
 // Arma dos repos de prueba en el temporal: uno con `.claude/implementador.json` estricto (nombre viejo, que se
 // lee de respaldo; los casos de `.claude/qcc-implementador.json` crean sus propios repos)
@@ -14,15 +14,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { evaluar, analizar, raizDe, registroDe, flujoDe, arbolDe, configDe, coincide } from './guardia.mjs'
+import { evaluar, rolDeAgente, analizar, raizDe, registroDe, flujoDe, arbolDe, configDe, coincide } from './guardia.mjs'
 import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo, filaDelFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta, mapaDelRepo, decisionesDelPlan, contextoDelProyecto } from './estado.mjs'
 import { pasosDe, detalleTipos, resumenTest, detalleTest, conDetalle, claveDe, marcaDe, esBuild, salidasDe } from './verificar.mjs'
 import { costoDelFlujo, costoDePedido, metricasDelFlujo, precioDe, problemasDe } from './costos.mjs'
 
 const WIN = process.platform === 'win32'
 
-// Registros, carpetas de flujo, caché y flujos.jsonl de las pruebas van a un temporal: corridas desde la copia
-// instalada, las pruebas no tocan el historial real de ~/.claude/flujos/registros.
+// Registros, carpetas de flujo, caché y flujos.jsonl de las pruebas van a un temporal: corridas desde la carpeta
+// del plugin, las pruebas no tocan el historial real de ~/.claude/flujos/registros.
 const PRUEBAS = fs.mkdtempSync(path.join(os.tmpdir(), 'flujos-pruebas-'))
 process.env.FLUJOS_REGISTROS = path.join(PRUEBAS, 'registros')
 // El preflight no lanza la verificación inicial en segundo plano: un proceso suelto impediría borrar los temporales
@@ -116,8 +116,8 @@ test('ejecutor: verificación, lectura y edición dentro del alcance pasan', () 
     'git --no-pager log --oneline -5',
     'git -C . show HEAD:package.json',
     'git branch --show-current',
-    'node ~/.claude/flujos/verificar.mjs',
-    'node "$HOME/.claude/flujos/estado.mjs" --diff abc --permitidos "src/x.ts"',
+    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs',
+    'node "$HOME/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs" --diff abc --permitidos "src/x.ts"',
     'node -e "console.log(process.env.HOME)"',
     'rm src/server/viejo.ts',
     'rm -f src/server/viejo.ts',
@@ -129,7 +129,7 @@ test('ejecutor: verificación, lectura y edición dentro del alcance pasan', () 
     'cat src/lib/slug.ts | head -n 20',
     'mkdir -p src/server/nuevo && cp src/lib/slug.ts src/server/nuevo/slug.ts',
     "cat <<'EOF' > /tmp/nota.txt\ngit push origin main\nEOF",
-    'node ~/.claude/flujos/verificar.mjs > $TEMP/v.txt 2>&1',
+    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs > $TEMP/v.txt 2>&1',
     '# comentario sobre .env y git push\npnpm test',
     'for f in src/lib/*.ts; do wc -l "$f"; done',
   ]) deja(bash(R, c))
@@ -295,9 +295,9 @@ test('revisor: lee y verifica, y solo escribe en temporales', () => {
   const tmp = os.tmpdir().replace(/\\/g, '/')
   for (const c of [
     'pnpm test',
-    'node ~/.claude/flujos/verificar.mjs',
-    'node ~/.claude/flujos/verificar.mjs 2>&1 | tail -n 40',
-    'node ~/.claude/flujos/estado.mjs --diff abc --permitidos "src/x.ts" -- src/x.ts',
+    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs',
+    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs 2>&1 | tail -n 40',
+    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --diff abc --permitidos "src/x.ts" -- src/x.ts',
     'git diff abc def -- src',
     'pnpm build 2>&1 | tail -5',
     "grep -rn \"select('*')\" src/server > /dev/null; echo hecho",
@@ -800,28 +800,59 @@ function claudeConAgentes(agentes) {
   return dir
 }
 
-const AGENTES_CON_HOOK = {
-  'qcc-ejecutor.md': 'command: node "$HOME/.claude/flujos/guardia.mjs" ejecutor\n',
-  'qcc-revisor.md': 'command: node "$HOME/.claude/flujos/guardia.mjs" revisor\n',
-}
+test('preflight: la autoprueba lee hooks/hooks.json y avisa de una copia vieja de los agentes en ~/.claude', () => {
+  const guardia = (agentes) => /^GUARDIA: (.*)$/m.exec(estadoCon({}, () => [], {}, { CLAUDE_CONFIG_DIR: claudeConAgentes(agentes) }).salida)?.[1] ?? ''
 
-test('estado: la autoprueba falla si el proyecto redefine ejecutor o revisor sin la guardia', () => {
-  const entorno = { CLAUDE_CONFIG_DIR: claudeConAgentes(AGENTES_CON_HOOK) }
-  const guardia = (extra) => /^GUARDIA: (.*)$/m.exec(estadoCon({}, () => [], extra, entorno).salida)?.[1] ?? ''
-
-  assert.match(guardia({ '.claude/agents/qcc-ejecutor.md': '---\nname: qcc-ejecutor\n---\nsin hook\n' }), /^FALLA \(el proyecto redefine qcc-ejecutor en \.claude\/agents\/qcc-ejecutor\.md sin la guardia\)$/)
-  assert.match(guardia({ '.claude/agents/qcc-revisor.md': 'command: node "$HOME/.claude/flujos/guardia.mjs" revisor\n' }), /^OK con avisos: el proyecto redefine qcc-revisor /)
+  // Los agentes viven en el plugin: no hace falta ningún agente instalado en ~/.claude.
+  assert.equal(guardia({}), 'OK')
+  assert.equal(guardia({ 'qcc-ejecutor.md': 'x\n' }), 'OK con avisos: ~/.claude/agents/qcc-ejecutor.md es una copia vieja del agente: instalar.mjs --limpiar la archiva')
+  // Un agente del usuario con otro nombre no es del flujo.
+  assert.equal(guardia({ 'ejecutor.md': 'x\n' }), 'OK')
 })
 
-test('preflight: la autoprueba lee qcc-ejecutor.md y qcc-revisor.md', () => {
-  const guardia = (agentes, extra = {}) => /^GUARDIA: (.*)$/m.exec(estadoCon({}, () => [], extra, { CLAUDE_CONFIG_DIR: claudeConAgentes(agentes) }).salida)?.[1] ?? ''
+test('hooks.json: la guardia vigila Bash, PowerShell, Edit, Write, NotebookEdit, Read, Glob y Grep, y los agentes no declaran hooks', () => {
+  const hooks = JSON.parse(fs.readFileSync(new URL('../hooks/hooks.json', import.meta.url), 'utf8'))
+  const entradas = hooks.hooks.PreToolUse.filter((h) => h.hooks.some((x) => /guardia\.mjs/.test(x.command)))
+  assert.equal(entradas.length, 1)
+  assert.match(entradas[0].hooks[0].command, /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/herramientas\/guardia\.mjs"$/)
+  for (const herramienta of ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit', 'Read', 'Glob', 'Grep']) {
+    assert.match(herramienta, new RegExp(`^(?:${entradas[0].matcher})$`), herramienta)
+  }
+  // Los agentes de un plugin ignoran `hooks:`: declararlo ahí daría una falsa seguridad.
+  const agentes = fs.readdirSync(new URL('../agents/', import.meta.url)).filter((a) => a.endsWith('.md'))
+  assert.equal(agentes.length, 4)
+  for (const a of agentes) {
+    const cabecera = fs.readFileSync(new URL(`../agents/${a}`, import.meta.url), 'utf8').split('\n---')[0]
+    assert.doesNotMatch(cabecera, /^hooks:/m, a)
+  }
+})
 
-  assert.equal(guardia(AGENTES_CON_HOOK), 'OK')
-  // Con los nombres viejos (sin `qcc-`) no encuentra los agentes: la guardia no se puede comprobar.
-  assert.match(guardia({ 'ejecutor.md': 'command: guardia.mjs\n', 'revisor.md': 'command: guardia.mjs\n' }), /^FALLA \(.*qcc-ejecutor\.md/)
-  assert.match(guardia({ ...AGENTES_CON_HOOK, 'qcc-revisor.md': 'sin hook\n' }), /^FALLA \(~\/\.claude\/agents\/qcc-revisor\.md no declara el hook\)$/)
-  // Un `.claude/agents/<rol>.md` viejo en el proyecto ya no manda sobre nada: avisa.
-  assert.match(guardia(AGENTES_CON_HOOK, { '.claude/agents/ejecutor.md': 'x\n' }), /^OK con avisos: \.claude\/agents\/ejecutor\.md ya no redefine nada/)
+test('estado --guia: comun.md y pasos.md salen con ${CLAUDE_PLUGIN_ROOT} resuelto a la carpeta del plugin, con /', () => {
+  const raiz = fileURLToPath(new URL('..', import.meta.url)).replaceAll('\\', '/').replace(/\/$/, '')
+  for (const guia of ['comun', 'pasos']) {
+    const r = spawnSync(process.execPath, [ESTADO, '--guia', guia], { encoding: 'utf8' })
+    assert.equal(r.status, 0)
+    assert.doesNotMatch(r.stdout, /\$\{CLAUDE_PLUGIN_ROOT\}/)
+    assert.ok(r.stdout.includes(`node "${raiz}/herramientas/estado.mjs"`), guia)
+  }
+  assert.equal(opcionesDe(['--guia', 'comun']).modo, 'guia')
+  assert.equal(opcionesDe(['--guia', 'comun']).guia, 'comun')
+  // Otro nombre no es una guía (y no sale de la carpeta con `..`).
+  for (const mala of ['otro', '../instalar', '']) {
+    const r = spawnSync(process.execPath, [ESTADO, '--guia', mala], { encoding: 'utf8' })
+    assert.equal(r.status, 2)
+    assert.match(r.stdout, /^ERROR: --guia pide comun o pasos/)
+  }
+})
+
+test('rolDeAgente: el rol sale del agent_type del plugin; la sesión principal y otros agentes no tienen', () => {
+  for (const rol of ['explorador', 'planificador', 'ejecutor', 'revisor']) {
+    assert.equal(rolDeAgente(`qcc-implementador:qcc-${rol}`), rol)
+    assert.equal(rolDeAgente(`qcc-${rol}`), rol, 'el nombre sin plugin también')
+  }
+  for (const otro of [undefined, null, '', 42, 'general-purpose', 'qcc-implementador:qcc-generador', 'qcc-commit:qcc-generador-commit', 'qcc-implementador-odd:qcc-odd-ejecutor', 'qcc-odd-ejecutor', 'otro:qcc-ejecutor', 'qcc-implementador:ejecutor', 'qcc-implementador:qcc-ejecutor2']) {
+    assert.equal(rolDeAgente(otro), null, String(otro))
+  }
 })
 
 const PLAN = `PREGUNTAS: ¿algo?
@@ -1426,7 +1457,7 @@ test('costos: métricas del flujo desde transcripts armados', () => {
   const E1 = 'SUBTAREA 1/2: crear x'
   const E1_CORRECCION = `${E1}\nCORRECCIÓN: arreglar y`
   const E2 = 'SUBTAREA 2/2: otra cosa'
-  const ESTADO = 'node ~/.claude/flujos/estado.mjs'
+  const ESTADO = 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs'
 
   fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
     { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/implementador</command-name>\n<command-args>  Mejorar   el flujo\n con métricas </command-args>' } },
@@ -1504,17 +1535,17 @@ test('costos: reconoce /qcc-implementador y agentType qcc-ejecutor como rol ejec
 
   fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
     { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/qcc-implementador</command-name>\n<command-args> Probar el prefijo </command-args>' } },
-    turno('o1', 60, [agenteDe('a1', 'qcc-explorador', 'PEDIDO: x')]),
-    turno('o2', 200, [agenteDe('x1', 'qcc-ejecutor', E1)]),
-    turno('o3', 300, [agenteDe('x2', 'qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))')]),
+    turno('o1', 60, [agenteDe('a1', 'qcc-implementador:qcc-explorador', 'PEDIDO: x')]),
+    turno('o2', 200, [agenteDe('x1', 'qcc-implementador:qcc-ejecutor', E1)]),
+    turno('o3', 300, [agenteDe('x2', 'qcc-implementador:qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))')]),
   ]))
   const agente = (nombre, tipo, prompt, desde, filas) => {
     fs.writeFileSync(path.join(subagentes, `${nombre}.meta.json`), JSON.stringify({ agentType: tipo }))
     fs.writeFileSync(path.join(subagentes, `${nombre}.jsonl`), jsonl([{ type: 'user', timestamp: en(desde), message: { role: 'user', content: prompt } }, ...filas]))
   }
-  agente('agent-e', 'qcc-explorador', 'PEDIDO: x', 62, [turno('e1', 100, [texto('ARCHIVOS')])])
-  agente('agent-x1', 'qcc-ejecutor', E1, 205, [turno('m1', 280, [texto('ESTADO: HECHO')])])
-  agente('agent-f', 'qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))', 305, [turno('f1', 340, [texto('VEREDICTO: APROBADO\nPROBLEMAS: ninguno\nOBSERVACIONES: ninguna')])])
+  agente('agent-e', 'qcc-implementador:qcc-explorador', 'PEDIDO: x', 62, [turno('e1', 100, [texto('ARCHIVOS')])])
+  agente('agent-x1', 'qcc-implementador:qcc-ejecutor', E1, 205, [turno('m1', 280, [texto('ESTADO: HECHO')])])
+  agente('agent-f', 'qcc-implementador:qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))', 305, [turno('f1', 340, [texto('VEREDICTO: APROBADO\nPROBLEMAS: ninguno\nOBSERVACIONES: ninguna')])])
 
   const m = metricasDelFlujo(raiz, en(0), { proyectos: path.join(claude, 'projects'), hasta: en(500), base: null })
   assert.equal(m.sesion, path.join(sesion, 's1.jsonl'))
@@ -1907,54 +1938,57 @@ test('preflight: sin pasos la verificación inicial es SIN PASOS', () => {
 
 const INSTALAR = fileURLToPath(new URL('../instalar.mjs', import.meta.url))
 
-test('instalar: anota hashes, frena lo editado en el destino aunque sea más viejo y lista huérfanos', (t) => {
-  if (!fs.existsSync(INSTALAR)) {
-    t.skip('instalar.mjs solo está en el repo, no en la copia instalada')
-    return
-  }
+test('instalar: archiva las copias viejas de ~/.claude sin borrar, frena lo editado y deja los registros', () => {
   const destino = fs.mkdtempSync(path.join(os.tmpdir(), 'instalar-'))
   temporales.push(destino)
+  const poner = (rel, texto) => {
+    fs.mkdirSync(path.dirname(path.join(destino, rel)), { recursive: true })
+    fs.writeFileSync(path.join(destino, rel), texto)
+  }
+  const hash = (texto) => crypto.createHash('sha1').update(texto).digest('hex')
   const instalar = (...args) => {
     const r = spawnSync(process.execPath, [INSTALAR, ...args], { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: destino } })
     return { salida: r.stdout ?? '', codigo: r.status }
   }
-  const manifiesto = path.join(destino, 'flujos', '.instalado.json')
-  const pasos = path.join(destino, 'flujos', 'pasos.md')
+  // Sin manifiesto no hay nada que limpiar.
+  assert.match(instalar().salida, /^RESULTADO: nada que limpiar/m)
 
-  const primera = instalar()
-  assert.equal(primera.codigo, 0)
-  assert.match(primera.salida, /^ {2}nuevo {4}herramientas\/pasos\.md → /m)
-  assert.ok(fs.existsSync(pasos))
-  assert.ok(!fs.existsSync(path.join(destino, 'flujos', 'registros')), 'no copia las bitácoras del repo')
-  assert.match(JSON.parse(fs.readFileSync(manifiesto, 'utf8'))['flujos/pasos.md'], /^[0-9a-f]{40}$/)
-  assert.match(instalar().salida, /^RESULTADO: 0 copiado\(s\)$/m)
+  const copias = { 'flujos/pasos.md': 'pasos\n', 'flujos/qcc-commit/solo-git.mjs': 'git\n', 'agents/qcc-ejecutor.md': 'agente\n', 'skills/qcc-commit/SKILL.md': 'skill\n', 'flujos/editado.md': 'original\n' }
+  for (const [rel, texto] of Object.entries(copias)) poner(rel, texto)
+  poner('flujos/.instalado.json', JSON.stringify({ ...Object.fromEntries(Object.entries(copias).map(([rel, texto]) => [rel, hash(texto)])), 'flujos/ya-no-esta.md': hash('x') }))
+  fs.appendFileSync(path.join(destino, 'flujos/editado.md'), 'edición a mano\n')
+  poner('flujos/registros/flujos.jsonl', '{}\n')
 
-  // Editado en el destino y con fecha vieja: la fecha diría «pisar», el hash lo frena.
-  fs.appendFileSync(pasos, '\nedición a mano\n')
-  fs.utimesSync(pasos, new Date(2000, 0, 1), new Date(2000, 0, 1))
-  const frenada = instalar()
-  assert.equal(frenada.codigo, 1)
-  assert.match(frenada.salida, /FRENADO .*pasos\.md se editó ahí/)
-  assert.equal(instalar('--forzar').codigo, 0)
-  assert.doesNotMatch(fs.readFileSync(pasos, 'utf8'), /edición a mano/)
+  // Sin --limpiar solo lista.
+  const lista = instalar()
+  assert.match(lista.salida, /archivaría .*agents\/qcc-ejecutor\.md/)
+  assert.match(lista.salida, /editado .*flujos\/editado\.md se editó ahí/)
+  assert.match(lista.salida, /^RESULTADO: 4 por archivar \(--limpiar lo hace\) · 1 sin tocar$/m)
+  assert.equal(lista.codigo, 1)
+  assert.ok(fs.existsSync(path.join(destino, 'agents', 'qcc-ejecutor.md')))
 
-  // Un archivo anotado que ya no está en el repo es huérfano; --limpiar lo borra si nadie lo editó.
-  const viejo = path.join(destino, 'agents', 'viejo.md')
-  fs.writeFileSync(viejo, 'x\n')
-  const m = JSON.parse(fs.readFileSync(manifiesto, 'utf8'))
-  m['agents/viejo.md'] = crypto.createHash('sha1').update('x\n').digest('hex')
-  fs.writeFileSync(manifiesto, JSON.stringify(m))
-  assert.match(instalar('--revisar').salida, /huérfano .*agents\/viejo\.md: ya no está en el repo \(--limpiar lo borra\)/)
-  instalar('--limpiar')
-  assert.ok(!fs.existsSync(viejo))
+  const hecha = instalar('--limpiar')
+  assert.match(hecha.salida, /^RESULTADO: 4 archivado\(s\) en .*_archivo-limpieza-\d{4}-\d{2}-\d{2} · 1 sin tocar$/m)
+  const archivo = fs.readdirSync(destino).find((n) => n.startsWith('_archivo-limpieza-'))
+  assert.ok(archivo)
+  for (const rel of ['flujos/pasos.md', 'flujos/qcc-commit/solo-git.mjs', 'agents/qcc-ejecutor.md', 'skills/qcc-commit/SKILL.md']) {
+    assert.ok(!fs.existsSync(path.join(destino, rel)), `${rel} sigue en ~/.claude`)
+    assert.equal(fs.readFileSync(path.join(destino, archivo, rel), 'utf8'), copias[rel])
+  }
+  // Lo editado y los registros se quedan; las carpetas vacías se quitan; el manifiesto solo guarda lo que sigue ahí.
+  assert.ok(fs.existsSync(path.join(destino, 'flujos', 'editado.md')))
+  assert.ok(fs.existsSync(path.join(destino, 'flujos', 'registros', 'flujos.jsonl')))
+  assert.ok(!fs.existsSync(path.join(destino, 'skills', 'qcc-commit')))
+  assert.ok(!fs.existsSync(path.join(destino, 'flujos', 'qcc-commit')))
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(destino, 'flujos', '.instalado.json'), 'utf8'))), ['flujos/editado.md'])
 })
 
 const GUARDIA = fileURLToPath(new URL('./guardia.mjs', import.meta.url))
 
-/** Corre guardia.mjs como hook de `rol` con `evento` por stdin, en el proyecto `raiz`. */
+/** Corre guardia.mjs como hook del agente `rol` (su `agent_type` de plugin va en el evento), con `evento` por stdin, en el proyecto `raiz`. */
 function hook(raiz, rol, evento) {
   const env = { ...process.env, CLAUDE_PROJECT_DIR: raiz }
-  return spawnSync(process.execPath, [GUARDIA, rol], { cwd: raiz, encoding: 'utf8', env, input: JSON.stringify(evento) })
+  return spawnSync(process.execPath, [GUARDIA], { cwd: raiz, encoding: 'utf8', env, input: JSON.stringify({ agent_type: `qcc-implementador:qcc-${rol}`, ...evento }) })
 }
 
 /** Filas del registro del proyecto (vacío si no hay). */
@@ -2006,9 +2040,35 @@ test('guardia: roles de lectura registran sin bloquear', () => {
     const otra = hook(raiz, 'explorador', ev(raiz, 'Bash', { command: 'git push' }))
     assert.equal(otra.stdout, '')
     assert.equal(otra.status, 0)
-    const rota = spawnSync(process.execPath, [GUARDIA, 'explorador'], { cwd: raiz, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: raiz }, input: '{no es json' })
+    const rota = spawnSync(process.execPath, [GUARDIA], { cwd: raiz, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: raiz }, input: '{no es json' })
     assert.equal(rota.stdout, '')
     assert.equal(rota.status, 0)
+    assert.equal(filasDe(raiz).length, antes)
+  } finally {
+    borrarRegistro(raiz)
+  }
+})
+
+test('guardia como hook: niega y anota por el agent_type; la sesión principal y otros agentes pasan sin tocar el registro', () => {
+  const raiz = repo('agent-type', { 'src/a.ts': 'a\n' })
+  temporales.push(raiz)
+  try {
+    const push = bash(raiz, 'git commit -m x')
+    const ejecutor = hook(raiz, 'ejecutor', push)
+    assert.equal(JSON.parse(ejecutor.stdout).hookSpecificOutput.permissionDecision, 'deny')
+    assert.equal(filasDe(raiz).at(-1).rol, 'ejecutor')
+    assert.equal(filasDe(raiz).at(-1).decision, 'negado')
+    const revisor = hook(raiz, 'revisor', edita(raiz, path.join(raiz, 'src', 'a.ts')))
+    assert.equal(JSON.parse(revisor.stdout).hookSpecificOutput.permissionDecision, 'deny')
+    assert.equal(filasDe(raiz).at(-1).rol, 'revisor')
+
+    const antes = filasDe(raiz).length
+    // La sesión principal (sin agent_type) y otros agentes, incluidos los del odd, nunca se niegan ni se anotan.
+    for (const agent_type of [undefined, 'qcc-implementador-odd:qcc-odd-ejecutor', 'qcc-commit:qcc-generador-commit', 'general-purpose']) {
+      const r = hook(raiz, 'ejecutor', { ...push, agent_type })
+      assert.equal(r.stdout, '', String(agent_type))
+      assert.equal(r.status, 0)
+    }
     assert.equal(filasDe(raiz).length, antes)
   } finally {
     borrarRegistro(raiz)

@@ -29,7 +29,7 @@
 // no corre nada: la espera hasta 570 s, repite su salida y sale con su código. Una marca de un proceso muerto,
 // o de hace más de 30 min, se ignora.
 //
-//   node ~/.claude/flujos/verificar.mjs [--sin-cache]
+//   node <plugin>/herramientas/verificar.mjs [--sin-cache]
 //
 // Termina en `RESULTADO: VERDE` (exit 0), `RESULTADO: ROJO (<pasos>)` (exit 1),
 // `RESULTADO: SIN PASOS` (exit 3: el proyecto no tiene verificación conocida) o
