@@ -8,7 +8,7 @@ Herramientas personales para Claude Code, en cinco plugins de un marketplace (`q
 - **`qcc-implementador-odd/`**: el flujo `/qcc-implementador-odd`, en prueba, separado por completo de `qcc-implementador/`. Tiene su skill, sus agentes, sus herramientas, su instalador, su config (`.claude/qcc-implementador-odd.json`) y su registro. Ninguno de los dos flujos usa archivos del otro. Ver [FLUJOS-ODD.md](FLUJOS-ODD.md).
 - **`qcc/`**: el paquete, un plugin solo con `dependencies` que instala los otros cuatro.
 
-Mientras la migración a plugins sigue (fases 3 a 5), los flujos aún se instalan copiándolos a `~/.claude` con `qcc-implementador/instalar.mjs` (que también instala `qcc-commit/`) y `qcc-implementador-odd/instalar.mjs`.
+Los flujos corren como plugins: sus herramientas se llaman con `${CLAUDE_PLUGIN_ROOT}/herramientas/…`, y las guardias van en el `hooks/hooks.json` de cada plugin y deciden por el `agent_type` del evento (`qcc-implementador:qcc-ejecutor`…), porque los agentes de un plugin ignoran `hooks:` en su frontmatter. Los `subagent_type` llevan el prefijo del plugin. Los registros siguen en `~/.claude/flujos/registros` y `~/.claude/flujos-odd/registros`. Los `instalar.mjs` ya no copian: `--limpiar` archiva en `~/.claude/_archivo-limpieza-<fecha>/` las copias viejas que dejaba la instalación anterior.
 
 [README.md](README.md) es la entrada al repo: resume la instalación y enlaza a todo.
 
@@ -28,24 +28,24 @@ qcc/
   .claude-plugin/plugin.json      paquete: solo dependencies
 qcc-implementador/
   .claude-plugin/plugin.json      manifiesto
-  hooks/hooks.json                vacío por ahora (la guardia pasa aquí en la fase 3)
-  instalar.mjs                    copia /qcc-implementador y /qcc-commit a ~/.claude (o los trae con --traer)
-  skills/qcc-implementador/SKILL.md → ~/.claude/skills/qcc-implementador/SKILL.md (/qcc-implementador)
-  agents/qcc-*.md                 → ~/.claude/agents/ (explorador, planificador, ejecutor, revisor)
-  herramientas/                   → ~/.claude/flujos/ (estado, verificar, guardia, costos, guardia.test, comun.md, plan.md, pasos.md, config.ejemplo.md)
+  hooks/hooks.json                guardia.mjs en PreToolUse (Bash, PowerShell, Edit, Write, NotebookEdit, Read, Glob, Grep)
+  instalar.mjs                    archiva (--limpiar) las copias viejas de /qcc-implementador y /qcc-commit en ~/.claude
+  skills/qcc-implementador/SKILL.md   /qcc-implementador
+  agents/qcc-*.md                 explorador, planificador, ejecutor, revisor (sin hooks:, que se ignoran)
+  herramientas/                   estado (con --guia), verificar, guardia, costos, guardia.test, comun.md, plan.md, pasos.md, config.ejemplo.md
 qcc-commit/
   .claude-plugin/plugin.json      manifiesto
-  hooks/hooks.json                vacío por ahora
-  skills/qcc-commit/SKILL.md      → ~/.claude/skills/qcc-commit/SKILL.md (/qcc-commit)
-  agents/qcc-generador-commit.md  → ~/.claude/agents/ (agente Haiku high de /qcc-commit)
-  herramientas/                   → ~/.claude/flujos/qcc-commit/ (solo-git.mjs y su test)
+  hooks/hooks.json                solo-git.mjs en PreToolUse (Bash, PowerShell)
+  skills/qcc-commit/SKILL.md      /qcc-commit
+  agents/qcc-generador-commit.md  agente Haiku high de /qcc-commit
+  herramientas/                   solo-git.mjs y su test
 qcc-implementador-odd/
   .claude-plugin/plugin.json      manifiesto
-  hooks/hooks.json                vacío por ahora
-  instalar.mjs                    copia el flujo odd a ~/.claude (o lo trae con --traer)
-  skills/qcc-implementador-odd/SKILL.md → ~/.claude/skills/qcc-implementador-odd/SKILL.md (todas sus reglas)
-  agents/qcc-odd-*.md             → ~/.claude/agents/ (explorador, ejecutor, revisor)
-  herramientas/                   → ~/.claude/flujos-odd/ (odd, verificar, guardia, costo, proceso, copia, odd.test)
+  hooks/hooks.json                guardia.mjs en PreToolUse (ejecutor y revisor, por agent_type); la del orquestador va en el frontmatter del skill
+  instalar.mjs                    archiva (--limpiar) la copia vieja de odd en ~/.claude
+  skills/qcc-implementador-odd/SKILL.md   todas sus reglas
+  agents/qcc-odd-*.md             explorador, ejecutor, revisor (sin hooks:)
+  herramientas/                   odd, verificar, guardia, costo, proceso, copia, odd.test
 qcc-panel/
   .claude-plugin/plugin.json      manifiesto (nombre, versión, types)
   hooks/hooks.json                { "modules": ["./register.tsx"] }
