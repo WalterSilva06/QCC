@@ -22,7 +22,7 @@ const PRECIOS = {
 // Haiku 5.5 cobra más con prompts de más de 100.000 tokens.
 const HAIKU_LARGO = { entrada: 0.5, salida: 2.5, lectura: 0.05, escritura5m: 0.625, escritura1h: 1 }
 const VEREDICTO_POR_ROL = { revisor: 'VEREDICTO', ejecutor: 'ESTADO' }
-const COMANDO = /<command-name>\/qcc-implementador-odd</
+const COMANDO = /<command-name>\/(?:[\w-]+:)?qcc-implementador-odd</
 
 export const proyectosDe = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')
 export const dolares = (n) => `$${n.toFixed(2).replace('.', ',')}`
@@ -214,7 +214,7 @@ export function costoDelFlujo(raiz, base, { proyectos = proyectosDe(), hasta = n
     if (!enTramo(desde)) continue
     let rol = '?'
     try {
-      rol = String(JSON.parse(fs.readFileSync(path.join(carpeta, a.replace(/\.jsonl$/, '.meta.json')), 'utf8')).agentType ?? '?').replace(/^qcc-odd-/, '')
+      rol = String(JSON.parse(fs.readFileSync(path.join(carpeta, a.replace(/\.jsonl$/, '.meta.json')), 'utf8')).agentType ?? '?').replace(/^(?:[^:]+:)?qcc-odd-/, '')
     } catch {
       // Sin meta: rol desconocido.
     }

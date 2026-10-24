@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// Guardia lite de /qcc-implementador-odd (nivel usuario: sirve para cualquier proyecto).
+// Guardia lite de /qcc-implementador-odd (sirve para cualquier proyecto).
 //
-// Hook PreToolUse que declaran en su frontmatter `qcc-odd-ejecutor` (argumento `ejecutor`) y `qcc-odd-revisor`
-// (argumento `revisor`): Claude Code lo corre solo mientras ese agente trabaja. Niega lo que un subagente odd
-// no hace nunca: git que modifica, instalar o quitar dependencias, red, borrados recursivos, secretos (`.env*`),
+// Hook PreToolUse del plugin (`hooks/hooks.json`): Claude Code lo corre en cada llamada de herramienta de la sesión, y la
+// guardia decide por el `agent_type` del evento (`qcc-implementador-odd:qcc-odd-ejecutor` o `…-revisor`) a quién vigila;
+// los agentes de un plugin ignoran `hooks:` en su frontmatter, por eso no se declara allí. Sin `agent_type` (la sesión
+// principal) o con el de otro agente, no hace nada. Niega lo que un subagente odd no hace nunca: git que modifica, instalar o quitar dependencias, red, borrados recursivos, secretos (`.env*`),
 // servidores y modos watch que no terminan, y archivos protegidos. Al revisor, además, escribir fuera del temporal.
 // Al ejecutor, escribir en el repo por Bash o PowerShell (que edite con Edit o Write): solo escribe en el temporal.
 //
-// El skill lo declara con el argumento `orquestador`. Un hook de skill sigue activo el resto de la sesión, así que
+// El skill lo declara en su frontmatter con el argumento `orquestador`. Un hook de skill sigue activo el resto de la sesión, así que
 // este rol solo niega mientras hay una corrida abierta en el repo (la marca que deja `odd.mjs --inicio` y borra
 // `--cierre`, que vence a las 12 h) y nunca dentro de un subagente. Niega escribir en el repo por Bash o PowerShell
 // (que edite con Edit o Write) y leer archivos del repo con `cat`, `head`, `sed -n`… (que lea con Read o Grep), más
@@ -22,7 +23,8 @@
 // variables asignadas en el mismo comando y mira el programa de cada tramo. Ante la duda deja pasar, y un error
 // propio nunca niega: un guardia que castra al ejecutor cuesta la tarea entera.
 //
-//   echo '<evento JSON>' | node ~/.claude/flujos-odd/guardia.mjs ejecutor|revisor|orquestador
+//   echo '<evento JSON con agent_type>' | node <plugin>/herramientas/guardia.mjs
+//   echo '<evento JSON>' | node <plugin>/herramientas/guardia.mjs orquestador
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -32,6 +34,8 @@ import { fileURLToPath } from 'node:url'
 
 const WIN = process.platform === 'win32'
 const DIR = path.dirname(fileURLToPath(import.meta.url))
+/** Carpeta de Claude Code del usuario (`CLAUDE_CONFIG_DIR` o `~/.claude`). */
+const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const CONFIG_ODD = '.claude/qcc-implementador-odd.json'
 // La config de /qcc-implementador: la nueva y, si no existe, la vieja.
 const CONFIGS_NORMALES = ['.claude/qcc-implementador.json', '.claude/implementador.json']
@@ -136,8 +140,15 @@ function versionado(rel, raiz) {
 
 // ── Marca de corrida ────────────────────────────────────────────────────────
 
+/**
+ * Carpeta de los registros de odd: la marca de corrida, `odd.jsonl`… Está en `<CLAUDE_CONFIG_DIR o ~/.claude>/flujos-odd/registros`,
+ * fuera de la carpeta del plugin (que cambia con cada versión) para que el historial sobreviva a las actualizaciones.
+ * `ODD_REGISTROS` la cambia (los tests la llevan a un temporal).
+ */
+export const registrosDe = () => process.env.ODD_REGISTROS || path.join(CLAUDE, 'flujos-odd', 'registros')
+
 /** El archivo que marca una corrida abierta de odd en `raiz`: lo crea `--inicio` y lo borra `--cierre`. */
-export const marcaDe = (raiz) => path.join(process.env.ODD_REGISTROS || path.join(DIR, 'registros'), 'activas', `${normal(raiz).replace(/[^a-zA-Z0-9]/g, '-')}.json`)
+export const marcaDe = (raiz) => path.join(registrosDe(), 'activas', `${normal(raiz).replace(/[^a-zA-Z0-9]/g, '-')}.json`)
 
 /** Si hay una corrida abierta en `raiz` con menos de 12 h. */
 export function corridaAbierta(raiz) {
@@ -482,8 +493,8 @@ function codigoDeScript(tramo, { raiz, cwd = raiz, cmd = tramo }) {
   if (args.includes('-') || !libres.length) return cuerpos
   if (/qcc-odd-base-/.test(libres[0])) return null
   const abs = path.resolve(cwd, rutaNativa(libres[0]))
-  // Las herramientas de este flujo, instaladas en cualquier cuenta (`~/.claude*/flujos-odd/`), escriben lo suyo.
-  const herramienta = HERRAMIENTAS.has(path.basename(abs).toLowerCase()) && (dentro(path.dirname(abs), DIR) || /[\\/]\.claude[^\\/]*[\\/]flujos-odd$/i.test(path.dirname(abs)))
+  // Las herramientas de este flujo (la carpeta `herramientas/` de este plugin) escriben lo suyo.
+  const herramienta = HERRAMIENTAS.has(path.basename(abs).toLowerCase()) && dentro(path.dirname(abs), DIR)
   if (dentro(abs, raiz) || herramienta) return null
   try {
     return fs.statSync(abs).size < 1e6 ? fs.readFileSync(abs, 'utf8') : null
@@ -668,6 +679,21 @@ export function tramosExpandidos(cmd) {
   return tramos
 }
 
+/** El rol de un agente de odd en un `agent_type` o `subagent_type`: `qcc-implementador-odd:qcc-odd-ejecutor` (o sin plugin) → `ejecutor`; null si no es de odd. */
+export function agenteOdd(tipo) {
+  const m = typeof tipo === 'string' ? /^(?:qcc-implementador-odd:)?qcc-odd-(explorador|ejecutor|revisor)$/.exec(tipo.trim()) : null
+  return m ? m[1] : null
+}
+
+/** Si `tipo` es el agente de odd `rol` (`explorador`, `ejecutor` o `revisor`). */
+export const esAgenteOdd = (tipo, rol) => agenteOdd(tipo) === rol
+
+/** El rol que la guardia vigila según el `agent_type` del evento: `ejecutor` o `revisor`. null para el explorador (solo lectura), la sesión principal y cualquier otro agente. */
+export function rolDeAgente(agentType) {
+  const rol = agenteOdd(agentType)
+  return rol === 'ejecutor' || rol === 'revisor' ? rol : null
+}
+
 /** Por qué se niega `cmd` para `rol`; null si pasa. */
 export function motivoComando(cmd, { rol, raiz, cwd = raiz, profundidad = 0 }) {
   for (const tramo of tramosExpandidos(cmd)) {
@@ -687,7 +713,7 @@ export function evaluar(evento, rol, raiz = raizDe(process.env.CLAUDE_PROJECT_DI
     if (rol === 'orquestador' && (evento?.agent_type || evento?.agent_id || !corridaAbierta(raiz))) return null
     // Un despacho al explorador con `TAMAÑO: grande` anota «grande» en la marca, sin esperar a `--previsto`. Nunca niega.
     if ((herramienta === 'Agent' || herramienta === 'Task') && rol === 'orquestador') {
-      if (entrada.subagent_type === 'qcc-odd-explorador' && typeof entrada.prompt === 'string' && /^\s*TAMAÑO:\s*grande\b/im.test(entrada.prompt)) anotarMarca(raiz, { tamano: 'grande' })
+      if (esAgenteOdd(entrada.subagent_type, 'explorador') && typeof entrada.prompt === 'string' && /^\s*TAMAÑO:\s*grande\b/im.test(entrada.prompt)) anotarMarca(raiz, { tamano: 'grande' })
       return null
     }
     if (herramienta === 'Bash' || herramienta === 'PowerShell') return motivoComando(String(entrada.command ?? ''), { rol, raiz, cwd })
@@ -708,7 +734,6 @@ export function evaluar(evento, rol, raiz = raizDe(process.env.CLAUDE_PROJECT_DI
 }
 
 function main() {
-  const rol = ['revisor', 'orquestador'].includes(process.argv[2]) ? process.argv[2] : 'ejecutor'
   let texto = ''
   try {
     texto = fs.readFileSync(0, 'utf8')
@@ -721,6 +746,9 @@ function main() {
   } catch {
     return
   }
+  // El hook del skill pasa `orquestador`; el de `hooks/hooks.json` corre en toda la sesión y decide por el `agent_type`.
+  const rol = process.argv[2] === 'orquestador' ? 'orquestador' : rolDeAgente(evento?.agent_type)
+  if (!rol) return
   const motivo = evaluar(evento, rol)
   if (!motivo) return
   process.stdout.write(JSON.stringify({

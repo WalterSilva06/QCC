@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 // Herramienta de /qcc-implementador-odd (nivel usuario: sirve para cualquier proyecto).
 //
-//   node ~/.claude/flujos-odd/odd.mjs --inicio
-//   node ~/.claude/flujos-odd/odd.mjs --plan --base <BASE> --tamano chico|grande --reglas <n>
+//   node <plugin>/herramientas/odd.mjs --inicio
+//   node <plugin>/herramientas/odd.mjs --plan --base <BASE> --tamano chico|grande --reglas <n>
 //        --riesgo "1:sí <motivo>;2:no;…;6:no" [--bordes "<borde> | <borde>"]
-//   node ~/.claude/flujos-odd/odd.mjs --previsto chico|grande
-//   node ~/.claude/flujos-odd/odd.mjs --diff <BASE> [--stat] [-- <rutas>]
-//   node ~/.claude/flujos-odd/odd.mjs --cierre --base <BASE> --resultado COMPLETO|DETENIDO --tamano chico|grande
+//   node <plugin>/herramientas/odd.mjs --previsto chico|grande
+//   node <plugin>/herramientas/odd.mjs --diff <BASE> [--stat] [-- <rutas>]
+//   node <plugin>/herramientas/odd.mjs --cierre --base <BASE> --resultado COMPLETO|DETENIDO --tamano chico|grande
 //        --riesgo "<ítem N (motivo) | ninguno>" [--revision APROBADO|RECHAZADO|omitida] [--titulo "<t>"]
-//   node ~/.claude/flujos-odd/odd.mjs --cancelar
-//   node ~/.claude/flujos-odd/odd.mjs --ultimos [<n>]
-//   node ~/.claude/flujos-odd/odd.mjs --copia-base <BASE>
-//   node ~/.claude/flujos-odd/odd.mjs --diferencial [--base <BASE>] -- <comando>
-//   node ~/.claude/flujos-odd/odd.mjs --limpiar -- <rutas>
+//   node <plugin>/herramientas/odd.mjs --cancelar
+//   node <plugin>/herramientas/odd.mjs --ultimos [<n>]
+//   node <plugin>/herramientas/odd.mjs --copia-base <BASE>
+//   node <plugin>/herramientas/odd.mjs --diferencial [--base <BASE>] -- <comando>
+//   node <plugin>/herramientas/odd.mjs --limpiar -- <rutas>
 //
 // --inicio: toma una foto del árbol (versionados + nuevos no ignorados) como commit suelto, que es la BASE, y la
 // imprime como `ODD_BASE=<sha>`: con esa marca costo.mjs encuentra la sesión. Además: rama, sucios previos,
@@ -49,14 +49,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { raizDe, rutaNativa, enTemporal, reglasDelProyecto, marcaDe, anotarMarca, corridaAbierta, motivoComando } from './guardia.mjs'
+import { raizDe, rutaNativa, enTemporal, reglasDelProyecto, marcaDe, anotarMarca, corridaAbierta, motivoComando, registrosDe } from './guardia.mjs'
 import { copiaBase, diferencial } from './copia.mjs'
 import { correrPaso } from './verificar.mjs'
 import { costoDelFlujo, contextoActual, finDeCorrida, filasDe, sesionDe, resumenDeCosto, resumenDeTokens, dolares, miles } from './costo.mjs'
 import { procesoDe, lineaDeProceso, TOPE_CONTEXTO } from './proceso.mjs'
 
 const WIN = process.platform === 'win32'
-const DIR = path.dirname(fileURLToPath(import.meta.url))
 const RAIZ = raizDe(process.env.CLAUDE_PROJECT_DIR || process.cwd())
 const TOPE_DIFF = 400
 const TOPE_SUCIOS = 10
@@ -64,7 +63,7 @@ const CONFIG = '.claude/qcc-implementador-odd.json'
 const TAREAS = 'odd/tasks'
 const REGLAS_CHICO = 8
 
-const registroDe = () => path.join(process.env.ODD_REGISTROS || path.join(DIR, 'registros'), 'odd.jsonl')
+const registroDe = () => path.join(registrosDe(), 'odd.jsonl')
 
 function git(args, { env, opcional = false } = {}) {
   try {

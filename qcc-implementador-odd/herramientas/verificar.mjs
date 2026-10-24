@@ -13,7 +13,7 @@
 // Con una corrida abierta cuya marca trae `diferenciales` (los que guardó `odd.mjs --diferencial`), los repite al final contra
 // la BASE de la marca (validados otra vez con la guardia): uno que DIFIERE o que la guardia niega cuenta como el paso `diferencial`.
 //
-//   node ~/.claude/flujos-odd/verificar.mjs
+//   node <plugin>/herramientas/verificar.mjs
 //
 // Termina en `RESULTADO: VERDE` (exit 0), `RESULTADO: ROJO (<pasos>)` (exit 1) o `RESULTADO: SIN PASOS` (exit 3).
 

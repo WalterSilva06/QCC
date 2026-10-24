@@ -8,7 +8,7 @@
 // como `PROCESO:`.
 
 import path from 'node:path'
-import { tramosExpandidos, partesDe, rutasEscritas, leeDelRepo, scriptQueEscribe, cuerposDe, rutaNativa, dentro, ESCRIBE_FS } from './guardia.mjs'
+import { tramosExpandidos, partesDe, rutasEscritas, leeDelRepo, scriptQueEscribe, cuerposDe, rutaNativa, dentro, esAgenteOdd, ESCRIBE_FS } from './guardia.mjs'
 import { contextoDePedido, textoDe, miles } from './costo.mjs'
 
 export const TOPE_CONTEXTO = 150_000
@@ -90,9 +90,9 @@ export function procesoDe(filas, { raiz, inicio, hasta, tamano = null, riesgo = 
       const ruta = String(u.entrada.file_path ?? '')
       if (marcas.plan < 0 && u.entrada.limit === undefined && enRepo(ruta) && !enTareas(ruta)) enteros.add(path.resolve(cwd, rutaNativa(ruta)).toLowerCase())
     } else if (u.nombre === 'Agent' || u.nombre === 'Task') {
-      if (u.entrada.subagent_type === 'qcc-odd-explorador') explorador = true
+      if (esAgenteOdd(u.entrada.subagent_type, 'explorador')) explorador = true
       // El ejecutor edita: lo que venga después tiene que verificarlo.
-      if (u.entrada.subagent_type === 'qcc-odd-ejecutor') ejecutor = edita = true
+      if (esAgenteOdd(u.entrada.subagent_type, 'ejecutor')) ejecutor = edita = true
     } else if (u.nombre === 'Bash' || u.nombre === 'PowerShell') {
       const cmd = String(u.entrada.command ?? '')
       const tramos = tramosExpandidos(cmd)

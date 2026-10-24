@@ -1,17 +1,15 @@
 #!/usr/bin/env node
-// Copia /qcc-implementador-odd de este repo a ~/.claude, donde Claude Code lo lee. Aparte del instalador de qcc-implementador/.
+// Limpia de ~/.claude la copia de /qcc-implementador-odd que instalaba la versión anterior de este archivo. El flujo ahora
+// es un plugin (`claude plugin install qcc-implementador-odd@qcc`): esa copia duplicaría su comando y sus agentes, y los
+// agentes viejos llaman a una guardia que ya no se instala ahí. Aparte del instalador de qcc-implementador/.
 //
-//   skills/<nombre>/SKILL.md  →  ~/.claude/skills/<nombre>/SKILL.md
-//   agents/<nombre>.md        →  ~/.claude/agents/<nombre>.md
-//   herramientas/<archivo>    →  ~/.claude/flujos-odd/<archivo>
+//   node qcc-implementador-odd/instalar.mjs              lista lo que archivaría, sin tocar nada
+//   node qcc-implementador-odd/instalar.mjs --limpiar    mueve la copia a ~/.claude/_archivo-limpieza-<fecha>/
 //
-//   node qcc-implementador-odd/instalar.mjs              copia lo que cambió
-//   node qcc-implementador-odd/instalar.mjs --revisar    muestra qué cambiaría, sin copiar
-//   node qcc-implementador-odd/instalar.mjs --traer      al revés: trae a este repo lo editado en ~/.claude
-//   node qcc-implementador-odd/instalar.mjs --forzar     copia aunque la copia instalada sea más nueva
-//
-// Una copia instalada distinta y más nueva que la del repo se editó en ~/.claude: no se pisa sin --forzar (se
-// guarda con --traer). Nunca borra y no toca ~/.claude/flujos-odd/registros. `CLAUDE_CONFIG_DIR` cambia el destino.
+// La copia son los archivos de skills/, agents/ y herramientas/ de este plugin que existan con el mismo nombre en
+// ~/.claude/skills, ~/.claude/agents y ~/.claude/flujos-odd (la instalación no dejaba manifiesto, así que no se distingue una
+// edición hecha ahí: por eso se archiva y no se borra, y se recupera moviéndola de vuelta). No toca ~/.claude/flujos-odd/registros
+// (el historial de corridas). `CLAUDE_CONFIG_DIR` cambia la carpeta.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -20,6 +18,9 @@ import { fileURLToPath } from 'node:url'
 
 const REPO = path.dirname(fileURLToPath(import.meta.url))
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+const ETIQUETA = process.env.CLAUDE_CONFIG_DIR ? CLAUDE.replaceAll('\\', '/') : '~/.claude'
+const ARCHIVO = path.join(CLAUDE, `_archivo-limpieza-${new Date().toISOString().slice(0, 10)}`)
+// [carpeta en el plugin, carpeta donde la dejaba la instalación en ~/.claude]
 const CARPETAS = [
   ['skills', 'skills'],
   ['agents', 'agents'],
@@ -27,13 +28,9 @@ const CARPETAS = [
 ]
 const IGNORAR = new Set(['registros'])
 
-const args = new Set(process.argv.slice(2))
-const revisar = args.has('--revisar')
-const traer = args.has('--traer')
-const forzar = args.has('--forzar')
+const limpiar = process.argv.includes('--limpiar')
 
-const corto = (p) => (p.startsWith(CLAUDE) ? '~/.claude' + p.slice(CLAUDE.length) : path.relative(REPO, p)).replaceAll('\\', '/')
-const iguales = (a, b) => fs.readFileSync(a).equals(fs.readFileSync(b))
+const corto = (p) => ETIQUETA + p.slice(CLAUDE.length).replaceAll('\\', '/')
 
 /** Archivos de una carpeta, recursivo, como rutas relativas a ella (sin `registros/`). */
 function archivosDe(dir) {
@@ -44,30 +41,48 @@ function archivosDe(dir) {
   })
 }
 
-let copiados = 0
-let frenados = 0
-for (const [enRepo, enClaude] of CARPETAS) {
-  for (const rel of archivosDe(path.join(REPO, enRepo))) {
-    const repo = path.join(REPO, enRepo, rel)
-    const instalado = path.join(CLAUDE, enClaude, rel)
-    const existe = fs.existsSync(instalado)
-    if (existe && iguales(repo, instalado)) continue
-    if (traer && !existe) continue
-    const editado = existe && fs.statSync(instalado).mtimeMs > fs.statSync(repo).mtimeMs
-    if (!traer && editado && !forzar) {
-      frenados++
-      console.log(`  FRENADO  ${corto(instalado)} se editó ahí: --traer lo guarda en el repo, --forzar lo pisa`)
-      continue
-    }
-    if (traer && !editado) continue
-    const [origen, destino] = traer ? [instalado, repo] : [repo, instalado]
-    console.log(`  ${existe ? 'cambia' : 'nuevo '}   ${corto(origen)} → ${corto(destino)}`)
-    if (revisar) continue
-    fs.mkdirSync(path.dirname(destino), { recursive: true })
+/** Mueve `origen` a `destino` creando las carpetas; si están en discos distintos, copia y borra. */
+function mover(origen, destino) {
+  fs.mkdirSync(path.dirname(destino), { recursive: true })
+  try {
+    fs.renameSync(origen, destino)
+  } catch {
     fs.copyFileSync(origen, destino)
-    copiados++
+    fs.rmSync(origen)
   }
 }
 
-console.log(`RESULTADO: ${revisar ? 'sin copiar (--revisar)' : `${copiados} copiado(s)`}${frenados ? ` · ${frenados} frenado(s)` : ''}`)
+let pendientes = 0
+let archivados = 0
+let frenados = 0
+for (const [enRepo, enClaude] of CARPETAS) {
+  for (const rel of archivosDe(path.join(REPO, enRepo))) {
+    const copia = path.join(CLAUDE, enClaude, rel)
+    if (!fs.existsSync(copia)) continue
+    const destino = path.join(ARCHIVO, enClaude, rel)
+    console.log(`  ${limpiar ? 'archiva ' : 'archivaría'} ${corto(copia)} → ${corto(destino)}`)
+    if (!limpiar) {
+      pendientes++
+      continue
+    }
+    if (fs.existsSync(destino)) {
+      frenados++
+      console.log(`  FRENADO  ${corto(destino)} ya existe: muévelo o bórralo y repite`)
+      continue
+    }
+    mover(copia, destino)
+    archivados++
+  }
+}
+
+if (limpiar) {
+  try {
+    fs.rmdirSync(path.join(CLAUDE, 'skills', 'qcc-implementador-odd'))
+  } catch {
+    // No está o no queda vacía.
+  }
+}
+
+const resumen = limpiar ? `${archivados} archivado(s) en ${corto(ARCHIVO)}` : `${pendientes} por archivar (--limpiar lo hace)`
+console.log(`RESULTADO: ${resumen}${frenados ? ` · ${frenados} frenado(s)` : ''}`)
 process.exit(frenados ? 1 : 0)

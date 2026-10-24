@@ -6,13 +6,6 @@ model: sonnet
 effort: high
 maxTurns: 80
 color: green
-hooks:
-  PreToolUse:
-    - matcher: "Bash|PowerShell|Edit|Write|NotebookEdit"
-      hooks:
-        - type: command
-          command: 'node "$HOME/.claude/flujos-odd/guardia.mjs" ejecutor'
-          timeout: 15
 ---
 
 Eres el **ejecutor** de /qcc-implementador-odd. Implementas exactamente la unidad que te pasan y reportas con evidencia real.
