@@ -1,12 +1,11 @@
 {
   "name": "qcc",
-  "description": "Herramientas personales para Claude Code: panel lateral, /qcc-commit y los implementadores /qcc-implementador y /qcc-implementador-odd",
+  "description": "Herramientas personales para Claude Code: panel lateral, /commit y los implementadores /impl y /odd",
   "owner": { "name": "WalterSilva06" },
   "plugins": [
-    { "name": "qcc", "source": "./qcc", "description": "Paquete: instala el panel, /qcc-commit y los dos implementadores" },
-    { "name": "qcc-panel", "source": "./qcc-panel" },
-    { "name": "qcc-commit", "source": "./qcc-commit" },
-    { "name": "qcc-implementador", "source": "./qcc-implementador" },
-    { "name": "qcc-implementador-odd", "source": "./qcc-implementador-odd" }
+    { "name": "panel", "source": "./qcc-panel" },
+    { "name": "commit", "source": "./qcc-commit" },
+    { "name": "impl", "source": "./qcc-implementador" },
+    { "name": "odd", "source": "./qcc-implementador-odd" }
   ]
 }

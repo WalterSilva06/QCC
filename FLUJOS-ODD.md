@@ -1,6 +1,6 @@
-# /qcc-implementador-odd
+# /odd
 
-Flujo en prueba, para compararlo con `/qcc-implementador` en tareas reales. Vive en `flujos-odd/` y está **separado por completo** de `flujos/`: tiene su skill, sus agentes, sus herramientas, su instalador, su config por proyecto y su registro. No usa ningún archivo de `/qcc-implementador`, y `/qcc-implementador` no usa ninguno suyo. Las reglas generales del repo están en [AGENTS.md](AGENTS.md).
+Flujo en prueba, para compararlo con `/impl` en tareas reales. Es el plugin `odd` (`claude plugin install odd@qcc`; su carpeta sigue siendo `qcc-implementador-odd/`). Vive en `flujos-odd/` y está **separado por completo** de `flujos/`: tiene su skill, sus agentes, sus herramientas, su instalador, su config por proyecto y su registro. No usa ningún archivo de `/impl`, y `/impl` no usa ninguno suyo. Las reglas generales del repo están en [AGENTS.md](AGENTS.md).
 
 Toma las ideas del ODD (Organic Driven Development) de [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) en una versión lite, enfocada en calidad y en ahorrar tokens.
 
@@ -44,7 +44,7 @@ En una tarea chica, el orquestador trabaja inline: un subagente se lanza solo po
    - una segunda corrección, solo si el mismo problema sigue fallando.
 
    Lo nuevo que aparezca, y lo que siga abierto, va a «Para decidir».
-5. **Cierre:** `odd.mjs --limpiar` con los temporales de la corrida, `odd.mjs --cierre` y el reporte, con su línea `PROCESO`. No hace commits (para eso, `/qcc-commit`).
+5. **Cierre:** `odd.mjs --limpiar` con los temporales de la corrida, `odd.mjs --cierre` y el reporte, con su línea `PROCESO`. No hace commits (para eso, `/commit`).
 
 No tiene aprobación del plan, ni planificador, ni revisor del plan, ni candado, ni fotos por subtarea.
 
@@ -119,7 +119,7 @@ Todo es opcional. Sin config, `verificar.mjs` detecta los pasos y no hay crític
     { "rutas": ["src/auth/"], "excepto": ["src/auth/textos.ts"], "riesgo": [2], "motivo": "autorización" },
     { "rutas": ["supabase/migrations/"], "riesgo": [1], "motivo": "esquema de la base" }
   ],
-  // Reglas de la guardia, para los tres roles. Mismo significado que en la config de /qcc-implementador:
+  // Reglas de la guardia, para los tres roles. Mismo significado que en la config de /impl:
   // una clave que falta acá se toma de .claude/qcc-implementador.json (o .claude/implementador.json).
   "guardia": {
     // Archivos, carpetas (con / final) o globs que no se escriben, con el motivo.
@@ -148,7 +148,7 @@ Copia `skills/` a `~/.claude/skills/`, `agents/` a `~/.claude/agents/` y `herram
 - **Nunca borra** y no toca `~/.claude/flujos-odd/registros/`.
 - El flujo corre desde la copia instalada: un cambio en `flujos-odd/` no rige hasta instalarlo.
 
-## Comparar con /qcc-implementador
+## Comparar con /impl
 
 ```
 node ~/.claude/flujos-odd/odd.mjs --ultimos 10

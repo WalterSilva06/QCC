@@ -6,16 +6,16 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 
 | Comando | Uso | Para qué |
 |---|---|---|
-| `/qcc-implementador` | `<qué cambiar>` | Cambios en cualquier proyecto con git: explora, clasifica, planifica, revisa el plan, pide aprobación, ejecuta por subtareas y cierra con una revisión final independiente y verificación real. |
-| `/qcc-commit` | `[por qué, opcional]` | Pregunta si hacer commit + push, solo commit o commit en una rama nueva; separa los cambios sin commit en commits por grupo, con mensaje en español, y los hace, todo en Haiku high. |
+| `/impl` | `<qué cambiar>` | Cambios en cualquier proyecto con git: explora, clasifica, planifica, revisa el plan, pide aprobación, ejecuta por subtareas y cierra con una revisión final independiente y verificación real. |
+| `/commit` | `[por qué, opcional]` | Pregunta si hacer commit + push, solo commit o commit en una rama nueva; separa los cambios sin commit en commits por grupo, con mensaje en español, y los hace, todo en Haiku high. |
 
 ## Roles y modelos
 
-`/qcc-implementador` es un solo flujo, con un solo modo: los pasos, agentes, plantillas y ciclos están en `flujos/herramientas/pasos.md`. Opus solo corre en el planificador y en la revisión final.
+`/impl` es un solo flujo, con un solo modo: los pasos, agentes, plantillas y ciclos están en `flujos/herramientas/pasos.md`. Opus solo corre en el planificador y en la revisión final.
 
 | Rol | Modelo y esfuerzo |
 |---|---|
-| Orquestador | Sonnet high (frontmatter de la skill `qcc-implementador`) |
+| Orquestador | Sonnet high (frontmatter de la skill `impl`) |
 | Explorador | Haiku high, uno por defecto; hasta 5 en paralelo con áreas independientes y grandes |
 | Planificador | Opus high; clasifica y planifica. Medium si la exploración no toca ninguna ruta de `criticos` |
 | Ejecutor | Sonnet high; medium en una subtarea `Crítica: no` |
@@ -51,12 +51,12 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 
 El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes (el planificador marca «Plan», paso 2), del header «Plan» de las preguntas de aprobación (que lleva a Aprobación; el paso «Revisión del plan» ya no se usa), de las opciones de `estado.mjs` (`--cancelar` cuenta como otro) y de la línea «CIERRE ·» del cierre. La revisión final cuenta siempre en «Verificación final». La verificación inicial ya no pasa por Bash del orquestador, así que no marca nada. El `verificar.mjs` de cada subtarea cuenta en «Ejecución»; el `estado.mjs --cambios … --paso 6` previo a la revisión final marca «Verificación final». `--guardar`, `--estado`, `--cancelar` y `--reglas` no mueven el panel por sí solos. El orden por subtarea (`--base` → `ejecutor` → `--cambios` → `verificar.mjs`) es parte de lo que lee el panel, pero el orquestador también fija el paso explícito con `--paso <n>` en cada `estado.mjs` y la heurística queda de respaldo. Las llamadas juntas siguen siendo una señal cada una. Si cambia alguno de esos nombres, opciones o textos, o ese orden, hay que actualizar `qcc-panel/hooks/flujo.ts`.
 
-## /qcc-commit
+## /commit
 
-Comando aparte de `/qcc-implementador`, sin carpeta de flujo ni registros. Toma la idea del plugin `commit` de [midudev/better-claude](https://github.com/midudev/better-claude/tree/main/plugins/commit), en español. Al escribir `/qcc-commit [por qué]`, la sesión pregunta qué hacer con los cambios y despacha al agente `qcc-generador-commit`, que los separa en grupos lógicos y propone un commit en español por grupo. La sesión hace los commits y el push si corresponde, y muestra cada mensaje con su hash.
+Comando aparte de `/impl`, sin carpeta de flujo ni registros. Toma la idea del plugin `commit` de [midudev/better-claude](https://github.com/midudev/better-claude/tree/main/plugins/commit), en español. Al escribir `/commit [por qué]`, la sesión pregunta qué hacer con los cambios y despacha al agente `qcc-generador-commit`, que los separa en grupos lógicos y propone un commit en español por grupo. La sesión hace los commits y el push si corresponde, y muestra cada mensaje con su hash.
 
 ```
-❯ /qcc-commit
+❯ /commit
 
   Commit: ¿Qué hacer con estos cambios?
   ❯ 1. Commit + push (Recomendado)
@@ -70,7 +70,7 @@ Comando aparte de `/qcc-implementador`, sin carpeta de flujo ni registros. Toma 
 | **Solo commit** | Commits en la rama actual, sin push. También es lo que hace si no puede preguntar (por ejemplo, con `claude -p`). |
 | **Commit en una rama nueva** | Crea la rama que propone el agente (`<tipo>/<tema>`, como `feat/pregunta-de-push`) con `git switch -c`, hace los commits ahí y la sube con push. |
 
-- **Roles y modelos:** todo en Haiku high. La skill fija `model: haiku` y `effort: high`, que rigen para la sesión cuando el usuario escribe `/qcc-commit`; la sesión pregunta, despacha y hace los commits, pero no lee el diff. El agente `qcc-generador-commit` es Haiku high, con `tools: Bash, Read`.
+- **Roles y modelos:** todo en Haiku high. La skill fija `model: haiku` y `effort: high`, que rigen para la sesión cuando el usuario escribe `/commit`; la sesión pregunta, despacha y hace los commits, pero no lee el diff. El agente `qcc-generador-commit` es Haiku high, con `tools: Bash, Read`.
 - **Estado inyectado:** la skill pone la rama (`git branch --show-current`) y `git status --short` en el prompt antes de que corra el modelo, con los comandos inyectados de las skills. Sin cambios, termina en una línea y sin preguntar. Esos dos comandos tienen que estar en `allowed-tools`, o Claude Code aborta la skill; fuera de un repo git también la aborta.
 - **Alcance y grupos:** si hay algo en stage, un solo commit con el stage tal cual. Si no, todo lo que no tiene commit (los archivos nuevos se leen con Read), separado en hasta 5 grupos lógicos, un commit por grupo (el código con sus tests y su documentación; ante la duda, menos grupos). Cada grupo lista sus ARCHIVOS, y la sesión agrega solo esos con `git add -A -- '<ruta>' …` antes de su commit; nunca `git add -A` sin rutas. Sin cambios, el agente responde `ALCANCE: sin cambios`.
 - **Secretos:** el agente nunca lee `.env*`, claves ni secretos. Los archivos con ese aspecto (`.env*`, `.pem`, `.key`, `.p12`, `.pfx`, `.keystore`, `id_rsa*`, `id_ed25519*` y los que por su nombre guardan credenciales) van a EXCLUIDOS: quedan fuera de todo commit, el resto sigue y el cierre los nombra. Si el stage tiene uno, la sesión no hace el commit y cierra con «sin commit», porque no toca un stage armado por el usuario.
@@ -98,6 +98,6 @@ node flujos/instalar.mjs --limpiar    borra lo instalado que ya no está en el r
 - Cada copia anota su hash en `~/.claude/flujos/.instalado.json`. Si la copia instalada ya no coincide con lo que se instaló (alguien la editó en `~/.claude`), `instalar.mjs` la **frena** y termina con exit 1, aunque su fecha sea más vieja, para no perder ese cambio. Se resuelve con `--traer` o con `--forzar`. Lo instalado antes del manifiesto se compara por fecha hasta la primera instalación.
 - Lo instalado que ya no está en el repo sale como «huérfano»; `--limpiar` lo borra si nadie lo editó.
 - No copia ni toca `registros/` (bitácoras locales de cada proyecto, la carpeta de cada flujo, la caché de `verificar.mjs` y `flujos.jsonl` con una línea por flujo, su costo y sus veredictos; no van al repo). Los tests usan una carpeta temporal (`FLUJOS_REGISTROS`), así que no tocan ese historial ni siquiera corridos desde la copia instalada.
-- `/qcc-implementador` llama a sus herramientas y a `comun.md`, `plan.md` y `pasos.md` por la ruta fija `~/.claude/flujos/…`. El flujo **corre desde la copia instalada**, no desde el repo: un cambio en `flujos/` no rige hasta instalarlo.
+- `/impl` llama a sus herramientas y a `comun.md`, `plan.md` y `pasos.md` por la ruta fija `~/.claude/flujos/…`. El flujo **corre desde la copia instalada**, no desde el repo: un cambio en `flujos/` no rige hasta instalarlo.
 
 El detalle de cada paso y herramienta está en `flujos/herramientas/comun.md`, `plan.md` (clasificación y formato del plan) y `pasos.md`; el de cada agente, en `flujos/agents/`; el formato de `.claude/qcc-implementador.json` (las herramientas aceptan también el nombre viejo `.claude/implementador.json` si el nuevo no existe), en `flujos/herramientas/config.ejemplo.md`.
