@@ -39,7 +39,7 @@ import {
 } from './flujo'
 import type { Senal } from './flujo'
 import { cifraMinutos, cifraUsd, leerHistorial, lineasHistorial, promedioHistorial, rutaHistorial, rutaHistorialOdd, unirHistorial } from './historial'
-import { NOMBRE_NORMAL, NOMBRE_ODD, detectar, rutaSkill, vistaDe } from './instalados'
+import { COPIA_NORMAL, COPIA_ODD, detectar, rutaSkill, vistaDe } from './instalados'
 import {
   aDesglose,
   barra,
@@ -101,26 +101,26 @@ const SCROLL_MS = 150
 /** `key` de la fila de pestañas, para apuntarle con `$.ui.scroll` al cambiar de pestaña. */
 const CLAVE_PESTANAS = 'pestanas'
 
-const medida = atom({ plugin: 'qcc-panel', key: 'medida' } as const, null)
-const esfuerzo = atom({ plugin: 'qcc-panel', key: 'esfuerzo' } as const, null)
-const ahora = atom({ plugin: 'qcc-panel', key: 'ahora' } as const, 0)
-const desglose = atom({ plugin: 'qcc-panel', key: 'desglose' } as const, null)
-const precisando = atom({ plugin: 'qcc-panel', key: 'precisando' } as const, false)
-const semana = atom({ plugin: 'qcc-panel', key: 'semana' } as const, null)
-const sesion = atom({ plugin: 'qcc-panel', key: 'sesion' } as const, null)
-const pestana = atom({ plugin: 'qcc-panel', key: 'pestana' } as const, 'inicio')
-const actividad = atom({ plugin: 'qcc-panel', key: 'actividad' } as const, {})
-const flujo = atom({ plugin: 'qcc-panel', key: 'flujo' } as const, null)
-const filasExploradores = atom({ plugin: 'qcc-panel', key: 'filasExploradores' } as const, [])
-const historial = atom({ plugin: 'qcc-panel', key: 'historial' } as const, null)
-const home = atom({ plugin: 'qcc-panel', key: 'home' } as const, null)
-const freno = atom({ plugin: 'qcc-panel', key: 'freno' } as const, null)
-const corridaOdd = atom({ plugin: 'qcc-panel', key: 'corridaOdd' } as const, false)
-const instalados = atom({ plugin: 'qcc-panel', key: 'instalados' } as const, null)
-const cache = atom({ plugin: 'qcc-panel', key: 'cache' } as const, null)
-const avisoContexto = atom({ plugin: 'qcc-panel', key: 'avisoContexto' } as const, 0)
-const agentes = atom({ plugin: 'qcc-panel', key: 'agentes' } as const, [])
-const archivos = atom({ plugin: 'qcc-panel', key: 'archivos' } as const, [])
+const medida = atom({ plugin: 'panel', key: 'medida' } as const, null)
+const esfuerzo = atom({ plugin: 'panel', key: 'esfuerzo' } as const, null)
+const ahora = atom({ plugin: 'panel', key: 'ahora' } as const, 0)
+const desglose = atom({ plugin: 'panel', key: 'desglose' } as const, null)
+const precisando = atom({ plugin: 'panel', key: 'precisando' } as const, false)
+const semana = atom({ plugin: 'panel', key: 'semana' } as const, null)
+const sesion = atom({ plugin: 'panel', key: 'sesion' } as const, null)
+const pestana = atom({ plugin: 'panel', key: 'pestana' } as const, 'inicio')
+const actividad = atom({ plugin: 'panel', key: 'actividad' } as const, {})
+const flujo = atom({ plugin: 'panel', key: 'flujo' } as const, null)
+const filasExploradores = atom({ plugin: 'panel', key: 'filasExploradores' } as const, [])
+const historial = atom({ plugin: 'panel', key: 'historial' } as const, null)
+const home = atom({ plugin: 'panel', key: 'home' } as const, null)
+const freno = atom({ plugin: 'panel', key: 'freno' } as const, null)
+const corridaOdd = atom({ plugin: 'panel', key: 'corridaOdd' } as const, false)
+const instalados = atom({ plugin: 'panel', key: 'instalados' } as const, null)
+const cache = atom({ plugin: 'panel', key: 'cache' } as const, null)
+const avisoContexto = atom({ plugin: 'panel', key: 'avisoContexto' } as const, 0)
+const agentes = atom({ plugin: 'panel', key: 'agentes' } as const, [])
+const archivos = atom({ plugin: 'panel', key: 'archivos' } as const, [])
 
 /** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
@@ -182,7 +182,7 @@ async function enFlujo($: EngineInterface): Promise<boolean> {
   }
 }
 
-/** Si hay una corrida de `/qcc-implementador-odd` en este turno. Nunca rechaza: ante un fallo dice que no. */
+/** Si hay una corrida de `/odd` en este turno. Nunca rechaza: ante un fallo dice que no. */
 async function enCorridaOdd($: EngineInterface): Promise<boolean> {
   try {
     return (await read($, corridaOdd)) === true
@@ -389,8 +389,8 @@ async function detectarInstalados($: EngineInterface): Promise<void> {
     }
     const casa = await carpetaPersonal($)
     const [normal, odd] = await Promise.all([
-      existeArchivo($, rutaSkill(casa, NOMBRE_NORMAL)),
-      existeArchivo($, rutaSkill(casa, NOMBRE_ODD)),
+      existeArchivo($, rutaSkill(casa, COPIA_NORMAL)),
+      existeArchivo($, rutaSkill(casa, COPIA_ODD)),
     ])
     const nuevo = detectar({ ajustes, normal, odd })
     const actual = (await read($, instalados)) ?? null
@@ -648,7 +648,7 @@ export const register: Register = on => {
     // Cada paso va aparte: si uno falla, la semana, el tick y el panel igual arrancan.
     try {
       await $.command.register({
-        name: 'qcc-panel',
+        name: 'panel',
         description: 'Abre el panel de contexto, límites de uso y esfuerzo',
       })
     } catch {
@@ -719,8 +719,8 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'qcc-panel' }, async ($, e) => {
-    // `/qcc-panel carpeta` abre la carpeta sin depender del foco del panel ni del ratón.
+  on('command.run', { command: 'panel' }, async ($, e) => {
+    // `/panel carpeta` abre la carpeta sin depender del foco del panel ni del ratón.
     if (e.args.trim() === 'carpeta') return { text: await abrirCarpeta($) }
 
     const { isPlaced } = await abrir($)

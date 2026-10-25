@@ -100,10 +100,10 @@ export type ActividadFila = {
 /** La actividad por id de fila (`Opus 5.5|high|principal`, igual al de las filas de `Semana`). */
 export type Actividad = Record<string, ActividadFila>
 
-/** El flujo `/qcc-implementador` de la sesión y dónde va. */
+/** El flujo `/impl` de la sesión y dónde va. */
 export type Flujo = {
   /** La skill que lo inició. */
-  nombre: 'qcc-implementador'
+  nombre: 'impl'
   /** Índice del paso actual dentro de los pasos de su flujo (0 es Preflight). */
   paso: number
   /** Ya salió algún agente `ejecutor`: distingue la verificación del Preflight de la final. */
@@ -118,7 +118,7 @@ export type Flujo = {
   totalExploradores?: number
   /** Algún explorador de la tanda en curso volvió sin error; si falta, `false`. */
   exploro?: boolean
-  /** Planificadores lanzados en todo el flujo, con los re-planes; solo `/qcc-implementador`. Si falta, 0. */
+  /** Planificadores lanzados en todo el flujo, con los re-planes; solo `/impl`. Si falta, 0. */
   planes?: number
   /** Ejecutores lanzados en todo el flujo, con las correcciones. Si falta, 0, o 1 si `ejecuto`. */
   ejecuciones?: number
@@ -176,7 +176,7 @@ export type FilaHistorial = {
   t: string
   /** Nombre de la carpeta del repo (último tramo de `raiz`); `?` si falta. */
   repo: string
-  /** Qué flujo fue: `normal` (`/qcc-implementador`, de `flujos.jsonl`) u `odd` (`/qcc-implementador-odd`, de `odd.jsonl`). Si falta (caché de una versión anterior), `normal`. */
+  /** Qué flujo fue: `normal` (`/impl`, de `flujos.jsonl`) u `odd` (`/odd`, de `odd.jsonl`). Si falta (caché de una versión anterior), `normal`. */
   flujo?: 'normal' | 'odd'
   /** Costo real en dólares; falta si no se anotó. */
   usd?: number
@@ -216,9 +216,9 @@ export type Historial = {
 
 /** Qué implementadores hay instalados: `true` está, `false` no está (con certeza), `null` dudoso (algo de la detección falló). */
 export type Instalados = {
-  /** `/qcc-implementador`. */
+  /** `/impl`. */
   normal: boolean | null
-  /** `/qcc-implementador-odd`. */
+  /** `/odd`. */
   odd: boolean | null
 }
 
@@ -229,7 +229,7 @@ export type Pestana = 'inicio' | 'flujo' | 'semana' | 'historial' | 'agentes'
 export type AgenteVisto = {
   /** Su `agentId`, el que trae el resultado de `agent.spawn` y el `agentId` de sus herramientas. */
   id: string
-  /** Su `subagent_type` tal cual (`qcc-implementador:qcc-ejecutor`); vacío si no vino. */
+  /** Su `subagent_type` tal cual (`impl:qcc-ejecutor`); vacío si no vino. */
   tipo: string
   /** La `description` con que se lanzó; vacía si no vino. */
   descripcion: string
@@ -278,7 +278,7 @@ export type Cache = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'qcc-panel': {
+    panel: {
       medida: Medida | null
       esfuerzo: Esfuerzo | null
       ahora: number
@@ -291,7 +291,7 @@ declare module 'claude-code' {
       pestana?: Pestana
       /** Qué filas de «Esta sesión» tienen una petición en curso o esperan a otra; solo de esta terminal. */
       actividad: Actividad
-      /** El flujo `/qcc-implementador` en curso o ya terminado; `null` si la sesión no inició ninguno. */
+      /** El flujo `/impl` en curso o ya terminado; `null` si la sesión no inició ninguno. */
       flujo: Flujo | null
       /** Ids de fila de subagente vistas mientras había exploradores o revisores en vuelo; solo de esta terminal; se vacía al iniciar un flujo, al abrir una tanda de exploradores o revisores y al cerrar la sesión. */
       filasExploradores: string[]
@@ -301,7 +301,7 @@ declare module 'claude-code' {
       home?: string | null
       /** El freno de contexto de `prompt.submit`; `null` si no hay nada que recordar. Solo de esta terminal. Si falta (estado de una versión anterior), `null`. */
       freno?: Freno | null
-      /** Hay una corrida de `/qcc-implementador-odd` en este turno: el hilo principal anota sus tokens como los de un flujo. Se borra al terminar el turno del hilo principal. Solo de esta terminal. Si falta (estado de una versión anterior), `false`. */
+      /** Hay una corrida de `/odd` en este turno: el hilo principal anota sus tokens como los de un flujo. Se borra al terminar el turno del hilo principal. Solo de esta terminal. Si falta (estado de una versión anterior), `false`. */
       corridaOdd?: boolean
       /** Los implementadores detectados (ajustes y `SKILL.md`); `null` si aún no se detectó o si la detección fue dudosa. Si falta (estado de una versión anterior), `null`. */
       instalados?: Instalados | null

@@ -14,8 +14,12 @@ export type Uso = { flujo: boolean; odd: boolean; historial: boolean }
 /** Lo que `detectar` recibe: los ajustes leídos (`null` si falló) y si existe el `SKILL.md` de cada flujo (`null` si no se pudo comprobar). */
 export type Entrada = { ajustes: unknown; normal: boolean | null; odd: boolean | null }
 
-export const NOMBRE_NORMAL = 'qcc-implementador'
-export const NOMBRE_ODD = 'qcc-implementador-odd'
+export const NOMBRE_NORMAL = 'impl'
+export const NOMBRE_ODD = 'odd'
+
+/** Los nombres viejos, con los que la instalación manual dejó su carpeta en `~/.claude/skills`. */
+export const COPIA_NORMAL = 'qcc-implementador'
+export const COPIA_ODD = 'qcc-implementador-odd'
 
 /**
  * La ruta de `<home>/.claude/skills/<nombre>/SKILL.md`; `null` si `home` está vacío. El separador es `\` si `home` lo contiene y `/` si no;
@@ -36,7 +40,7 @@ function esClaveDe(clave: string, nombre: string): boolean {
 }
 
 /**
- * `true` si los ajustes habilitan el plugin `nombre` o el paquete `qcc`; `false` solo si `enabledPlugins` es un objeto presente y ninguna
+ * `true` si los ajustes habilitan el plugin `nombre`; `false` solo si `enabledPlugins` es un objeto presente y ninguna
  * clave habilitada coincide; `null` (dudoso) si los ajustes no se pudieron leer o `enabledPlugins` falta o no es un objeto.
  */
 function porAjustes(ajustes: unknown, nombre: string): boolean | null {
@@ -45,7 +49,7 @@ function porAjustes(ajustes: unknown, nombre: string): boolean | null {
   const plugins = (ajustes as Record<string, unknown>).enabledPlugins
   if (typeof plugins !== 'object' || plugins === null || Array.isArray(plugins)) return null
 
-  return Object.entries(plugins).some(([clave, valor]) => valor === true && (esClaveDe(clave, nombre) || esClaveDe(clave, 'qcc')))
+  return Object.entries(plugins).some(([clave, valor]) => valor === true && esClaveDe(clave, nombre))
 }
 
 /** Une los dos caminos: `true` si alguno lo halla; `false` solo si ambos dicen que no; en otro caso `null` (dudoso). */
@@ -57,7 +61,7 @@ function unir(ajustes: boolean | null, archivo: boolean | null): boolean | null 
 }
 
 /**
- * Qué implementadores están instalados: por los ajustes (`enabledPlugins` en `true` del plugin o del paquete `qcc`) o por el `SKILL.md`
+ * Qué implementadores están instalados: por los ajustes (`enabledPlugins` en `true` del plugin) o por el `SKILL.md`
  * de la instalación manual. `false` solo si los dos caminos se comprobaron bien y ninguno lo halla; si algo falló, o los ajustes no traen
  * `enabledPlugins`, `null`.
  */
@@ -70,7 +74,7 @@ export function detectar({ ajustes, normal, odd }: Entrada): Instalados {
 
 /**
  * Qué muestra el panel. `inst` `null` o sin definir (aún sin detectar) lo muestra todo; la evidencia de uso gana sobre un «no está».
- * El historial sale con cualquiera de los dos; «Flujo» solo sigue a `/qcc-implementador`.
+ * El historial sale con cualquiera de los dos; «Flujo» solo sigue a `/impl`.
  */
 export function vistaDe(inst: Instalados | null | undefined, uso: Uso): Vista {
   const normal = inst?.normal !== false || uso.flujo

@@ -21,7 +21,7 @@ export function rutaHistorial(home: string): string | null {
   return rutaRegistro(home, 'flujos', 'flujos.jsonl')
 }
 
-/** La ruta de `odd.jsonl`, el registro de `/qcc-implementador-odd`, con las mismas reglas que `rutaHistorial`. */
+/** La ruta de `odd.jsonl`, el registro de `/odd`, con las mismas reglas que `rutaHistorial`. */
 export function rutaHistorialOdd(home: string): string | null {
   return rutaRegistro(home, 'flujos-odd', 'odd.jsonl')
 }
@@ -230,7 +230,7 @@ function recortar(caracteres: string[], sobra: number): string[] {
 
 /**
  * La línea 1 de un flujo, con sus cuatro cifras destacadas: `dd/mm hh:mm <repo> <marca> <rev> · $x,xx · <min> · <tokens> tok · sal <salida>`.
- * La marca es `n` (`/qcc-implementador`) u `odd` (`/qcc-implementador-odd`). Un dato sin valor se muestra como `—`. Las cifras no se recortan:
+ * La marca es `n` (`/impl`) u `odd` (`/odd`). Un dato sin valor se muestra como `—`. Las cifras no se recortan:
  * si la línea no cabe en `ancho` (columnas, por caracteres) se prueba, en este orden, con fecha y repo (entero, o acortado a 2 caracteres más «…»),
  * con fecha sin repo y sin fecha, y en cada caso con ` · ` entre las cifras y, si no cabe, con solo un espacio. Si ni así cabe, se pierde el glifo
  * de revisión (`odd $4,99 36m …`) y, si aún no cabe, la marca: quedan solo las cifras, cortadas a `ancho`.
