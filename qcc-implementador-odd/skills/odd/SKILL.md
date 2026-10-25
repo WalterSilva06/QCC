@@ -1,6 +1,6 @@
 ---
-name: qcc-implementador-odd
-description: "Flujo /qcc-implementador-odd, versión lite inspirada en el ODD de gentle-ai: explora, implementa inline lo chico (lo grande con ejecutores) y revisa con un agente independiente solo lo riesgoso. Solo cuando el usuario escribe /qcc-implementador-odd; nunca por iniciativa propia."
+name: odd
+description: "Flujo /odd, versión lite inspirada en el ODD de gentle-ai: explora, implementa inline lo chico (lo grande con ejecutores) y revisa con un agente independiente solo lo riesgoso. Solo cuando el usuario escribe /odd; nunca por iniciativa propia."
 argument-hint: "<qué cambiar>"
 model: sonnet
 effort: high
@@ -26,7 +26,7 @@ hooks:
           timeout: 15
 ---
 
-# /qcc-implementador-odd
+# /odd
 
 Eres el orquestador. En una tarea chica también implementas, salvo un motivo de la tabla de agentes; en una grande solo coordinas: el explorador lee el código y los ejecutores lo editan, para que tu contexto no crezca con cada pedido. La meta es calidad con el mínimo de tokens: cada subagente relee desde cero, así que en una chica solo se lanza cuando aporta contexto limpio o una mirada independiente. Ante la duda en una chica, inline.
 
@@ -52,9 +52,9 @@ Todo agente va en primer plano (`run_in_background: false`): esperas su informe 
 
 | Agente | Modelo · esfuerzo | Cuándo |
 |---|---|---|
-| `qcc-implementador-odd:qcc-odd-explorador` | Haiku · high | **Grande prevista:** siempre, uno, antes de leer código. **Chica:** `EXPLORAR: siempre`; o, con `auto` y un pedido que no nombra sus archivos: más de ~200 en `CÓDIGO`, más de ~5 archivos de código por leer, o entender pide más que una tanda de lectura (≤ 3 llamadas, ~10k tokens). Nunca con `EXPLORAR: nunca` |
-| `qcc-implementador-odd:qcc-odd-ejecutor` | Sonnet · high | **Grande:** siempre, todo el código (fase 2). **Chica:** (a) 2 o más unidades independientes, con archivos disjuntos y más de ~100 líneas cada una, lanzadas juntas; o (b) una salida de `odd.mjs` dice `> 150k`: lo que falta va al ejecutor |
-| `qcc-implementador-odd:qcc-odd-revisor` | Opus · high | la línea `Riesgo` nombra un ítem |
+| `odd:qcc-odd-explorador` | Haiku · high | **Grande prevista:** siempre, uno, antes de leer código. **Chica:** `EXPLORAR: siempre`; o, con `auto` y un pedido que no nombra sus archivos: más de ~200 en `CÓDIGO`, más de ~5 archivos de código por leer, o entender pide más que una tanda de lectura (≤ 3 llamadas, ~10k tokens). Nunca con `EXPLORAR: nunca` |
+| `odd:qcc-odd-ejecutor` | Sonnet · high | **Grande:** siempre, todo el código (fase 2). **Chica:** (a) 2 o más unidades independientes, con archivos disjuntos y más de ~100 líneas cada una, lanzadas juntas; o (b) una salida de `odd.mjs` dice `> 150k`: lo que falta va al ejecutor |
+| `odd:qcc-odd-revisor` | Opus · high | la línea `Riesgo` nombra un ítem |
 
 Una unidad es un comportamiento con su código, tests y docs: nunca se parte en escritor de tests, de docs y de código. Lo que depende de otra unidad no es independiente. Varias unidades chicas van inline, una tras otra.
 
@@ -74,7 +74,7 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
 ## Fases
 
 **0. Inicio**
-- Pedido vacío → corre `node "${CLAUDE_PLUGIN_ROOT}/herramientas/odd.mjs" --cancelar`, responde `Uso: /qcc-implementador-odd <qué cambiar>` y termina.
+- Pedido vacío → corre `node "${CLAUDE_PLUGIN_ROOT}/herramientas/odd.mjs" --cancelar`, responde `Uso: /odd <qué cambiar>` y termina.
 - Pedido de solo investigar, explicar, comparar o revisar → corre primero `node "${CLAUDE_PLUGIN_ROOT}/herramientas/odd.mjs" --cancelar` y después respóndelo sin editar y sin el resto del flujo.
 - La salida de `--inicio` ya está arriba, en «Inicio»: no la corras de nuevo. Anota `ODD_BASE`, rama, sucios previos (no son tuyos: no los tocas), `CÓDIGO` y `EXPLORAR`, `CRÍTICOS DEL PROYECTO`, `REGLAS DEL PROYECTO`, `VERIFICAR` y `TAREAS ABIERTAS`. `ERROR` → dilo y termina.
 - Si el pedido nombra un `odd/tasks/*.md` o retoma una de `TAREAS ABIERTAS`: léelo, compáralo con el código (con el explorador, porque es grande) y sigue desde la primera tarea abierta (fase 2).
@@ -132,7 +132,7 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
 - Autochequeo, después del último `verificar.mjs` y antes del revisor. En una grande con `Riesgo` nombrado, por cada `S#` con su evidencia (tests RED→GREEN, `odd.mjs --diff <ODD_BASE> --stat`, RESULTADO de verificar), sin leer el `--diff` entero (el revisor lo lee igual). En una chica, o una grande sin riesgo, sobre `node "${CLAUDE_PLUGIN_ROOT}/herramientas/odd.mjs" --diff <ODD_BASE>` entero (sin `--stat`): cada `S#` (o el pedido) cumplido con evidencia; casos borde (nulls, índices, errores sin manejar, fechas, idempotencia); nada fuera de lo pedido. **Una edición posterior, por lo que sea, obliga a correr los dos otra vez.**
 - Fija la línea `Riesgo:` contra el cambio. Antes de escribir `ninguno`, mira el ítem 3.
 - `Riesgo: ninguno` → sin revisor. Tu verificación más el autochequeo bastan.
-- `Riesgo: ítem N` → `qcc-implementador-odd:qcc-odd-revisor`. El despacho es esta plantilla fija, en un bloque de código: llena los `<…>`, sin texto extra (ni «busca en especial…» ni decisiones a tener presentes: amplían el alcance del revisor).
+- `Riesgo: ítem N` → `odd:qcc-odd-revisor`. El despacho es esta plantilla fija, en un bloque de código: llena los `<…>`, sin texto extra (ni «busca en especial…» ni decisiones a tener presentes: amplían el alcance del revisor).
 
   ```
   BASE: <ODD_BASE>
@@ -164,7 +164,7 @@ Queda para ti: <comandos o pasos externos | nada>
 <líneas CAMBIOS, COSTO y PROCESO de --cierre>
 ```
 
-- No haces commits: si el usuario los quiere, `/qcc-commit`.
+- No haces commits: si el usuario los quiere, `/commit`.
 - Tu reporte no se suaviza. Lo que falló, se saltó o no se pudo probar va en «Para decidir»; eso es un cierre válido.
 
 ## Documento de feature (solo grande)

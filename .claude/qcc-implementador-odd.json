@@ -7,12 +7,12 @@
     { "nombre": "test odd", "cmd": "node --test qcc-implementador-odd/herramientas/odd.test.mjs" }
   ],
   "criticos": [
-    { "rutas": ["qcc-implementador-odd/herramientas/guardia.mjs"], "riesgo": [2], "motivo": "seguridad de los subagentes de /qcc-implementador-odd" },
-    { "rutas": ["qcc-implementador-odd/"], "excepto": ["qcc-implementador-odd/agents/*.md", "qcc-implementador-odd/herramientas/guardia.mjs"], "riesgo": [3, 5], "motivo": "herramientas, prompts e instalador de /qcc-implementador-odd, que usan todos los proyectos del usuario" },
-    { "rutas": ["qcc-implementador-odd/agents/*.md"], "si": "cambia su frontmatter (herramientas, modelo, hooks)", "riesgo": [2, 3], "motivo": "definición de los agentes de /qcc-implementador-odd" },
-    { "rutas": ["qcc-implementador/", "qcc-commit/"], "excepto": ["qcc-implementador/agents/*.md", "qcc-commit/agents/*.md", "qcc-implementador/herramientas/config.ejemplo.md"], "riesgo": [2, 3], "motivo": "/qcc-implementador, /qcc-commit y sus guardias, que usan todos los proyectos del usuario" },
-    { "rutas": ["qcc-implementador/agents/*.md", "qcc-commit/agents/*.md"], "si": "cambia su frontmatter (herramientas, modelo)", "riesgo": [2, 3], "motivo": "definición de los agentes de /qcc-implementador y /qcc-commit" },
-    { "rutas": [".claude-plugin/", "qcc/"], "riesgo": [5], "motivo": "marketplace y paquete que instalan los plugins" },
+    { "rutas": ["qcc-implementador-odd/herramientas/guardia.mjs"], "riesgo": [2], "motivo": "seguridad de los subagentes de /odd" },
+    { "rutas": ["qcc-implementador-odd/"], "excepto": ["qcc-implementador-odd/agents/*.md", "qcc-implementador-odd/herramientas/guardia.mjs"], "riesgo": [3, 5], "motivo": "herramientas, prompts e instalador de /odd, que usan todos los proyectos del usuario" },
+    { "rutas": ["qcc-implementador-odd/agents/*.md"], "si": "cambia su frontmatter (herramientas, modelo, hooks)", "riesgo": [2, 3], "motivo": "definición de los agentes de /odd" },
+    { "rutas": ["qcc-implementador/", "qcc-commit/"], "excepto": ["qcc-implementador/agents/*.md", "qcc-commit/agents/*.md", "qcc-implementador/herramientas/config.ejemplo.md"], "riesgo": [2, 3], "motivo": "/impl, /commit y sus guardias, que usan todos los proyectos del usuario" },
+    { "rutas": ["qcc-implementador/agents/*.md", "qcc-commit/agents/*.md"], "si": "cambia su frontmatter (herramientas, modelo)", "riesgo": [2, 3], "motivo": "definición de los agentes de /impl y /commit" },
+    { "rutas": [".claude-plugin/"], "riesgo": [5], "motivo": "marketplace que instala los plugins" },
     { "rutas": [".claude/"], "riesgo": [2], "motivo": "reglas y config de los flujos en este repo" },
     { "rutas": ["qcc-panel/hooks/flujo.ts", "qcc-panel/types/index.d.ts"], "riesgo": [4], "motivo": "máquina de estado del flujo y forma de los atoms que sobreviven a /reload-plugins" },
     { "rutas": ["qcc-panel/hooks/register.tsx"], "riesgo": [3], "motivo": "hooks que envuelven next: un fallo frena una petición al modelo o una herramienta" }

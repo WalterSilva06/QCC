@@ -1,4 +1,4 @@
-// Copia de la BASE y comparación diferencial de /qcc-implementador-odd (nivel usuario).
+// Copia de la BASE y comparación diferencial de /odd (nivel usuario).
 //
 // `copiaBase` extrae el árbol de la BASE en un temporal nuevo (con un índice temporal: no toca el del usuario).
 // `diferencial` corre un comando en esa copia y en el repo, y compara salida, errores y código de salida.

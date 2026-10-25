@@ -1,6 +1,6 @@
-// Costo real de una corrida de /qcc-implementador-odd, leído de los transcripts de Claude Code.
+// Costo real de una corrida de /odd, leído de los transcripts de Claude Code.
 //
-// La sesión es la que recibió `ODD_BASE=<sha>` de `odd.mjs --inicio`; el tramo va desde el `/qcc-implementador-odd`
+// La sesión es la que recibió `ODD_BASE=<sha>` de `odd.mjs --inicio`; el tramo va desde el `/odd`
 // anterior a esa marca (o desde la marca, si no se encuentra) hasta el cierre. Suma el hilo principal (orquestador)
 // y cada subagente que empezó en el tramo, por rol (`qcc-odd-` quitado), con el veredicto de su último informe.
 //
@@ -22,7 +22,7 @@ const PRECIOS = {
 // Haiku 5.5 cobra más con prompts de más de 100.000 tokens.
 const HAIKU_LARGO = { entrada: 0.5, salida: 2.5, lectura: 0.05, escritura5m: 0.625, escritura1h: 1 }
 const VEREDICTO_POR_ROL = { revisor: 'VEREDICTO', ejecutor: 'ESTADO' }
-const COMANDO = /<command-name>\/(?:[\w-]+:)?qcc-implementador-odd</
+const COMANDO = /<command-name>\/(?:[\w-]+:)?odd</
 
 export const proyectosDe = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')
 export const dolares = (n) => `$${n.toFixed(2).replace('.', ',')}`

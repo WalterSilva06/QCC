@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Guardia lite de /qcc-implementador-odd (sirve para cualquier proyecto).
+// Guardia lite de /odd (sirve para cualquier proyecto).
 //
 // Hook PreToolUse del plugin (`hooks/hooks.json`): Claude Code lo corre en cada llamada de herramienta de la sesión, y la
-// guardia decide por el `agent_type` del evento (`qcc-implementador-odd:qcc-odd-ejecutor` o `…-revisor`) a quién vigila;
+// guardia decide por el `agent_type` del evento (`odd:qcc-odd-ejecutor` o `…-revisor`) a quién vigila;
 // los agentes de un plugin ignoran `hooks:` en su frontmatter, por eso no se declara allí. Sin `agent_type` (la sesión
 // principal) o con el de otro agente, no hace nada. Niega lo que un subagente odd no hace nunca: git que modifica, instalar o quitar dependencias, red, borrados recursivos, secretos (`.env*`),
 // servidores y modos watch que no terminan, y archivos protegidos. Al revisor, además, escribir fuera del temporal.
@@ -37,7 +37,7 @@ const DIR = path.dirname(fileURLToPath(import.meta.url))
 /** Carpeta de Claude Code del usuario (`CLAUDE_CONFIG_DIR` o `~/.claude`). */
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const CONFIG_ODD = '.claude/qcc-implementador-odd.json'
-// La config de /qcc-implementador: la nueva y, si no existe, la vieja.
+// La config de /impl: la nueva y, si no existe, la vieja.
 const CONFIGS_NORMALES = ['.claude/qcc-implementador.json', '.claude/implementador.json']
 const VIDA_MARCA = 12 * 3600_000
 const TAREAS = 'odd/tasks'
@@ -82,7 +82,7 @@ const cacheReglas = new Map()
 /**
  * Las reglas del proyecto, de `guardia` en `.claude/qcc-implementador-odd.json`: `protegidos` ({ ruta, carpeta/ o
  * glob: motivo }), `inmutables` (carpetas o globs cuyos archivos versionados no se editan) y `scriptsNegados` (globs de
- * scripts del gestor JS). Una clave que no está ahí se toma de la config de /qcc-implementador, si existe. `origen`
+ * scripts del gestor JS). Una clave que no está ahí se toma de la config de /impl, si existe. `origen`
  * dice de qué archivo salió cada una.
  */
 export function reglasDelProyecto(raiz) {
@@ -679,9 +679,9 @@ export function tramosExpandidos(cmd) {
   return tramos
 }
 
-/** El rol de un agente de odd en un `agent_type` o `subagent_type`: `qcc-implementador-odd:qcc-odd-ejecutor` (o sin plugin) → `ejecutor`; null si no es de odd. */
+/** El rol de un agente de odd en un `agent_type` o `subagent_type`: `odd:qcc-odd-ejecutor` (o sin plugin) → `ejecutor`; null si no es de odd. */
 export function agenteOdd(tipo) {
-  const m = typeof tipo === 'string' ? /^(?:qcc-implementador-odd:)?qcc-odd-(explorador|ejecutor|revisor)$/.exec(tipo.trim()) : null
+  const m = typeof tipo === 'string' ? /^(?:odd:)?qcc-odd-(explorador|ejecutor|revisor)$/.exec(tipo.trim()) : null
   return m ? m[1] : null
 }
 
@@ -755,7 +755,7 @@ function main() {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
-      permissionDecisionReason: `Guardia /qcc-implementador-odd: ${motivo}. No lo rodees: ${rol === 'orquestador' ? 'usa la herramienta que dice, o anótalo en «Para decidir»' : rol === 'ejecutor' ? 'usa la herramienta que dice, o anótalo en BLOQUEOS de tu reporte' : 'anótalo en BLOQUEOS de tu reporte'}.`,
+      permissionDecisionReason: `Guardia /odd: ${motivo}. No lo rodees: ${rol === 'orquestador' ? 'usa la herramienta que dice, o anótalo en «Para decidir»' : rol === 'ejecutor' ? 'usa la herramienta que dice, o anótalo en BLOQUEOS de tu reporte' : 'anótalo en BLOQUEOS de tu reporte'}.`,
     },
   }))
 }

@@ -1,4 +1,4 @@
-// Casos de las herramientas de /qcc-implementador-odd: guardia, verificar, odd, costo e instalar.
+// Casos de las herramientas de /odd: guardia, verificar, odd, costo e instalar.
 // Correr: node --test qcc-implementador-odd/herramientas/odd.test.mjs
 //
 // Los repos de prueba, los registros y la config de Claude Code van al temporal: no tocan el historial real.
@@ -62,7 +62,7 @@ const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
 const usoCon = (contexto) => ({ input_tokens: 10, cache_read_input_tokens: contexto - 510, cache_creation_input_tokens: 500, output_tokens: 100 })
 
 /**
- * Transcript de juguete del orquestador: el `/qcc-implementador-odd`, el `--inicio` con `ODD_BASE=<base>` y un pedido
+ * Transcript de juguete del orquestador: el `/odd`, el `--inicio` con `ODD_BASE=<base>` y un pedido
  * por cada uso `[herramienta, entrada, contexto?, resultado?]`, dos segundos después del anterior.
  */
 function transcript(usos, { base = 'b0de', desde = Date.now() - 600_000 } = {}) {
@@ -70,17 +70,17 @@ function transcript(usos, { base = 'b0de', desde = Date.now() - 600_000 } = {}) 
   const pedido = (id, s, contexto, nombre, input) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-sonnet-5-5', usage: usoCon(contexto), content: [{ type: 'tool_use', id: `u-${id}`, name: nombre, input }] } })
   const resultado = (id, s, texto) => ({ type: 'user', timestamp: en(s), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `u-${id}`, content: texto }] } })
   const filas = [
-    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/qcc-implementador-odd</command-name>\n<command-args> x </command-args>' } },
-    pedido('p0', 1, 40_000, 'Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --inicio' }),
+    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/odd</command-name>\n<command-args> x </command-args>' } },
+    pedido('p0', 1, 40_000, 'Bash', { command: 'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --inicio' }),
     resultado('p0', 2, `ODD_BASE=${base}\nRAMA: …`),
   ]
   usos.forEach(([nombre, input, contexto = 50_000, texto = ''], k) => filas.push(pedido(`p${k + 1}`, 10 + 2 * k, contexto, nombre, input), resultado(`p${k + 1}`, 11 + 2 * k, texto)))
   return { filas, inicio: en(0), hasta: en(12 + 2 * usos.length), en }
 }
 
-const PLAN = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --plan --base b0de --tamano chico --reglas 2 --riesgo "1:no;2:no;3:no;4:no;5:no;6:no"' }]
-const VERIFICAR_ODD = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/verificar.mjs' }]
-const DIFF = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --diff b0de' }]
+const PLAN = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --plan --base b0de --tamano chico --reglas 2 --riesgo "1:no;2:no;3:no;4:no;5:no;6:no"' }]
+const VERIFICAR_ODD = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/verificar.mjs' }]
+const DIFF = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --diff b0de' }]
 
 // ── guardia ─────────────────────────────────────────────────────────────────
 
@@ -172,13 +172,13 @@ const PASAN = {
     `node -e "require('fs').writeFileSync('${TMP}/x.txt', 'x')"`,
     `node -e "const fs=require('fs'),os=require('os'),p=require('path');fs.copyFileSync('AGENTS.md', p.join(os.tmpdir(),'a.md'))"`,
     'node qcc-implementador-odd/instalar.mjs --revisar',
-    `node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --limpiar -- ${TMP}/x`,
+    `node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --limpiar -- ${TMP}/x`,
     'mkdir -p qcc-implementador-odd/nuevo',
     'cat .env.example',
     'cargo test',
   ],
   revisor: [
-    'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --diff abc123',
+    'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --diff abc123',
     `mkdir -p ${TMP}/base && git archive abc123 | tar -x -C ${TMP}/base`,
     `T=${TMP}; mkdir -p "$T/base" && git archive abc123 | tar -x -C "$T/base"`,
     `node script.js > ${TMP}/salida.txt 2>&1`,
@@ -193,8 +193,8 @@ const PASAN = {
     'pnpm add -D vitest',
     'npx -y cowsay',
     'pip install requests',
-    'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/verificar.mjs',
-    'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --diff abc123',
+    'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/verificar.mjs',
+    'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --diff abc123',
     'node --test qcc-implementador-odd/herramientas/odd.test.mjs 2>&1 | tail -5',
     'node -e "console.log(1)"',
     'git diff abc123 -- AGENTS.md',
@@ -343,7 +343,7 @@ test('guardia: el ejecutor no corre un script del temporal que escribe en el rep
   // Un script del proyecto corre, escriba o no: es un comando del proyecto.
   assert.equal(motivoComando('node qcc-implementador-odd/instalar.mjs --revisar', { rol: 'ejecutor', raiz: RAIZ }), null)
   // El hook explica qué hacer con la herramienta o con BLOQUEOS.
-  const hook = spawnSync(process.execPath, [GUARDIA], { input: JSON.stringify({ agent_type: 'qcc-implementador-odd:qcc-odd-ejecutor', tool_name: 'Bash', tool_input: { command: 'sed -i s/a/b/ AGENTS.md' } }), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: RAIZ } }).stdout
+  const hook = spawnSync(process.execPath, [GUARDIA], { input: JSON.stringify({ agent_type: 'odd:qcc-odd-ejecutor', tool_name: 'Bash', tool_input: { command: 'sed -i s/a/b/ AGENTS.md' } }), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: RAIZ } }).stdout
   assert.match(JSON.parse(hook).hookSpecificOutput.permissionDecisionReason, /edita con Edit o Write.*usa la herramienta que dice.*BLOQUEOS/)
 })
 
@@ -465,7 +465,7 @@ test('guardia: en una tarea grande el orquestador lee el código del repo solo c
   }
 })
 
-test('guardia: reglas del proyecto para los tres roles, con respaldo en la config de /qcc-implementador', () => {
+test('guardia: reglas del proyecto para los tres roles, con respaldo en la config de /impl', () => {
   const raiz = repo('reglas', {
     '.claude/qcc-implementador-odd.json': JSON.stringify({ guardia: { protegidos: { 'src/gen.ts': 'lo genera el build' }, scriptsNegados: ['db:*'] } }),
     '.claude/qcc-implementador.json': JSON.stringify({ guardia: { inmutables: ['migraciones/'], scriptsNegados: ['otro'] } }),
@@ -542,10 +542,10 @@ test('guardia: el ejecutor tampoco ve redirecciones en =>, comillas ni heredocs'
 })
 
 test('guardia: el hook imprime deny solo cuando niega', () => {
-  const hook = (rol, evento, ...args) => spawnSync(process.execPath, [GUARDIA, ...args], { input: JSON.stringify({ agent_type: rol && `qcc-implementador-odd:qcc-odd-${rol}`, ...evento }), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: RAIZ } }).stdout
+  const hook = (rol, evento, ...args) => spawnSync(process.execPath, [GUARDIA, ...args], { input: JSON.stringify({ agent_type: rol && `odd:qcc-odd-${rol}`, ...evento }), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: RAIZ } }).stdout
   const negado = JSON.parse(hook('ejecutor', { tool_name: 'Bash', tool_input: { command: 'git push' } }))
   assert.equal(negado.hookSpecificOutput.permissionDecision, 'deny')
-  assert.match(negado.hookSpecificOutput.permissionDecisionReason, /Guardia \/qcc-implementador-odd: git push/)
+  assert.match(negado.hookSpecificOutput.permissionDecisionReason, /Guardia \/odd: git push/)
   assert.equal(hook('ejecutor', { tool_name: 'Bash', tool_input: { command: 'git status' } }), '')
   assert.equal(spawnSync(process.execPath, [GUARDIA], { input: 'no es json', encoding: 'utf8' }).stdout, '')
   // El revisor también se guarda; el explorador (solo lectura), la sesión principal y los agentes de otros plugins no.
@@ -553,7 +553,7 @@ test('guardia: el hook imprime deny solo cuando niega', () => {
   const push = { tool_name: 'Bash', tool_input: { command: 'git push' } }
   assert.equal(hook('explorador', push), '')
   assert.equal(hook(undefined, push), '')
-  assert.equal(hook(undefined, { ...push, agent_type: 'qcc-implementador:qcc-ejecutor' }), '')
+  assert.equal(hook(undefined, { ...push, agent_type: 'impl:qcc-ejecutor' }), '')
   assert.equal(hook(undefined, { ...push, agent_type: 'qcc-odd-ejecutor-falso' }), '')
   // Con la marca `orquestador` (el hook del skill) decide por la corrida abierta, no por el agent_type: sin corrida, nada.
   fs.rmSync(marcaDe(RAIZ), { force: true })
@@ -562,16 +562,16 @@ test('guardia: el hook imprime deny solo cuando niega', () => {
 
 test('agenteOdd y rolDeAgente: el rol sale del agent_type del plugin odd, con o sin prefijo', () => {
   for (const rol of ['explorador', 'ejecutor', 'revisor']) {
-    assert.equal(agenteOdd(`qcc-implementador-odd:qcc-odd-${rol}`), rol)
+    assert.equal(agenteOdd(`odd:qcc-odd-${rol}`), rol)
     assert.equal(agenteOdd(`qcc-odd-${rol}`), rol)
-    assert.equal(esAgenteOdd(`qcc-implementador-odd:qcc-odd-${rol}`, rol), true)
+    assert.equal(esAgenteOdd(`odd:qcc-odd-${rol}`, rol), true)
   }
-  assert.equal(rolDeAgente('qcc-implementador-odd:qcc-odd-ejecutor'), 'ejecutor')
-  assert.equal(rolDeAgente('qcc-implementador-odd:qcc-odd-revisor'), 'revisor')
-  for (const otro of [undefined, null, '', 42, 'qcc-implementador-odd:qcc-odd-explorador', 'qcc-implementador:qcc-ejecutor', 'otro:qcc-odd-ejecutor', 'qcc-odd-ejecutor2', 'general-purpose']) {
+  assert.equal(rolDeAgente('odd:qcc-odd-ejecutor'), 'ejecutor')
+  assert.equal(rolDeAgente('odd:qcc-odd-revisor'), 'revisor')
+  for (const otro of [undefined, null, '', 42, 'odd:qcc-odd-explorador', 'impl:qcc-ejecutor', 'otro:qcc-odd-ejecutor', 'qcc-odd-ejecutor2', 'general-purpose']) {
     assert.equal(rolDeAgente(otro), null, String(otro))
   }
-  assert.equal(esAgenteOdd('qcc-implementador-odd:qcc-odd-ejecutor', 'revisor'), false)
+  assert.equal(esAgenteOdd('odd:qcc-odd-ejecutor', 'revisor'), false)
 })
 
 // ── verificar ───────────────────────────────────────────────────────────────
@@ -872,7 +872,7 @@ test('odd: --diferencial compara la BASE con el repo, valida con la guardia y gu
     const commitsAntes = commits()
     const negado = correr(ODD, raiz, '--diferencial', '--', 'git', 'commit', '--allow-empty', '-m', 'x')
     assert.equal(negado.codigo, 2)
-    assert.match(negado.salida, /^ERROR: Guardia \/qcc-implementador-odd: git commit modifica el repositorio/)
+    assert.match(negado.salida, /^ERROR: Guardia \/odd: git commit modifica el repositorio/)
     assert.equal(commits(), commitsAntes)
     assert.equal(marca().diferenciales, undefined)
 
@@ -1107,7 +1107,7 @@ test('costo: encuentra la sesión por ODD_BASE y suma por rol', () => {
   const turno = (id, s, texto) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-sonnet-5-5', usage: uso, content: [{ type: 'text', text: texto }] } })
   fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
     turno('antes', -50, 'de otra corrida'),
-    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/qcc-implementador-odd</command-name>\n<command-args> x </command-args>' } },
+    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/odd</command-name>\n<command-args> x </command-args>' } },
     { type: 'user', timestamp: en(5), message: { role: 'user', content: [{ type: 'tool_result', content: 'ODD_BASE=b0de\nRAMA: …' }] } },
     turno('o1', 10, 'sigo'),
     turno('o1', 11, 'sigo'),
@@ -1116,8 +1116,8 @@ test('costo: encuentra la sesión por ODD_BASE y suma por rol', () => {
     fs.writeFileSync(path.join(subagentes, `${nombre}.meta.json`), JSON.stringify({ agentType: tipo }))
     fs.writeFileSync(path.join(subagentes, `${nombre}.jsonl`), jsonl([{ type: 'user', timestamp: en(desde), message: { role: 'user', content: 'DOC: x' } }, turno(`${nombre}-1`, desde + 30, texto)]))
   }
-  agente('agent-x', 'qcc-implementador-odd:qcc-odd-ejecutor', 20, 'ESTADO: HECHO')
-  agente('agent-r', 'qcc-implementador-odd:qcc-odd-revisor', 100, 'VEREDICTO: APROBADO\nPRUEBAS: ninguna\nOBSERVACIONES:\n- src/a.js:3 — clave ausente — login a\n- src/a.js:9 — tiempo — (sin reproducción)')
+  agente('agent-x', 'odd:qcc-odd-ejecutor', 20, 'ESTADO: HECHO')
+  agente('agent-r', 'odd:qcc-odd-revisor', 100, 'VEREDICTO: APROBADO\nPRUEBAS: ninguna\nOBSERVACIONES:\n- src/a.js:3 — clave ausente — login a\n- src/a.js:9 — tiempo — (sin reproducción)')
   agente('agent-viejo', 'qcc-odd-revisor', -40, 'VEREDICTO: RECHAZADO')
 
   const c = costoDelFlujo(raiz, 'b0de', { proyectos, hasta: en(300) })
@@ -1198,11 +1198,11 @@ test('proceso: una corrida limpia da ok', () => {
     ['Bash', { command: 'git diff --stat && git log -1 | head -5' }],
     ['Bash', { command: `cat ${TMP}/salida.txt && echo x > ${TMP}/y` }],
     // Lo que negó la guardia no corrió.
-    ['Bash', { command: 'sed -i s/a/b/ src/a.js && cat src/a.js' }, 50_000, 'PreToolUse:Bash hook error: Guardia /qcc-implementador-odd: edita con Edit o Write, no por Bash (src/a.js).'],
-    ['Agent', { subagent_type: 'qcc-implementador-odd:qcc-odd-ejecutor', prompt: 'DOC: x' }, 170_000],
+    ['Bash', { command: 'sed -i s/a/b/ src/a.js && cat src/a.js' }, 50_000, 'PreToolUse:Bash hook error: Guardia /odd: edita con Edit o Write, no por Bash (src/a.js).'],
+    ['Agent', { subagent_type: 'odd:qcc-odd-ejecutor', prompt: 'DOC: x' }, 170_000],
     VERIFICAR_ODD,
     DIFF,
-    ['Agent', { subagent_type: 'qcc-implementador-odd:qcc-odd-revisor', prompt: 'BASE: b0de' }],
+    ['Agent', { subagent_type: 'odd:qcc-odd-revisor', prompt: 'BASE: b0de' }],
   ])
   const p = procesoDe(filas, { raiz, inicio, hasta })
   assert.deepEqual(p.desvios, [])
@@ -1232,7 +1232,7 @@ test('proceso: marca cada desvío', () => {
     PLAN,
     ['Bash', { command: 'sed -i s/a/b/ src/a.js' }],
     VERIFICAR_ODD,
-    ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --copia-base b0de' }, 50_000, `ODD_COPIA=${copia}`],
+    ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --copia-base b0de' }, 50_000, `ODD_COPIA=${copia}`],
     ['Bash', { command: `node ${copia}/src/a.js > ${TMP}/base.txt; node src/a.js > ${TMP}/nuevo.txt` }],
     ['Bash', { command: "cat >> test/a.test.js <<'EOF'\ntest('x', () => {})\nEOF" }, 160_000],
   ])
@@ -1252,7 +1252,7 @@ test('proceso: sin --plan, ediciones por script y --diff viejo', () => {
   const script = path.join(os.tmpdir(), 'scratch', 'aplicar.cjs')
   const { filas, inicio, hasta } = transcript([
     ['Write', { file_path: script, content: "require('fs').writeFileSync('src/a.js', t)" }],
-    ['Bash', { command: `node "${script.replaceAll('\\', '/')}" && node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/verificar.mjs` }],
+    ['Bash', { command: `node "${script.replaceAll('\\', '/')}" && node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/verificar.mjs` }],
     DIFF,
     ['Bash', { command: "node - <<'EOF'\nconst fs = require('fs')\nfs.writeFileSync('src/a.js', 'y')\nEOF" }],
     ['Bash', { command: `cat > ${TMP}/doc.cjs <<'EOF'\nrequire('fs').appendFileSync('CLAUDE.md', 'z')\nEOF` }],
@@ -1314,10 +1314,10 @@ test('proceso: una tarea grande pide explorador y ejecutor, y nada de código in
   assert.deepEqual(procesoDe(tarde.filas, { raiz, inicio: tarde.inicio, hasta: tarde.hasta }).desvios, ['editó después del último verificar.mjs', 'editó después del último --diff'])
 
   // El --stat tras un despacho no cuenta como el --diff del autochequeo; uno entero en otro tramo del comando, sí.
-  const stat = ['Bash', { command: 'git status --short && node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --diff b0de --stat -- src/a.js' }]
+  const stat = ['Bash', { command: 'git status --short && node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --diff b0de --stat -- src/a.js' }]
   const soloStat = transcript([PLAN, ejecutor, VERIFICAR_ODD, stat])
   assert.deepEqual(procesoDe(soloStat.filas, { raiz, inicio: soloStat.inicio, hasta: soloStat.hasta }).desvios, ['sin --diff'])
-  const conEntero = transcript([PLAN, ejecutor, VERIFICAR_ODD, ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --diff b0de --stat && node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --diff b0de' }]])
+  const conEntero = transcript([PLAN, ejecutor, VERIFICAR_ODD, ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --diff b0de --stat && node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --diff b0de' }]])
   assert.deepEqual(procesoDe(conEntero.filas, { raiz, inicio: conEntero.inicio, hasta: conEntero.hasta }).desvios, [])
 })
 
@@ -1347,7 +1347,7 @@ test('proceso: una grande con riesgo no exige el --diff entero', () => {
     explorador,
     PLAN,
     ejecutor,
-    ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --copia-base b0de' }, 50_000, `ODD_COPIA=${copia}`],
+    ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --copia-base b0de' }, 50_000, `ODD_COPIA=${copia}`],
     VERIFICAR_ODD,
     ejecutor,
   ])
@@ -1357,7 +1357,7 @@ test('proceso: una grande con riesgo no exige el --diff entero', () => {
 test('proceso: odd.mjs --diferencial lo repite verificar.mjs, así que editar después no es un desvío aparte', () => {
   const raiz = repo('proceso-diferencial', { 'src/a.js': 'x\n' })
   const editar = ['Edit', { file_path: path.join(raiz, 'src', 'a.js') }]
-  const diferencial = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --diferencial -- node test/x.js' }]
+  const diferencial = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --diferencial -- node test/x.js' }]
   const con = (usos) => {
     const t = transcript(usos)
     return procesoDe(t.filas, { raiz, inicio: t.inicio, hasta: t.hasta }).desvios
@@ -1368,7 +1368,7 @@ test('proceso: odd.mjs --diferencial lo repite verificar.mjs, así que editar de
   assert.deepEqual(con([PLAN, editar, VERIFICAR_ODD, DIFF, diferencial, editar]), ['editó después del último verificar.mjs', 'editó después del último --diff'])
   // El diferencial manual (--copia-base) conserva su desvío.
   const copia = 'C:/Users/x/AppData/Local/Temp/qcc-odd-base-AbC123'
-  const manual = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/qcc-implementador-odd/0.1.0/herramientas/odd.mjs --copia-base b0de' }, 50_000, `ODD_COPIA=${copia}`]
+  const manual = ['Bash', { command: 'node ~/.claude/plugins/cache/qcc/odd/0.1.0/herramientas/odd.mjs --copia-base b0de' }, 50_000, `ODD_COPIA=${copia}`]
   assert.deepEqual(con([PLAN, editar, VERIFICAR_ODD, DIFF, manual, editar, VERIFICAR_ODD, DIFF]), ['editó después del diferencial'])
   // Un --diferencial posterior al manual lo reemplaza; uno manual posterior al --diferencial vuelve a pedirlo.
   assert.deepEqual(con([PLAN, editar, VERIFICAR_ODD, DIFF, manual, diferencial, editar, VERIFICAR_ODD, DIFF]), [])
@@ -1587,7 +1587,7 @@ test('hooks.json y el skill: la guardia vigila al ejecutor y al revisor, el skil
   assert.match(entradas[0].hooks[0].command, /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/herramientas\/guardia\.mjs"$/)
   for (const herramienta of ['Bash', 'PowerShell', 'Edit', 'Write', 'NotebookEdit']) assert.match(herramienta, new RegExp(`^(?:${entradas[0].matcher})$`), herramienta)
   // El orquestador no tiene agent_type: su hook va en el frontmatter del skill, que en un plugin sí corre.
-  const skill = fs.readFileSync(path.join(plugin, 'skills', 'qcc-implementador-odd', 'SKILL.md'), 'utf8').split('\n---')[0]
+  const skill = fs.readFileSync(path.join(plugin, 'skills', 'odd', 'SKILL.md'), 'utf8').split('\n---')[0]
   assert.match(skill, /command: 'node "\$\{CLAUDE_PLUGIN_ROOT\}\/herramientas\/guardia\.mjs" orquestador'/)
   // Los agentes de un plugin ignoran `hooks:`: declararlo ahí daría una falsa seguridad.
   const agentes = fs.readdirSync(path.join(plugin, 'agents')).filter((a) => a.endsWith('.md'))

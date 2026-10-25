@@ -1,7 +1,7 @@
 {
-  "name": "qcc-implementador-odd",
+  "name": "odd",
   "displayName": "QCC",
   "version": "0.1.0",
-  "description": "/qcc-implementador-odd: versión lite inspirada en el ODD de gentle-ai; implementa inline lo chico y revisa con un agente independiente solo lo riesgoso",
+  "description": "/odd: versión lite inspirada en el ODD de gentle-ai; implementa inline lo chico y revisa con un agente independiente solo lo riesgoso",
   "author": { "name": "WalterSilva06" }
 }

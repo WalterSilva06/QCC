@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Limpia de ~/.claude la copia de /qcc-implementador-odd que instalaba la versión anterior de este archivo. El flujo ahora
-// es un plugin (`claude plugin install qcc-implementador-odd@qcc`): esa copia duplicaría su comando y sus agentes, y los
+// Limpia de ~/.claude la copia vieja de /odd (`skills/qcc-implementador-odd`) que instalaba la versión anterior de este archivo. El flujo ahora
+// es un plugin (`claude plugin install odd@qcc`): esa copia duplicaría su comando y sus agentes, y los
 // agentes viejos llaman a una guardia que ya no se instala ahí. Aparte del instalador de qcc-implementador/.
 //
 //   node qcc-implementador-odd/instalar.mjs              lista lo que archivaría, sin tocar nada
@@ -57,9 +57,11 @@ let archivados = 0
 let frenados = 0
 for (const [enRepo, enClaude] of CARPETAS) {
   for (const rel of archivosDe(path.join(REPO, enRepo))) {
-    const copia = path.join(CLAUDE, enClaude, rel)
+    // La carpeta del skill se llama `odd`; la copia vieja estaba en `qcc-implementador-odd`.
+    const relClaude = enRepo === 'skills' ? rel.replace(/^odd(?=[\\/])/, 'qcc-implementador-odd') : rel
+    const copia = path.join(CLAUDE, enClaude, relClaude)
     if (!fs.existsSync(copia)) continue
-    const destino = path.join(ARCHIVO, enClaude, rel)
+    const destino = path.join(ARCHIVO, enClaude, relClaude)
     console.log(`  ${limpiar ? 'archiva ' : 'archivaría'} ${corto(copia)} → ${corto(destino)}`)
     if (!limpiar) {
       pendientes++

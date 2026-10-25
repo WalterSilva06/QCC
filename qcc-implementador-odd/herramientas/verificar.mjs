@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Verificación lite de /qcc-implementador-odd, para cualquier proyecto.
+// Verificación lite de /odd, para cualquier proyecto.
 //
 // Los pasos salen de `verificar` en `<raíz>/.claude/qcc-implementador-odd.json` (`[{ "nombre", "cmd", "timeoutSeg"? }]`,
 // en orden). Sin esa clave se detectan:

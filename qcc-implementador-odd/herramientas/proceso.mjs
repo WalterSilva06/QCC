@@ -1,4 +1,4 @@
-// Control del proceso de una corrida de /qcc-implementador-odd, leído del transcript del orquestador.
+// Control del proceso de una corrida de /odd, leído del transcript del orquestador.
 //
 // Recorre las herramientas que usó el hilo principal en el tramo de la corrida y devuelve los desvíos de las reglas
 // del SKILL.md que se ven ahí: `--plan` antes de la primera edición, ediciones con Edit o Write (no por Bash),
@@ -37,7 +37,7 @@ export function usosDe(filas, { inicio, hasta }) {
       if (c?.type !== 'tool_use' || vistos.has(c.id)) continue
       vistos.add(c.id)
       const resultado = resultados.get(c.id) ?? ''
-      if (!/Guardia \/qcc-implementador-odd:/.test(resultado)) usos.push({ nombre: c.name, entrada: c.input ?? {}, cwd: f.cwd, resultado })
+      if (!/Guardia \/odd:/.test(resultado)) usos.push({ nombre: c.name, entrada: c.input ?? {}, cwd: f.cwd, resultado })
     }
   }
   return usos

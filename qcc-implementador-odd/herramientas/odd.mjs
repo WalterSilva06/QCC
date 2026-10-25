@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Herramienta de /qcc-implementador-odd (nivel usuario: sirve para cualquier proyecto).
+// Herramienta de /odd (nivel usuario: sirve para cualquier proyecto).
 //
 //   node <plugin>/herramientas/odd.mjs --inicio
 //   node <plugin>/herramientas/odd.mjs --plan --base <BASE> --tamano chico|grande --reglas <n>
@@ -521,7 +521,7 @@ async function diferencialDe(o) {
   const base = o.base ?? (typeof marca?.base === 'string' ? marca.base : undefined)
   if (!base) throw errorDePlan('--diferencial: falta la BASE (--base <ODD_BASE> o una corrida abierta con --inicio)')
   const motivo = motivoComando(cmd, { rol: 'ejecutor', raiz: RAIZ })
-  if (motivo) throw errorDePlan(`Guardia /qcc-implementador-odd: ${motivo}`)
+  if (motivo) throw errorDePlan(`Guardia /odd: ${motivo}`)
   const r = await diferencial(RAIZ, base, cmd)
   for (const l of r.lineas) console.log(l)
   const previos = Array.isArray(marca?.diferenciales) ? marca.diferenciales.filter((c) => typeof c === 'string') : []
