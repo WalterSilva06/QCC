@@ -1,4 +1,4 @@
-// Casos de la guardia, del chequeo de alcance, de estado y de verificar de /qcc-implementador.
+// Casos de la guardia, del chequeo de alcance, de estado y de verificar de /impl.
 // Correr: node --test qcc-implementador/herramientas/guardia.test.mjs
 //
 // Arma dos repos de prueba en el temporal: uno con `.claude/implementador.json` estricto (nombre viejo, que se
@@ -116,8 +116,8 @@ test('ejecutor: verificación, lectura y edición dentro del alcance pasan', () 
     'git --no-pager log --oneline -5',
     'git -C . show HEAD:package.json',
     'git branch --show-current',
-    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs',
-    'node "$HOME/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs" --diff abc --permitidos "src/x.ts"',
+    'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/verificar.mjs',
+    'node "$HOME/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs" --diff abc --permitidos "src/x.ts"',
     'node -e "console.log(process.env.HOME)"',
     'rm src/server/viejo.ts',
     'rm -f src/server/viejo.ts',
@@ -129,7 +129,7 @@ test('ejecutor: verificación, lectura y edición dentro del alcance pasan', () 
     'cat src/lib/slug.ts | head -n 20',
     'mkdir -p src/server/nuevo && cp src/lib/slug.ts src/server/nuevo/slug.ts',
     "cat <<'EOF' > /tmp/nota.txt\ngit push origin main\nEOF",
-    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs > $TEMP/v.txt 2>&1',
+    'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/verificar.mjs > $TEMP/v.txt 2>&1',
     '# comentario sobre .env y git push\npnpm test',
     'for f in src/lib/*.ts; do wc -l "$f"; done',
   ]) deja(bash(R, c))
@@ -295,9 +295,9 @@ test('revisor: lee y verifica, y solo escribe en temporales', () => {
   const tmp = os.tmpdir().replace(/\\/g, '/')
   for (const c of [
     'pnpm test',
-    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs',
-    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/verificar.mjs 2>&1 | tail -n 40',
-    'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs --diff abc --permitidos "src/x.ts" -- src/x.ts',
+    'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/verificar.mjs',
+    'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/verificar.mjs 2>&1 | tail -n 40',
+    'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs --diff abc --permitidos "src/x.ts" -- src/x.ts',
     'git diff abc def -- src',
     'pnpm build 2>&1 | tail -5',
     "grep -rn \"select('*')\" src/server > /dev/null; echo hecho",
@@ -847,10 +847,10 @@ test('estado --guia: comun.md y pasos.md salen con ${CLAUDE_PLUGIN_ROOT} resuelt
 
 test('rolDeAgente: el rol sale del agent_type del plugin; la sesión principal y otros agentes no tienen', () => {
   for (const rol of ['explorador', 'planificador', 'ejecutor', 'revisor']) {
-    assert.equal(rolDeAgente(`qcc-implementador:qcc-${rol}`), rol)
+    assert.equal(rolDeAgente(`impl:qcc-${rol}`), rol)
     assert.equal(rolDeAgente(`qcc-${rol}`), rol, 'el nombre sin plugin también')
   }
-  for (const otro of [undefined, null, '', 42, 'general-purpose', 'qcc-implementador:qcc-generador', 'qcc-commit:qcc-generador-commit', 'qcc-implementador-odd:qcc-odd-ejecutor', 'qcc-odd-ejecutor', 'otro:qcc-ejecutor', 'qcc-implementador:ejecutor', 'qcc-implementador:qcc-ejecutor2']) {
+  for (const otro of [undefined, null, '', 42, 'general-purpose', 'impl:qcc-generador', 'commit:qcc-generador-commit', 'odd:qcc-odd-ejecutor', 'qcc-odd-ejecutor', 'otro:qcc-ejecutor', 'impl:ejecutor', 'impl:qcc-ejecutor2', 'qcc-implementador:qcc-ejecutor']) {
     assert.equal(rolDeAgente(otro), null, String(otro))
   }
 })
@@ -1273,13 +1273,13 @@ test('costos: precio por pedido, y el cierre anota costo y veredictos del flujo'
   fs.mkdirSync(subagentes, { recursive: true })
   const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
   const pedido = (id, t, model, usage, texto) => ({ type: 'assistant', timestamp: t, message: { id, model, usage, content: [{ type: 'text', text: texto ?? '' }] } })
-  // Señuelo: otra sesión del mismo repo cuyo /implementador quedó más cerca del preflight, pero no recibió su BASE_GLOBAL.
+  // Señuelo: otra sesión del mismo repo cuyo /impl quedó más cerca del preflight, pero no recibió su BASE_GLOBAL.
   fs.writeFileSync(path.join(sesion, 's0.jsonl'), jsonl([
-    { type: 'user', timestamp: en(-0.5), message: { role: 'user', content: '<command-name>/implementador</command-name>' } },
+    { type: 'user', timestamp: en(-0.5), message: { role: 'user', content: '<command-name>/impl</command-name>' } },
     pedido('x1', en(0.2), 'claude-opus-5-5', { cache_creation_input_tokens: 1_000_000, cache_creation: { ephemeral_1h_input_tokens: 1_000_000 } }),
   ]))
   fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
-    { type: 'user', timestamp: en(-1), message: { role: 'user', content: '<command-name>/implementador</command-name>' } },
+    { type: 'user', timestamp: en(-1), message: { role: 'user', content: '<command-name>/impl</command-name>' } },
     { type: 'user', timestamp: en(0.05), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't0', content: `BASE_GLOBAL=${global} DESDE_GLOBAL=${inicio}` }] } },
     pedido('o1', en(0.1), 'claude-sonnet-5-5', { cache_creation_input_tokens: 100_000, cache_creation: { ephemeral_1h_input_tokens: 100_000 }, output_tokens: 1000 }),
     pedido('o2', en(0.4), 'claude-sonnet-5-5', { cache_read_input_tokens: 100_000, output_tokens: 1000 }),
@@ -1310,7 +1310,7 @@ test('costos: precio por pedido, y el cierre anota costo y veredictos del flujo'
   assert.match(historial, /^PROMEDIO: \$[\d,]+ · /m)
 })
 
-/** Transcript mínimo del flujo de `raiz` (su `/implementador` y un pedido con 100.000 tokens de contexto); devuelve su CLAUDE_CONFIG_DIR. */
+/** Transcript mínimo del flujo de `raiz` (su `/impl` y un pedido con 100.000 tokens de contexto); devuelve su CLAUDE_CONFIG_DIR. */
 function transcriptDelFlujo(raiz) {
   const { inicio, base_global: global } = JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8'))
   const tramo = Math.max(Date.now() - Date.parse(inicio), 10)
@@ -1320,7 +1320,7 @@ function transcriptDelFlujo(raiz) {
   const carpeta = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
   fs.mkdirSync(carpeta, { recursive: true })
   const filas = [
-    { type: 'user', timestamp: en(-1), message: { role: 'user', content: '<command-name>/implementador</command-name>\n<command-args>probar el cierre</command-args>' } },
+    { type: 'user', timestamp: en(-1), message: { role: 'user', content: '<command-name>/impl</command-name>\n<command-args>probar el cierre</command-args>' } },
     { type: 'user', timestamp: en(0.05), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't0', content: `BASE_GLOBAL=${global} DESDE_GLOBAL=${inicio}` }] } },
     { type: 'assistant', timestamp: en(0.1), message: { id: 'o1', model: 'claude-sonnet-5-5', usage: { cache_read_input_tokens: 100_000, output_tokens: 10 }, content: [{ type: 'text', text: '' }] } },
   ]
@@ -1457,10 +1457,10 @@ test('costos: métricas del flujo desde transcripts armados', () => {
   const E1 = 'SUBTAREA 1/2: crear x'
   const E1_CORRECCION = `${E1}\nCORRECCIÓN: arreglar y`
   const E2 = 'SUBTAREA 2/2: otra cosa'
-  const ESTADO = 'node ~/.claude/plugins/cache/qcc/qcc-implementador/0.1.0/herramientas/estado.mjs'
+  const ESTADO = 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs'
 
   fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
-    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/implementador</command-name>\n<command-args>  Mejorar   el flujo\n con métricas </command-args>' } },
+    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/impl</command-name>\n<command-args>  Mejorar   el flujo\n con métricas </command-args>' } },
     turno('o1', 5, [bash('b0', `${ESTADO} --paso 0`)], uso(1)),
     resultado(10, 'b0', 'FLUJO: x'),
     turno('o2', 60, [agenteDe('a1', 'explorador', 'PEDIDO: x\nMAPA: mapa.md')], uso(1)),
@@ -1517,7 +1517,7 @@ test('costos: métricas del flujo desde transcripts armados', () => {
   assert.equal(costoDelFlujo(raiz, en(0), opciones).usd, m.costo.usd)
 })
 
-test('costos: reconoce /qcc-implementador y agentType qcc-ejecutor como rol ejecutor', () => {
+test('costos: reconoce /impl y agentType qcc-ejecutor como rol ejecutor', () => {
   const raiz = path.join(os.tmpdir(), 'repo-metricas-qcc')
   const claude = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
   temporales.push(claude)
@@ -1534,18 +1534,18 @@ test('costos: reconoce /qcc-implementador y agentType qcc-ejecutor como rol ejec
   const E1 = 'SUBTAREA 1/1: crear x'
 
   fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
-    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/qcc-implementador</command-name>\n<command-args> Probar el prefijo </command-args>' } },
-    turno('o1', 60, [agenteDe('a1', 'qcc-implementador:qcc-explorador', 'PEDIDO: x')]),
-    turno('o2', 200, [agenteDe('x1', 'qcc-implementador:qcc-ejecutor', E1)]),
-    turno('o3', 300, [agenteDe('x2', 'qcc-implementador:qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))')]),
+    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/impl</command-name>\n<command-args> Probar el prefijo </command-args>' } },
+    turno('o1', 60, [agenteDe('a1', 'impl:qcc-explorador', 'PEDIDO: x')]),
+    turno('o2', 200, [agenteDe('x1', 'impl:qcc-ejecutor', E1)]),
+    turno('o3', 300, [agenteDe('x2', 'impl:qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))')]),
   ]))
   const agente = (nombre, tipo, prompt, desde, filas) => {
     fs.writeFileSync(path.join(subagentes, `${nombre}.meta.json`), JSON.stringify({ agentType: tipo }))
     fs.writeFileSync(path.join(subagentes, `${nombre}.jsonl`), jsonl([{ type: 'user', timestamp: en(desde), message: { role: 'user', content: prompt } }, ...filas]))
   }
-  agente('agent-e', 'qcc-implementador:qcc-explorador', 'PEDIDO: x', 62, [turno('e1', 100, [texto('ARCHIVOS')])])
-  agente('agent-x1', 'qcc-implementador:qcc-ejecutor', E1, 205, [turno('m1', 280, [texto('ESTADO: HECHO')])])
-  agente('agent-f', 'qcc-implementador:qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))', 305, [turno('f1', 340, [texto('VEREDICTO: APROBADO\nPROBLEMAS: ninguno\nOBSERVACIONES: ninguna')])])
+  agente('agent-e', 'impl:qcc-explorador', 'PEDIDO: x', 62, [turno('e1', 100, [texto('ARCHIVOS')])])
+  agente('agent-x1', 'impl:qcc-ejecutor', E1, 205, [turno('m1', 280, [texto('ESTADO: HECHO')])])
+  agente('agent-f', 'impl:qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))', 305, [turno('f1', 340, [texto('VEREDICTO: APROBADO\nPROBLEMAS: ninguno\nOBSERVACIONES: ninguna')])])
 
   const m = metricasDelFlujo(raiz, en(0), { proyectos: path.join(claude, 'projects'), hasta: en(500), base: null })
   assert.equal(m.sesion, path.join(sesion, 's1.jsonl'))
@@ -1593,7 +1593,7 @@ test('costos: --anotar suma un defecto y --fuga mide lo gastado después del cie
   const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
   // Cada pedido: 1000 tokens de salida de Sonnet = $0,01.
   const pedido = (id, s) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-sonnet-5-5', usage: { output_tokens: 1000 }, content: [{ type: 'text', text: '' }] } })
-  const comando = (s) => ({ type: 'user', timestamp: en(s), message: { role: 'user', content: '<command-name>/implementador</command-name>' } })
+  const comando = (s) => ({ type: 'user', timestamp: en(s), message: { role: 'user', content: '<command-name>/impl</command-name>' } })
   const sesion = path.join(carpeta, 's1.jsonl')
   fs.writeFileSync(sesion, jsonl([
     comando(0),
@@ -1601,7 +1601,7 @@ test('costos: --anotar suma un defecto y --fuga mide lo gastado después del cie
     // El cierre es a los 100 s: estos dos pedidos y el subagente de los 130 s son la fuga.
     pedido('d1', 110),
     pedido('d2', 120),
-    // El siguiente /implementador corta el tramo: lo que sigue es de otro flujo.
+    // El siguiente /impl corta el tramo: lo que sigue es de otro flujo.
     comando(200),
     pedido('otro', 210),
   ]))
@@ -1621,7 +1621,7 @@ test('costos: --anotar suma un defecto y --fuga mide lo gastado después del cie
     v2('2026-01-03T09:00:00.000Z', {}),
   ].map((f) => JSON.stringify(f)).join('\n') + '\n')
 
-  // --fuga: solo los flujos v2 con sesión, y el tramo cortado en el siguiente /implementador.
+  // --fuga: solo los flujos v2 con sesión, y el tramo cortado en el siguiente /impl.
   const fuga = costosCon('--fuga', '--archivo', archivo)
   assert.equal(fuga.codigo, 0)
   assert.equal(fuga.salida.trimEnd(), 'FUGA: 2026-01-01 10:01 · repo · $0,03 (3 pedidos) después del cierre')
@@ -1988,7 +1988,7 @@ const GUARDIA = fileURLToPath(new URL('./guardia.mjs', import.meta.url))
 /** Corre guardia.mjs como hook del agente `rol` (su `agent_type` de plugin va en el evento), con `evento` por stdin, en el proyecto `raiz`. */
 function hook(raiz, rol, evento) {
   const env = { ...process.env, CLAUDE_PROJECT_DIR: raiz }
-  return spawnSync(process.execPath, [GUARDIA], { cwd: raiz, encoding: 'utf8', env, input: JSON.stringify({ agent_type: `qcc-implementador:qcc-${rol}`, ...evento }) })
+  return spawnSync(process.execPath, [GUARDIA], { cwd: raiz, encoding: 'utf8', env, input: JSON.stringify({ agent_type: `impl:qcc-${rol}`, ...evento }) })
 }
 
 /** Filas del registro del proyecto (vacío si no hay). */
@@ -2056,6 +2056,7 @@ test('guardia como hook: niega y anota por el agent_type; la sesión principal y
     const push = bash(raiz, 'git commit -m x')
     const ejecutor = hook(raiz, 'ejecutor', push)
     assert.equal(JSON.parse(ejecutor.stdout).hookSpecificOutput.permissionDecision, 'deny')
+    assert.match(JSON.parse(ejecutor.stdout).hookSpecificOutput.permissionDecisionReason, /^Guardia \/impl: \S/)
     assert.equal(filasDe(raiz).at(-1).rol, 'ejecutor')
     assert.equal(filasDe(raiz).at(-1).decision, 'negado')
     const revisor = hook(raiz, 'revisor', edita(raiz, path.join(raiz, 'src', 'a.ts')))
@@ -2064,7 +2065,7 @@ test('guardia como hook: niega y anota por el agent_type; la sesión principal y
 
     const antes = filasDe(raiz).length
     // La sesión principal (sin agent_type) y otros agentes, incluidos los del odd, nunca se niegan ni se anotan.
-    for (const agent_type of [undefined, 'qcc-implementador-odd:qcc-odd-ejecutor', 'qcc-commit:qcc-generador-commit', 'general-purpose']) {
+    for (const agent_type of [undefined, 'odd:qcc-odd-ejecutor', 'commit:qcc-generador-commit', 'general-purpose']) {
       const r = hook(raiz, 'ejecutor', { ...push, agent_type })
       assert.equal(r.stdout, '', String(agent_type))
       assert.equal(r.status, 0)

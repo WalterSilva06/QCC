@@ -55,7 +55,7 @@ Llena los `<…>` y no agregues nada más. `REGLAS` es lo que dijo `REGLAS DEL P
 
 `IMÁGENES`: si el pedido trae imágenes, el orquestador pasa la ruta absoluta del archivo (Claude Code la muestra como «[Image: source: …]») más una descripción de lo que muestra, nunca «no disponible»; sin ruta, solo la descripción. Sin imágenes, `ninguna`.
 
-**Explorador** — `subagent_type: "qcc-implementador:qcc-explorador"`, `description: "Explorar <tema | área>"`
+**Explorador** — `subagent_type: "impl:qcc-explorador"`, `description: "Explorar <tema | área>"`
 ```
 PEDIDO: <literal del usuario>
 ÁREA: <todo el pedido | la parte que le toca a este explorador>
@@ -67,7 +67,7 @@ MAPA: <<FLUJO>/mapa.md | ninguno>
 ```
 Un solo explorador por defecto (`ÁREA: todo el pedido`). Varios, hasta 5 y uno por área sin solapar, solo si el pedido abarca áreas independientes y grandes (p. ej. más de ~15 archivos o capas distintas: datos · servidor · UI), nunca para repartir preguntas de una misma área. Con varios, todos en el **mismo mensaje**, cada uno con su ÁREA y BUSCA propias.
 
-**Planificador** (siempre; clasifica y planifica) — `subagent_type: "qcc-implementador:qcc-planificador"`, `description: "Planificar <tema>"`
+**Planificador** (siempre; clasifica y planifica) — `subagent_type: "impl:qcc-planificador"`, `description: "Planificar <tema>"`
 ```
 PEDIDO: <literal>
 IMÁGENES: <ruta absoluta del .png> — <qué muestra> | ninguna
@@ -78,7 +78,7 @@ PLAN VIGENTE: <solo al re-planificar: <FLUJO>/plan.md, con estos ajustes ya apro
 AJUSTES DEL USUARIO: <solo al re-planificar: solo el ajuste>
 ```
 
-**Ejecutor** — en el mismo mensaje que su `estado.mjs --base --sub <n>` (tu `--cambios --sub <n>` usa su foto; el ejecutor no la necesita). `subagent_type: "qcc-implementador:qcc-ejecutor"`, `description: "Sn: <título>"`
+**Ejecutor** — en el mismo mensaje que su `estado.mjs --base --sub <n>` (tu `--cambios --sub <n>` usa su foto; el ejecutor no la necesita). `subagent_type: "impl:qcc-ejecutor"`, `description: "Sn: <título>"`
 ```
 SUBTAREA <n>/<total>: <objetivo>
 CONTRATO: <<FLUJO>/S<n>.md (léelo antes de editar: hecho cuando, tests y riesgos)>
@@ -96,7 +96,7 @@ CORRECCIÓN <c>/<máx>: arregla exactamente esto y nada más:
 ```
 La corrección de una revisión final lleva `SUBTAREA: correcciones de la revisión final`, `CONTRATO: <FLUJO>/plan.md` y `ARCHIVOS PERMITIDOS: <la unión>`.
 
-**Revisión final** (siempre, también con una sola subtarea o con todas `Crítica: no`) — `subagent_type: "qcc-implementador:qcc-revisor"`, sin overrides (Opus high, también con «sin criterios»), `description: "Revisión final <tema>"`
+**Revisión final** (siempre, también con una sola subtarea o con todas `Crítica: no`) — `subagent_type: "impl:qcc-revisor"`, sin overrides (Opus high, también con «sin criterios»), `description: "Revisión final <tema>"`
 ```
 QUÉ REVISAR: cambio completo (<n> subtarea(s))
 OBJETIVO DEL PLAN: <1–2 líneas>

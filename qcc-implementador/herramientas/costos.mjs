@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Costo real de los flujos /qcc-implementador, leído de los transcripts de Claude Code.
+// Costo real de los flujos /impl, leído de los transcripts de Claude Code.
 //
 //   node <plugin>/herramientas/costos.mjs [--ultimos <n>] [--archivo <flujos.jsonl>]
 //   node <plugin>/herramientas/costos.mjs --fuga [--ultimos <n>] [--archivo <flujos.jsonl>]
@@ -8,7 +8,7 @@
 // Lista los últimos flujos anotados en `registros/flujos.jsonl` (10 por defecto), de la versión 1 y de la 2: costo,
 // minutos, pedidos del orquestador, costo por rol, Clasificación, subtareas y veredictos (en la 2, además el resultado
 // y los defectos anotados), con el promedio al final. `--fuga` mide, por flujo v2, lo gastado en su sesión después del
-// cierre y hasta el siguiente `/qcc-implementador`. `--anotar` suma un defecto al flujo cuyo `t` empieza con `<t>` (exit 2
+// cierre y hasta el siguiente `/impl`. `--anotar` suma un defecto al flujo cuyo `t` empieza con `<t>` (exit 2
 // si no es uno solo). estado.mjs usa `costoDelFlujo` en el cierre (`--cambios … --paso 7`) para anotar cada flujo;
 // `metricasDelFlujo` suma al costo lo que se lee de los mismos transcripts (tokens, tiempos por fase, ejecutores,
 // problemas de los revisores).
@@ -118,16 +118,16 @@ function veredictoDe(filas, rol) {
   return new RegExp(`^[\\s*_>\`-]*${campo}:\\s*\\**\\s*([A-ZÁÉÍÓÚ]+)`, 'm').exec(textos.at(-1) ?? '')?.[1] ?? null
 }
 
-/** Si la fila es el `/qcc-implementador` (o el viejo `/implementador`) que el usuario escribió en el hilo principal. */
-const esComando = (f) => f?.type === 'user' && !f.isSidechain && f.timestamp && /<command-name>\/(?:[\w-]+:)?(?:qcc-)?implementador</.test(textoDe(f.message?.content))
+/** Si la fila es el `/impl` (o `/impl:impl`) que el usuario escribió en el hilo principal. */
+const esComando = (f) => f?.type === 'user' && !f.isSidechain && f.timestamp && /<command-name>\/(?:[\w-]+:)?impl</.test(textoDe(f.message?.content))
 
 /** Rol corto de un agente: quita el prefijo `qcc-` (los transcripts viejos no lo tienen). */
 const rolCorto = (nombre) => (typeof nombre === 'string' ? nombre.replace(/^(?:[^:]+:)?qcc-/, '') : nombre)
 
 /**
  * El transcript de la sesión del flujo de `raiz` que empezó cerca de `desde` (DESDE_GLOBAL), con la hora de su
- * `/qcc-implementador`. Con `base` (su BASE_GLOBAL), la sesión es la que la recibió de su preflight: así no se confunde
- * con otro flujo del mismo repo que empezó a la vez. Si no, la del `/qcc-implementador` más cercano; sin esa fila (la skill
+ * `/impl`. Con `base` (su BASE_GLOBAL), la sesión es la que la recibió de su preflight: así no se confunde
+ * con otro flujo del mismo repo que empezó a la vez. Si no, la del `/impl` más cercano; sin esa fila (la skill
  * se llamó de otro modo), la sesión más reciente desde `desde`. null si no hay.
  */
 export function sesionDelFlujo(raiz, desde, proyectos = proyectosDe(), base = null) {
@@ -242,7 +242,7 @@ export function costoDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = 
 
 /**
  * Lo gastado en la sesión `archivo` después de `cierre` (la hora del cierre del flujo): el hilo principal y los
- * subagentes desde ahí hasta el siguiente `/qcc-implementador` de la sesión, o hasta el final. `{ usd, pedidos }`; null si no se puede leer.
+ * subagentes desde ahí hasta el siguiente `/impl` de la sesión, o hasta el final. `{ usd, pedidos }`; null si no se puede leer.
  */
 export function fugaDe(archivo, cierre) {
   if (!archivo || !fs.existsSync(archivo)) return null
@@ -352,7 +352,7 @@ function ejecutoresDe(agentes, lanzamientos) {
 /**
  * Métricas del flujo de `raiz` que empezó en `desde` leídas de sus transcripts: `{ costo, sesion, pedido, contexto,
  * tiempos, ejecutores, problemas, alcanceFuera, explorador }`, con el costo de `costoDelFlujo` y lo demás como lo
- * describen `tiemposDe`, `ejecutoresDe` y `problemasDe`. `pedido` es el texto que se escribió tras `/qcc-implementador`
+ * describen `tiemposDe`, `ejecutoresDe` y `problemasDe`. `pedido` es el texto que se escribió tras `/impl`
  * (≤ 120 caracteres), `contexto` los tokens del primer y del último pedido del hilo principal, `alcanceFuera` las
  * líneas `ALCANCE: FUERA` que vio el orquestador y `explorador.mapa` si algún prompt trajo un `MAPA:` útil.
  * null si no se encuentra la sesión.
@@ -436,7 +436,7 @@ function anotarDefecto(archivo, prefijo, texto) {
   console.log(`ANOTADO: defecto en el flujo ${fechaDe(coinciden[0])}: ${textoLimpio}`)
 }
 
-/** `--fuga`: lo que se gastó en la sesión de cada flujo v2 después de su cierre, hasta el siguiente `/qcc-implementador`. */
+/** `--fuga`: lo que se gastó en la sesión de cada flujo v2 después de su cierre, hasta el siguiente `/impl`. */
 function fuga(flujos, n) {
   const conSesion = flujos.filter((f) => f.v === 2 && f.sesion && f.t).slice(-n)
   if (!conSesion.length) {

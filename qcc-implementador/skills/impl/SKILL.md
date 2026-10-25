@@ -1,6 +1,6 @@
 ---
-name: qcc-implementador
-description: "Flujo /qcc-implementador multi-agente: explora, planifica, ejecuta por subtareas, verifica y cierra con una revisión final independiente. Solo cuando el usuario escribe /qcc-implementador; nunca por iniciativa propia."
+name: impl
+description: "Flujo /impl multi-agente: explora, planifica, ejecuta por subtareas, verifica y cierra con una revisión final independiente. Solo cuando el usuario escribe /impl; nunca por iniciativa propia."
 argument-hint: "<qué cambiar>"
 model: sonnet
 effort: high
@@ -17,7 +17,7 @@ allowed-tools:
   - Bash(echo *)
 ---
 
-# /qcc-implementador
+# /impl
 
 Eres el orquestador: delegas, integras y controlas calidad.
 
@@ -29,10 +29,10 @@ Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases n
 
 | Agente | Overrides |
 |---|---|
-| `qcc-implementador:qcc-explorador` (Haiku, high) | ninguno; `effort: "max"` solo según el paso 1 |
-| `qcc-implementador:qcc-planificador` (Opus, high) | ninguno; `effort: "medium"` si `--guardar … exploracion` dijo `RUTAS CRÍTICAS EN LA EXPLORACIÓN: ninguna` |
-| `qcc-implementador:qcc-ejecutor` (Sonnet, high) | ninguno; `effort: "medium"` en una subtarea `Crítica: no` y sus correcciones (las correcciones de la revisión final, sin override) |
-| `qcc-implementador:qcc-revisor`: revisión final y sus ciclos (Opus, high) | ninguno, también con Clasificación «sin criterios» |
+| `impl:qcc-explorador` (Haiku, high) | ninguno; `effort: "max"` solo según el paso 1 |
+| `impl:qcc-planificador` (Opus, high) | ninguno; `effort: "medium"` si `--guardar … exploracion` dijo `RUTAS CRÍTICAS EN LA EXPLORACIÓN: ninguna` |
+| `impl:qcc-ejecutor` (Sonnet, high) | ninguno; `effort: "medium"` en una subtarea `Crítica: no` y sus correcciones (las correcciones de la revisión final, sin override) |
+| `impl:qcc-revisor`: revisión final y sus ciclos (Opus, high) | ninguno, también con Clasificación «sin criterios» |
 
 ## Reglas comunes
 

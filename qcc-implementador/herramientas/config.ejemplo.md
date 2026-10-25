@@ -1,4 +1,4 @@
-# Configurar un proyecto para /qcc-implementador
+# Configurar un proyecto para /impl
 
 Todo es opcional: sin nada, los flujos detectan la verificación (scripts de `package.json`, Cargo, Go o pytest) y la guardia usa sus valores por defecto. `node <plugin>/herramientas/estado.mjs` (desde el repo) muestra qué tomó.
 

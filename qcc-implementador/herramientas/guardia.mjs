@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Guardia de los subagentes de /qcc-implementador (sirve para cualquier proyecto).
+// Guardia de los subagentes de /impl (sirve para cualquier proyecto).
 //
 // Hook PreToolUse del plugin (`hooks/hooks.json`): Claude Code lo corre en cada llamada de herramienta de la
-// sesión, y la guardia decide por el `agent_type` del evento (`qcc-implementador:qcc-ejecutor`…) a quién
+// sesión, y la guardia decide por el `agent_type` del evento (`impl:qcc-ejecutor`…) a quién
 // vigila. Los agentes de un plugin ignoran `hooks:` en su frontmatter, por eso no se declara allí. Sin
 // `agent_type` (la sesión principal) o con el de otro agente, no hace nada: ni niega, ni anota, ni toca git.
 //
@@ -287,7 +287,7 @@ function versionado(rel, raiz) {
   return versionados.get(clave)
 }
 
-// El resto de `.claude/` (reglas y config de /qcc-implementador) se edita si el plan lo permite.
+// El resto de `.claude/` (reglas y config de /impl) se edita si el plan lo permite.
 const CLAUDE_BLINDADO = /^\.claude\/(settings(\.local)?\.json$|agents(\/|$))/i
 const ARCHIVO_ENV = /(^|\/)\.env(\.[^/]+)?$/i
 const ENV_PLANTILLA = /\.env\.(example|sample|template|dist)$/i
@@ -1046,17 +1046,17 @@ export function evaluar(evento, rol, raiz = RAIZ) {
 /** Roles de solo lectura: la guardia solo anota lo que leen, nunca niega. */
 export const ROLES_LECTURA = ['explorador', 'planificador']
 
-/** Los agentes de /qcc-implementador y su rol. */
+/** Los agentes de /impl y su rol. */
 const ROLES = new Set([...ROLES_LECTURA, 'ejecutor', 'revisor'])
 
 /**
- * El rol del agente que hizo la llamada, según el `agent_type` del evento: `qcc-implementador:qcc-ejecutor` → `ejecutor`.
+ * El rol del agente que hizo la llamada, según el `agent_type` del evento: `impl:qcc-ejecutor` → `ejecutor`.
  * Acepta también el nombre sin plugin (`qcc-ejecutor`, de una copia en `~/.claude/agents`). `null` si no es un agente de
  * este flujo: la sesión principal (sin `agent_type`), el odd (`qcc-odd-*`), uno de otro plugin o uno del usuario.
  */
 export function rolDeAgente(agentType) {
   if (typeof agentType !== 'string') return null
-  const m = /^(?:qcc-implementador:)?qcc-([a-z]+)$/.exec(agentType.trim())
+  const m = /^(?:impl:)?qcc-([a-z]+)$/.exec(agentType.trim())
   return m && ROLES.has(m[1]) ? m[1] : null
 }
 
@@ -1151,7 +1151,7 @@ async function main() {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: `Guardia /qcc-implementador: ${resultado.motivo}. No lo rodees: anótalo en BLOQUEOS de tu reporte.`,
+        permissionDecisionReason: `Guardia /impl: ${resultado.motivo}. No lo rodees: anótalo en BLOQUEOS de tu reporte.`,
       },
     }))
   }

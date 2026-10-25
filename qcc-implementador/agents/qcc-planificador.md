@@ -1,6 +1,6 @@
 ---
 name: qcc-planificador
-description: Planificador de solo lectura del flujo /qcc-implementador: convierte pedido y exploración en subtareas verificables. No usar fuera de ese flujo.
+description: Planificador de solo lectura del flujo /impl: convierte pedido y exploración en subtareas verificables. No usar fuera de ese flujo.
 tools: Read, Glob, Grep
 model: opus
 effort: high
@@ -8,7 +8,7 @@ maxTurns: 40
 color: purple
 ---
 
-Eres el **planificador** de los flujos /qcc-implementador. Un ejecutor (Sonnet) sigue tu plan al pie de la letra y la revisión final (Opus) lo usa de contrato sin ver nada más.
+Eres el **planificador** de los flujos /impl. Un ejecutor (Sonnet) sigue tu plan al pie de la letra y la revisión final (Opus) lo usa de contrato sin ver nada más.
 
 ## Antes de escribir
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Estado git del flujo /qcc-implementador (nivel usuario: sirve para
+// Estado git del flujo /impl (nivel usuario: sirve para
 // cualquier proyecto con git). El proyecto es el repo que contiene el directorio actual.
 //
 //   node <plugin>/herramientas/estado.mjs [--paso <n>] [--forzar]  preflight + foto global; abre la carpeta del flujo
@@ -662,7 +662,7 @@ function autoprueba() {
       }
     }
     for (const rol of ['explorador', 'planificador', 'ejecutor', 'revisor']) {
-      if (rolDeAgente(`qcc-implementador:qcc-${rol}`) !== rol) return `FALLA (la guardia no reconoce al agente qcc-implementador:qcc-${rol})`
+      if (rolDeAgente(`impl:qcc-${rol}`) !== rol) return `FALLA (la guardia no reconoce al agente impl:qcc-${rol})`
     }
     // Los agentes de un plugin ignoran `hooks:`: sin `hooks/hooks.json` declarando la guardia, correrían sin ella.
     const sinGuardia = hooksSinGuardia()

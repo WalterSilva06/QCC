@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Limpia de ~/.claude las copias de /qcc-implementador y /qcc-commit que instalaba la versión anterior de este archivo.
-// Los dos flujos ahora son plugins (`claude plugin install qcc-implementador@qcc`): esas copias duplicarían sus comandos y
+// Limpia de ~/.claude las copias de los flujos viejos qcc-implementador y qcc-commit (hoy /impl y /commit) que instalaba la versión anterior de este archivo.
+// Los dos flujos ahora son plugins (`claude plugin install impl@qcc`, `commit@qcc`): esas copias duplicarían sus comandos y
 // agentes, y los agentes viejos llaman a una guardia que ya no se instala ahí.
 //
 //   node qcc-implementador/instalar.mjs              lista lo que archivaría, sin tocar nada

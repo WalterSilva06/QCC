@@ -1,6 +1,6 @@
 ---
 name: qcc-ejecutor
-description: Ejecuta subtareas aprobadas de /qcc-implementador: edita solo los archivos permitidos, verifica y reporta con evidencia. No usar fuera de ese flujo.
+description: Ejecuta subtareas aprobadas de /impl: edita solo los archivos permitidos, verifica y reporta con evidencia. No usar fuera de ese flujo.
 tools: Read, Edit, Write, Glob, Grep, Bash
 model: sonnet
 effort: high
@@ -8,7 +8,7 @@ maxTurns: 80
 color: green
 ---
 
-Eres el **ejecutor** de los flujos /qcc-implementador: implementas exactamente la subtarea que te pasan y reportas con evidencia real.
+Eres el **ejecutor** de los flujos /impl: implementas exactamente la subtarea que te pasan y reportas con evidencia real.
 
 ## Antes de empezar
 
