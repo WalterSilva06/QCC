@@ -1034,7 +1034,7 @@ describe('semana', () => {
     const fila = await ui.find({ type: 'Box', key: 'sesion-cabecera' })
     const textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 
-    expect(fila?.text).toBe('SESIÓN  Opus 5.5 · high · flujo —')
+    expect(fila?.text).toBe('SESIÓN  Opus 5.5 · high')
     expect(textos).not.toContain('esf   ')
     expect(textos).not.toContain('Esfuerzo')
     // El modelo no es una línea suelta: vive solo dentro de la cabecera, con su nivel.
@@ -1042,7 +1042,7 @@ describe('semana', () => {
     await ui.unmount()
   })
 
-  test('esfuerzo: con origen «ajustes» la misma cabecera agrega «según ajustes»', async ($, on) => {
+  test('esfuerzo: con origen «ajustes» la cabecera no agrega «según ajustes»', async ($, on) => {
     mock.clock(on, { now: AHORA })
     motorMide(on)
     motorUsa(on)
@@ -1058,7 +1058,7 @@ describe('semana', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const fila = await ui.find({ type: 'Box', key: 'sesion-cabecera' })
 
-    expect(fila?.text).toBe('SESIÓN  Opus 5.5 · xhigh · según ajustes · flujo —')
+    expect(fila?.text).toBe('SESIÓN  Opus 5.5 · xhigh')
     await ui.unmount()
   })
 
@@ -1071,7 +1071,7 @@ describe('semana', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const fila = await ui.find({ type: 'Box', key: 'sesion-cabecera' })
 
-    expect(fila?.text).toBe('SESIÓN  — · flujo —')
+    expect(fila?.text).toBe('SESIÓN  —')
     await ui.unmount()
   })
 
@@ -1656,7 +1656,7 @@ describe('semana', () => {
     await ui.unmount()
   })
 
-  test('SESIÓN vacía lleva su cabecera y el aviso dim debajo, sin margen propio; Esta semana vacía no cambia', async ($, on) => {
+  test('SESIÓN vacía lleva solo su cabecera, sin aviso y sin margen propio; Esta semana vacía no cambia', async ($, on) => {
     mock.clock(on, { now: AHORA })
     motorMide(on)
     motorUsa(on)
@@ -1666,15 +1666,14 @@ describe('semana', () => {
     const ui40 = await $.ui.mount({ ...PANE_40, surface: 'terminal' })
     const sesion40 = await ui40.find({ type: 'Box', key: 'tabla-n' })
 
-    expect(sesion40?.text).toBe('SESIÓN  — · flujo —sin respuestas anotadas todavía')
+    expect(sesion40?.text).toBe('SESIÓN  —')
     await ui40.unmount()
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     const sesion = await ui.find({ type: 'Box', key: 'tabla-n' })
-    const aviso = (await ui.findAll({ type: 'Text' })).find(t => t.text === 'sin respuestas anotadas todavía')
 
     expect(sesion?.props.marginTop).toBe(0)
-    expect(aviso?.props.dimColor).toBe(true)
+    expect((await ui.findAll({ type: 'Text' })).map(t => t.text)).not.toContain('sin respuestas anotadas todavía')
 
     await ui.press({ key: 'pestana-semana' })
     const semana = await ui.find({ type: 'Box', key: 'tabla-s' })
@@ -1686,7 +1685,7 @@ describe('semana', () => {
     await ui.unmount()
   })
 
-  test('sin uso anotado lo dice', async ($, on) => {
+  test('sin uso anotado Esta semana lo dice', async ($, on) => {
     mock.clock(on, { now: AHORA })
     motorMide(on)
     motorUsa(on)
@@ -1694,6 +1693,7 @@ describe('semana', () => {
     await $.session.measure(MEDIDA)
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    await ui.press({ key: 'pestana-semana' })
     expect(await ui.find({ type: 'Text', text: /sin respuestas anotadas/ })).toBeDefined()
     await ui.unmount()
   })
@@ -5157,10 +5157,10 @@ describe('flujo en el panel', () => {
       expect(boton?.props.hotkey).toBe(hotkey)
       expect(boton?.props.label).toBe(label)
     }
-    // Ya no hay título «Flujo» ni el botón Ver/Ocultar: solo la fila `flujo`, bajo `esf`.
+    // Ya no hay título «Flujo» ni el botón Ver/Ocultar; sin flujo en curso la cabecera tampoco dibuja el resumen.
     expect(await textosDe(ui)).not.toContain('Flujo')
     expect(await ui.find({ type: 'Button', key: 'flujo-plegar' })).toBeUndefined()
-    expect(await desdeResumen(ui, 1)).toEqual(['—'])
+    expect(await ui.find({ type: 'Box', key: 'flujo-resumen' })).toBeUndefined()
     // Los botones viejos de plegar ya no existen.
     expect(await ui.find({ type: 'Button', key: 's-plegar' })).toBeUndefined()
     expect(await ui.find({ type: 'Button', key: 'historial-plegar' })).toBeUndefined()
@@ -5254,7 +5254,7 @@ describe('flujo en el panel', () => {
     expect(arbol.find(n => n.type === 'Box' && n.key === 'pestanas-carpeta')).toBeUndefined()
 
     // La cabecera de la sesión reúne modelo, esfuerzo y flujo en una fila.
-    expect((await ui.find({ type: 'Box', key: 'sesion-cabecera' }))?.text).toBe('SESIÓN  Opus 5.5 · high · flujo —')
+    expect((await ui.find({ type: 'Box', key: 'sesion-cabecera' }))?.text).toBe('SESIÓN  Opus 5.5 · high')
     expect(await ui.find({ type: 'Box', key: 'esfuerzo-fila' })).toBeUndefined()
     // El total de la sesión ya no va en la fila de la cabecera (a 40 columnas no cabría con el flujo): va en la nota.
     expect((await ui.find({ type: 'Box', key: 'sesion-cabecera' }))?.text).not.toContain(' · sal ')
@@ -5420,7 +5420,7 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('el flujo va en la cabecera de SESIÓN, tras el modelo y el esfuerzo, con «—» sin flujo y el resumen con él', async ($, on) => {
+  test('el flujo va en la cabecera de SESIÓN, tras el modelo y el esfuerzo, y sin flujo no se dibuja', async ($, on) => {
     preparar(on)
     await $.session.measure(MEDIDA)
 
@@ -5435,19 +5435,21 @@ describe('flujo en el panel', () => {
     }
 
     const sin = await resumen()
-    expect(sin.texto).toBe('—')
     expect(sin.sesion).toBeGreaterThan(-1)
-    expect(sin.etiqueta).toBeGreaterThan(sin.sesion)
-    expect(sin.i).toBeGreaterThan(sin.etiqueta)
+    expect(sin.etiqueta).toBe(-1)
+    expect(sin.i).toBe(-1)
+
+    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
+    const con = await resumen()
+    expect(con.texto).toBe('/qcc-implementador · Preflight · 0 s')
+    expect(con.etiqueta).toBeGreaterThan(con.sesion)
+    expect(con.i).toBeGreaterThan(con.etiqueta)
 
     // El modelo y el esfuerzo caen entre el título y la etiqueta de flujo, sin nada más en medio.
     const arbol = await ui.findAll({})
-    const entre = arbol.slice(sin.sesion + 1, sin.etiqueta).filter(n => n.type === 'Text')
+    const entre = arbol.slice(con.sesion + 1, con.etiqueta).filter(n => n.type === 'Text')
     expect(entre.length).toBeGreaterThan(0)
     expect(entre.map(n => n.text).join('')).toMatch(/^(—|.+ · .+)$/)
-
-    await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
-    expect((await resumen()).texto).toBe('/qcc-implementador · Preflight · 0 s')
     await ui.unmount()
   })
 
@@ -6654,7 +6656,7 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'simplify', text: '' })
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
 
-    expect(await desdeResumen(ui, 1)).toEqual(['—'])
+    expect(await ui.find({ type: 'Box', key: 'flujo-resumen' })).toBeUndefined()
     await ui.unmount()
   })
 
@@ -6667,7 +6669,7 @@ describe('flujo en el panel', () => {
     expect((await desdeResumen(ui, 1))[0]).toBe('/qcc-implementador · Preflight · 0 s')
 
     await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
-    expect(await desdeResumen(ui, 1)).toEqual(['—'])
+    expect(await ui.find({ type: 'Box', key: 'flujo-resumen' })).toBeUndefined()
     await ui.unmount()
   })
 
@@ -8097,7 +8099,7 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  test('S4: sin /qcc-implementador la cabecera de SESIÓN omite `flujo —` y deja el modelo; la leyenda pierde ■ orquestador sin ningún implementador', async ($, on) => {
+  test('S4: sin /qcc-implementador la cabecera de SESIÓN omite el flujo y deja el modelo; la leyenda pierde ■ orquestador sin ningún implementador', async ($, on) => {
     motorInstalados(on)
     await arrancar($)
 
@@ -8110,16 +8112,16 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  for (const [nombre, skills, conFlujo] of [
-    ['/qcc-implementador', { normal: true, odd: false }, true],
-    ['solo odd', { normal: false, odd: true }, false],
+  for (const [nombre, skills] of [
+    ['/qcc-implementador', { normal: true, odd: false }],
+    ['solo odd', { normal: false, odd: true }],
   ] as const) {
-    test(`S4: con ${nombre} la fila \`flujo —\` ${conFlujo ? 'está' : 'no está'} y la leyenda conserva ■ orquestador`, async ($, on) => {
+    test(`S4: con ${nombre} sin flujo en curso la cabecera no dibuja el flujo y la leyenda conserva ■ orquestador`, async ($, on) => {
       motorInstalados(on, { skills })
       await arrancar($)
 
       const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-      expect((await ui.find({ type: 'Box', key: 'flujo-resumen' })) !== undefined).toBe(conFlujo)
+      expect(await ui.find({ type: 'Box', key: 'flujo-resumen' })).toBeUndefined()
       expect(await leyendaDe(ui)).toEqual(['directo', 'orquestador', 'subagentes'])
       await ui.unmount()
     })
@@ -8148,7 +8150,6 @@ describe('historial en el panel', () => {
 
       const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
       expect(await pestanasDe(ui)).toEqual(TODAS)
-      expect(await ui.find({ type: 'Box', key: 'flujo-resumen' })).toBeDefined()
       expect(await leyendaDe(ui)).toEqual(['directo', 'orquestador', 'subagentes'])
       await ui.unmount()
     })

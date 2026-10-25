@@ -1133,7 +1133,7 @@ export const register: Register = on => {
             {cabecera === null && s !== null && s.total > 0 && <Text>{conSalida}</Text>}
           </Box>
           {s === null || s.filas.length === 0 ? (
-            prefijo === 'n' && cabecera === null ? null : <Text dimColor>sin respuestas anotadas todavía</Text>
+            prefijo === 'n' ? null : <Text dimColor>sin respuestas anotadas todavía</Text>
           ) : (
             <Box flexDirection="column">
               <Box>
@@ -1571,9 +1571,9 @@ export const register: Register = on => {
 
     const sesionUnida = ses === null ? null : unirOrigenes(ses)
     /**
-     * La cabecera de «Esta sesión»: «SESIÓN  Opus 5.5 · high · flujo —». El modelo con el esfuerzo (y «según ajustes»
-     * antes del primer turno) y, con un implementador instalado, el resumen del flujo. Si no cabe se recorta el flujo,
-     * nunca el modelo ni el esfuerzo. El total de la sesión va en la nota de abajo, no en esta fila.
+     * La cabecera de «Esta sesión»: «SESIÓN  Opus 5.5 · high». El modelo con el esfuerzo y, con un implementador
+     * instalado y un flujo en curso, el resumen del flujo. Si no cabe se recorta el flujo, nunca el modelo ni el
+     * esfuerzo. El total de la sesión va en la nota de abajo, no en esta fila.
      */
     const cabeceraSesion = (
       <Box key="sesion-cabecera">
@@ -1582,17 +1582,17 @@ export const register: Register = on => {
         </Box>
         <Box flexShrink={0}>
           <Text dimColor>
-            {esf === null ? '—' : `${familia(esf.modelo)} · ${nivel}${esf.origen === 'ajustes' ? ' · según ajustes' : ''}`}
+            {esf === null ? '—' : `${familia(esf.modelo)} · ${nivel}`}
           </Text>
         </Box>
-        {vista.flujo && (
+        {vista.flujo && fl !== null && (
           <Box>
             <Text dimColor wrap="truncate-end">
               {' · flujo '}
             </Text>
             <Box key="flujo-resumen">
               <Text dimColor wrap="truncate-end">
-                {fl === null ? '—' : resumenFlujo(fl, t)}
+                {resumenFlujo(fl, t)}
               </Text>
             </Box>
           </Box>
