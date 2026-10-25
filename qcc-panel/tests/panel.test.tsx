@@ -2,6 +2,7 @@ import type { On, SessionContextBreakdown, SessionMeasureInput } from 'claude-co
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
+import { anotarAgente, anotarArchivo, anotarHerramienta, cerrarAgente, resumenAgentes, TOPE_AGENTES, TOPE_ARCHIVOS } from '../hooks/agentes'
 import { anotarCache, decidirAvisoContexto, restante, tasaAciertos, TTL_CACHE_MS } from '../hooks/cache'
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
@@ -61,7 +62,7 @@ import {
   unirOrigenes,
 } from '../hooks/semana'
 import type { Cuentas, Registro } from '../hooks/semana'
-import type { Actividad, Cache, Desglose, FilaSemana, Flujo, Freno, Parte, Semana } from '../types'
+import type { Actividad, AgenteVisto, ArchivoTocado, Cache, Desglose, FilaSemana, Flujo, Freno, Parte, Semana } from '../types'
 
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
 
@@ -7653,8 +7654,8 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  test('pestanaValida: solo las cuatro pestañas; cualquier otro valor da inicio', async () => {
-    for (const p of ['inicio', 'flujo', 'semana', 'historial'] as const) expect(pestanaValida(p)).toBe(p)
+  test('pestanaValida: solo las cinco pestañas; cualquier otro valor da inicio', async () => {
+    for (const p of ['inicio', 'flujo', 'semana', 'historial', 'agentes'] as const) expect(pestanaValida(p)).toBe(p)
     for (const x of ['otra', '', 'Flujo', 7, true, null, undefined, {}, ['flujo']]) expect(pestanaValida(x)).toBe('inicio')
   })
 
@@ -8263,6 +8264,11 @@ describe('implementadores instalados (puro)', () => {
     expect(pestanaValida('otra', { flujo: true, historial: true })).toBe('inicio')
     expect(pestanaValida('flujo')).toBe('flujo')
     expect(pestanaValida('historial')).toBe('historial')
+    // «Agentes» se oculta solo con `agentes: false`; sin el campo la vista no la toca.
+    expect(pestanaValida('agentes', { flujo: true, historial: true, agentes: false })).toBe('inicio')
+    expect(pestanaValida('agentes', { flujo: true, historial: true, agentes: true })).toBe('agentes')
+    expect(pestanaValida('agentes', { flujo: false, historial: false })).toBe('agentes')
+    expect(pestanaValida('flujo', { flujo: false, historial: true, agentes: true })).toBe('inicio')
   })
 })
 
@@ -8749,6 +8755,405 @@ describe('caché y contexto en el panel', () => {
     await medirPorcentaje($, 96)
     const ui = await $.ui.mount({ ...PANE_40, surface: 'terminal' })
     expect(await ui.find({ type: 'Text', text: /caché/ })).toBeDefined()
+    await ui.unmount()
+  })
+})
+
+describe('agentes (puro)', () => {
+  const nuevo = (id: unknown, t: number, extra: Partial<Parameters<typeof anotarAgente>[1]> = {}) => ({ id, tipo: 'qcc-implementador:qcc-ejecutor', descripcion: 'trabajo', t, ...extra })
+
+  /** Congela la lista y sus elementos: una función que los mutara lanzaría. */
+  const congelar = <T extends object>(lista: T[]): T[] => Object.freeze(lista.map(x => Object.freeze({ ...x }))) as T[]
+
+  test('anotarAgente: agrega en curso y sin herramientas; un id repetido o inválido no cambia nada; nunca muta', () => {
+    const a = anotarAgente(undefined, nuevo('a1', 1_000, { llamada: 'tu-1' }))
+    expect(a).toEqual([
+      { id: 'a1', tipo: 'qcc-implementador:qcc-ejecutor', descripcion: 'trabajo', desde: 1_000, estado: 'corriendo', herramientas: 0, llamada: 'tu-1' },
+    ])
+
+    const base = congelar(a)
+    expect(anotarAgente(base, nuevo('a1', 2_000))).toEqual(a)
+    for (const id of [undefined, null, 7, '', '   ', {}, ['a2']]) expect(anotarAgente(base, nuevo(id, 2_000))).toEqual(a)
+
+    // Sin tipo, descripción ni llamada de texto, quedan vacíos y sin `llamada`.
+    expect(anotarAgente(base, { id: 'a2', tipo: 5, descripcion: null, llamada: 9, t: 3_000 })[1]).toEqual({
+      id: 'a2',
+      tipo: '',
+      descripcion: '',
+      desde: 3_000,
+      estado: 'corriendo',
+      herramientas: 0,
+    })
+    expect(base).toHaveLength(1)
+  })
+
+  test('anotarAgente: con más de 40 se cae el terminado más viejo; sin terminados, el más viejo de todos', () => {
+    expect(TOPE_AGENTES).toBe(40)
+    let l: AgenteVisto[] = []
+    for (let i = 0; i < 40; i++) l = anotarAgente(l, nuevo(`a${i}`, i))
+    // a5 terminó a las 100 y a2 a las 50: el terminado más viejo es a2, aunque se lanzó antes que a5.
+    l = cerrarAgente(l, { id: 'a5' }, true, 100)
+    l = cerrarAgente(l, { id: 'a2' }, false, 50)
+
+    const con = anotarAgente(congelar(l), nuevo('nuevo', 200))
+    expect(con).toHaveLength(40)
+    expect(con.map(a => a.id)).not.toContain('a2')
+    expect(con.map(a => a.id)).toContain('a5')
+    expect(con.at(-1)?.id).toBe('nuevo')
+    expect(con[0]?.id).toBe('a0')
+
+    let todos: AgenteVisto[] = []
+    for (let i = 0; i < 40; i++) todos = anotarAgente(todos, nuevo(`b${i}`, i))
+    const sin = anotarAgente(todos, nuevo('b40', 40))
+    expect(sin).toHaveLength(40)
+    expect(sin[0]?.id).toBe('b1')
+    expect(sin.at(-1)?.id).toBe('b40')
+  })
+
+  test('anotarHerramienta: suma al agente conocido; uno desconocido o un id que no es texto no crea nada', () => {
+    const base = congelar(anotarAgente(anotarAgente(undefined, nuevo('a1', 1)), nuevo('a2', 2)))
+    const dos = anotarHerramienta(anotarHerramienta(base, 'a1'), 'a1')
+    expect(dos.map(a => [a.id, a.herramientas])).toEqual([
+      ['a1', 2],
+      ['a2', 0],
+    ])
+    for (const id of ['zzz', '', undefined, null, 4, {}]) expect(anotarHerramienta(base, id)).toEqual(base)
+    expect(anotarHerramienta(undefined, 'a1')).toEqual([])
+  })
+
+  test('cerrarAgente: por id o por llamada, listo o fallo; uno ya cerrado o desconocido no cambia', () => {
+    const base = congelar(anotarAgente(anotarAgente(undefined, nuevo('a1', 1, { llamada: 'tu-1' })), nuevo('a2', 2, { llamada: 'tu-2' })))
+
+    const porId = cerrarAgente(base, { id: 'a1' }, true, 500)
+    expect(porId.map(a => [a.id, a.estado, a.fin])).toEqual([
+      ['a1', 'listo', 500],
+      ['a2', 'corriendo', undefined],
+    ])
+    // Sin id, por la llamada del `Agent`; si falló, `fallo`.
+    expect(cerrarAgente(base, { llamada: 'tu-2' }, false, 700).map(a => [a.estado, a.fin])).toEqual([
+      ['corriendo', undefined],
+      ['fallo', 700],
+    ])
+    // Un id desconocido cae a la llamada.
+    expect(cerrarAgente(base, { id: 'zzz', llamada: 'tu-1' }, true, 9)[0]?.estado).toBe('listo')
+    // Ya cerrado: conserva su estado y su hora.
+    expect(cerrarAgente(porId, { id: 'a1' }, false, 900)).toEqual(porId)
+    // Desconocido o sin datos: igual.
+    expect(cerrarAgente(base, { id: 'zzz' }, true, 9)).toEqual(base)
+    expect(cerrarAgente(base, {}, true, 9)).toEqual(base)
+    expect(cerrarAgente(base, { id: 5, llamada: null }, true, 9)).toEqual(base)
+    expect(cerrarAgente(undefined, { id: 'a1' }, true, 9)).toEqual([])
+  })
+
+  test('anotarArchivo: ×N por archivo, el último tocado al final, tope de 10 y rutas inválidas ignoradas', () => {
+    expect(TOPE_ARCHIVOS).toBe(10)
+    let l: ArchivoTocado[] = []
+    l = anotarArchivo(l, 'a.ts', 'ejecutor', 1)
+    l = anotarArchivo(l, 'b.ts', 'principal', 2)
+    l = anotarArchivo(congelar(l), 'a.ts', 'revisor', 3)
+    expect(l).toEqual([
+      { ruta: 'b.ts', veces: 1, agente: 'principal', t: 2 },
+      { ruta: 'a.ts', veces: 2, agente: 'revisor', t: 3 },
+    ])
+
+    const base = congelar(l)
+    for (const ruta of [undefined, null, 5, '', '  ', {}, ['a.ts']]) expect(anotarArchivo(base, ruta, 'x', 9)).toEqual(l)
+    expect(anotarArchivo(undefined, 5, 'x', 9)).toEqual([])
+
+    let muchos: ArchivoTocado[] = []
+    for (let i = 0; i < 11; i++) muchos = anotarArchivo(muchos, `f${i}.ts`, 'principal', i)
+    expect(muchos).toHaveLength(10)
+    expect(muchos[0]?.ruta).toBe('f1.ts')
+    expect(muchos.at(-1)?.ruta).toBe('f10.ts')
+  })
+
+  test('resumenAgentes: resumen, líneas del más reciente al más viejo, tiempos y rutas recortadas', () => {
+    const agentes: AgenteVisto[] = [
+      { id: 'a1', tipo: 'qcc-implementador:qcc-ejecutor', descripcion: 'Editar API', desde: 1_000, estado: 'listo', fin: 66_000, herramientas: 7 },
+      { id: 'a2', tipo: '', descripcion: '', desde: 2_000, estado: 'corriendo', herramientas: 0 },
+      { id: 'a3', tipo: 'Explore', descripcion: 'Buscar', desde: 3_000, estado: 'fallo', fin: 3_500, herramientas: 5 },
+    ]
+    const archivos: ArchivoTocado[] = [
+      { ruta: 'src/a.ts', veces: 2, agente: 'ejecutor', t: 1 },
+      { ruta: 'D:/muy/larga/ruta/al/archivo.ts', veces: 1, agente: 'principal', t: 2 },
+    ]
+
+    expect(resumenAgentes(agentes, archivos, 12_000, 30)).toEqual({
+      resumen: '3 agentes · 1 corriendo · 12 herramientas',
+      agentes: [
+        { glifo: '✗', color: 'error', rol: 'Explore', descripcion: 'Buscar', cola: ' 0 s · 5 herr.' },
+        { glifo: '▸', color: 'warning', rol: 'agente', descripcion: '', cola: ' 10 s · 0 herr.' },
+        { glifo: '✓', color: 'success', rol: 'ejecutor', descripcion: 'Editar API', cola: ' 1 min 5 s · 7 herr.' },
+      ],
+      archivos: [
+        { ruta: '…/al/archivo.ts', cola: ' ×1 · principal' },
+        { ruta: 'src/a.ts', cola: ' ×2 · ejecutor' },
+      ],
+    })
+
+    expect(resumenAgentes([agentes[1] as AgenteVisto], [], 12_000, 30).resumen).toBe('1 agente · 1 corriendo · 0 herramientas')
+    expect(resumenAgentes(undefined, undefined, 12_000, 30)).toEqual({ resumen: '0 agentes · 0 corriendo · 0 herramientas', agentes: [], archivos: [] })
+  })
+})
+
+describe('agentes en el panel', () => {
+  const textosDe = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+
+  /** El motor bajo el panel: reloj movible, `Agent` con compuerta y fallo por `description`, y `Edit` que puede fallar. */
+  function motor(on: On, inicial: Record<string, unknown> = {}) {
+    const reloj = { t: AHORA }
+    const compuertas = new Map<string, Promise<void>>()
+    const fallan = new Set<string>()
+    const agentIds = new Map<string, string>()
+    const resultados = new Map<string, { agentId: string; totalDurationMs: number }>()
+    on('clock.now', () => ({ value: reloj.t }))
+    on('clock.every', () => ({ value: undefined }))
+    on('clock.after', () => ({ value: undefined }))
+    motorMide(on)
+    motorUsa(on)
+    const guardados = motorStore(on, inicial)
+    on('session.id', () => ({ value: 's1' }))
+    on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+    on('tool.call', async (_$, e) => {
+      if (e.tool === 'Agent') {
+        const descripcion = String((e as unknown as Record<string, unknown>).description ?? '')
+        await compuertas.get(descripcion)
+        if (fallan.has(descripcion)) throw new Error('agente caído')
+
+        return { result: 'listo', ...resultados.get(descripcion) }
+      }
+      if (e.tool === 'Edit' && fallan.has(String((e as unknown as Record<string, unknown>).file_path))) throw new Error('edición caída')
+
+      return { result: 'listo' }
+    })
+    on('agent.spawn', (_$, e) => {
+      const agentId = agentIds.get(e.description)
+
+      return { model: 'claude-haiku-5-5', ...(agentId === undefined ? {} : { agentId }) }
+    })
+
+    /** Cierra la compuerta del `Agent` con esa descripción; devuelve cómo abrirla. */
+    function detener(descripcion: string): () => void {
+      let abrir: () => void = () => undefined
+      compuertas.set(descripcion, new Promise<void>(r => (abrir = r)))
+
+      return abrir
+    }
+
+    return { reloj, fallan, agentIds, resultados, guardados, detener }
+  }
+
+  const lanzarAgente = ($: Engine, description: string, subagent_type: string, tool_use_id: string) =>
+    $.tool.call({ tool: 'Agent', subagent_type, description, prompt: 'prueba', tool_use_id })
+  const spawn = ($: Engine, description: string, subagentType: string, tool_use_id: string) =>
+    $.agent.spawn({ tool_use_id, prompt: 'prueba', description, subagentType })
+  const editar = ($: Engine, file_path: string, agentId?: string) =>
+    $.tool.call({ tool: 'Edit', file_path, ...(agentId === undefined ? {} : { agentId }) })
+
+  /** Los textos de la pestaña «Agentes», desde su bloque hasta el final. */
+  async function deAgentes(ui: Ui) {
+    const arbol = await ui.findAll({})
+    const i = arbol.findIndex(n => n.type === 'Box' && n.key === 'agentes')
+    expect(i).toBeGreaterThan(-1)
+
+    return arbol
+      .slice(i)
+      .filter(n => n.type === 'Text')
+      .map(n => n.text ?? '')
+  }
+
+  test('sin agentes anotados no hay botón «Agentes»; con uno, sale con la tecla a', async ($, on) => {
+    const { agentIds } = motor(on)
+    agentIds.set('Revisar API', 'ag-1')
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+
+    expect(await ui.find({ type: 'Button', key: 'pestana-agentes' })).toBeUndefined()
+
+    // Una herramienta de un agente que nadie lanzó no crea el agente, ni la pestaña.
+    await editar($, 'src/z.ts', 'ag-desconocido')
+    expect(await ui.find({ type: 'Button', key: 'pestana-agentes' })).toBeUndefined()
+
+    await spawn($, 'Revisar API', 'qcc-implementador:qcc-ejecutor', 'tu-1')
+    const boton = await ui.find({ type: 'Button', key: 'pestana-agentes' })
+    expect(boton?.props.hotkey).toBe('a')
+    expect(boton?.props.label).toBe('Agentes')
+    await ui.unmount()
+  })
+
+  test('spawn, herramientas del agente y vuelta dibujan la pestaña: resumen, líneas y archivos tocados', async ($, on) => {
+    const m = motor(on)
+    m.agentIds.set('Editar API', 'ag-1')
+    m.agentIds.set('Buscar usos', 'ag-2')
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+
+    const abrir = m.detener('Editar API')
+    const vuelo = lanzarAgente($, 'Editar API', 'qcc-implementador:qcc-ejecutor', 'tu-1')
+    await esperar()
+    await spawn($, 'Editar API', 'qcc-implementador:qcc-ejecutor', 'tu-1')
+    // Dos ediciones y una lectura del agente, y una edición del hilo principal.
+    await editar($, 'src/a.ts', 'ag-1')
+    await editar($, 'src/a.ts', 'ag-1')
+    await $.tool.call({ tool: 'Read', file_path: 'src/leido.ts', agentId: 'ag-1' })
+    await editar($, 'src/b.ts')
+    m.reloj.t += 5_000
+
+    await ui.press({ key: 'pestana-agentes' })
+    expect(await deAgentes(ui)).toEqual([
+      '1 agente · 1 corriendo · 3 herramientas',
+      '▸ ',
+      'ejecutor',
+      ' Editar API',
+      ' 5 s · 3 herr.',
+      'Archivos tocados',
+      'src/b.ts',
+      ' ×1 · principal',
+      'src/a.ts',
+      ' ×2 · ejecutor',
+    ])
+
+    // Vuelve bien: queda ✓ con el tiempo fijo, aunque el reloj siga.
+    abrir()
+    await vuelo
+    m.reloj.t += 60_000
+    // Un segundo agente, de otro tipo, que falla.
+    m.fallan.add('Buscar usos')
+    await spawn($, 'Buscar usos', 'Explore', 'tu-2')
+    await $.tool.call({ tool: 'Grep', agentId: 'ag-2' })
+    const error = await lanzarAgente($, 'Buscar usos', 'Explore', 'tu-2').then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toMatch(/panel/i)
+
+    const textos = await deAgentes(ui)
+    expect(textos.slice(0, 9)).toEqual([
+      '2 agentes · 0 corriendo · 4 herramientas',
+      '✗ ',
+      'Explore',
+      ' Buscar usos',
+      ' 0 s · 1 herr.',
+      '✓ ',
+      'ejecutor',
+      ' Editar API',
+      ' 5 s · 3 herr.',
+    ])
+    await ui.unmount()
+  })
+
+  test('un Agent que vuelve sin agentId se cierra por su tool_use_id', async ($, on) => {
+    const m = motor(on)
+    m.agentIds.set('Sin id', 'ag-1')
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+
+    const abrir = m.detener('Sin id')
+    const vuelo = lanzarAgente($, 'Sin id', 'qcc-implementador:qcc-revisor', 'tu-9')
+    await esperar()
+    await spawn($, 'Sin id', 'qcc-implementador:qcc-revisor', 'tu-9')
+    m.reloj.t += 3_000
+    abrir()
+    expect(await vuelo).toEqual({ result: 'listo' })
+
+    await ui.press({ key: 'pestana-agentes' })
+    expect((await deAgentes(ui)).slice(0, 5)).toEqual(['1 agente · 0 corriendo · 0 herramientas', '✓ ', 'revisor', ' Sin id', ' 3 s · 0 herr.'])
+    await ui.unmount()
+  })
+
+  test('un Edit que falla sigue lanzando el mismo error y no anota el archivo', async ($, on) => {
+    const m = motor(on)
+    m.agentIds.set('Editar', 'ag-1')
+    m.fallan.add('src/roto.ts')
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await spawn($, 'Editar', 'qcc-implementador:qcc-ejecutor', 'tu-1')
+
+    const error = await editar($, 'src/roto.ts', 'ag-1').then(
+      () => null,
+      (err: unknown) => err,
+    )
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).not.toMatch(/panel/i)
+    await editar($, 'src/ok.ts', 'ag-1')
+
+    await ui.press({ key: 'pestana-agentes' })
+    const textos = await deAgentes(ui)
+    // La herramienta que falló igual se llamó; el archivo roto no figura.
+    expect(textos[0]).toBe('1 agente · 1 corriendo · 2 herramientas')
+    expect(textos).toContain('src/ok.ts')
+    expect(textos).not.toContain('src/roto.ts')
+    await ui.unmount()
+  })
+
+  test('Write y NotebookEdit cuentan; un file_path que no es texto o falta no rompe ni anota nada', async ($, on) => {
+    const m = motor(on)
+    m.agentIds.set('Algo', 'ag-1')
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await spawn($, 'Algo', 'qcc-implementador:qcc-ejecutor', 'tu-1')
+    expect(await $.tool.call({ tool: 'Edit', file_path: 42 })).toEqual({ result: 'listo' })
+    expect(await $.tool.call({ tool: 'Edit' })).toEqual({ result: 'listo' })
+    await $.tool.call({ tool: 'Write', file_path: 'nuevo.md', agentId: 'ag-1' })
+    await $.tool.call({ tool: 'NotebookEdit', notebook_path: 'cuaderno.ipynb' })
+
+    await ui.press({ key: 'pestana-agentes' })
+    expect(await deAgentes(ui)).toEqual([
+      '1 agente · 1 corriendo · 1 herramienta',
+      '▸ ',
+      'ejecutor',
+      ' Algo',
+      ' 0 s · 1 herr.',
+      'Archivos tocados',
+      'cuaderno.ipynb',
+      ' ×1 · principal',
+      'nuevo.md',
+      ' ×1 · ejecutor',
+    ])
+    await ui.unmount()
+  })
+
+  test('prefs:pestana «agentes» sin agentes abre Inicio y no se borra; con un agente abre Agentes', async ($, on) => {
+    const m = motor(on, { 'prefs:pestana': 'agentes' })
+    m.agentIds.set('Algo', 'ag-1')
+    on('session.model', () => ({ value: 'claude-opus-5-5' }))
+    on('settings.read', () => ({ value: {} }))
+    on('command.register', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('ui.open', () => ({ value: { isPlaced: true } }))
+    await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
+
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await textosDe(ui)).toContain('ctx   ')
+    expect(m.guardados.get('prefs:pestana')).toBe('agentes')
+
+    await spawn($, 'Algo', 'qcc-implementador:qcc-ejecutor', 'tu-1')
+    expect((await deAgentes(ui))[0]).toBe('1 agente · 1 corriendo · 0 herramientas')
+    await ui.unmount()
+  })
+
+  test('/clear vacía agentes y archivos; otra razón de cierre no', async ($, on) => {
+    const m = motor(on)
+    m.agentIds.set('Algo', 'ag-1')
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await spawn($, 'Algo', 'qcc-implementador:qcc-ejecutor', 'tu-1')
+    await editar($, 'src/a.ts', 'ag-1')
+    await ui.press({ key: 'pestana-agentes' })
+    expect((await deAgentes(ui)).slice(0, 1)).toEqual(['1 agente · 1 corriendo · 1 herramienta'])
+
+    await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
+    expect((await deAgentes(ui)).slice(0, 1)).toEqual(['1 agente · 1 corriendo · 1 herramienta'])
+
+    await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+    expect(await ui.find({ type: 'Button', key: 'pestana-agentes' })).toBeUndefined()
+    expect(await textosDe(ui)).toContain('ctx   ')
+    expect(m.guardados.get('prefs:pestana')).toBe('agentes')
+
+    // Un agente nuevo tras /clear empieza de cero, sin archivos.
+    await spawn($, 'Algo', 'qcc-implementador:qcc-ejecutor', 'tu-2')
+    expect(await deAgentes(ui)).toEqual(['1 agente · 1 corriendo · 0 herramientas', '▸ ', 'ejecutor', ' Algo', ' 0 s · 0 herr.'])
     await ui.unmount()
   })
 })

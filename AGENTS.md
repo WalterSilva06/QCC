@@ -56,6 +56,7 @@ qcc-panel/
   hooks/flujo.ts                  puro: qué flujo corre y en qué paso, a partir de los eventos
   hooks/historial.ts              puro: leer flujos.jsonl y armar las líneas del historial
   hooks/freno.ts                  puro: decidir si un envío se frena una vez con un aviso
+  hooks/agentes.ts                puro: anotar los subagentes y los archivos tocados de la pestaña Agentes
   types/index.d.ts                tipos y contrato de $.state (PluginState['qcc-panel'])
   tests/panel.test.tsx            único archivo de tests
 ```

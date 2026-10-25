@@ -222,8 +222,39 @@ export type Instalados = {
   odd: boolean | null
 }
 
-/** Las pestañas del panel: «Inicio», «Flujo», «Gasto semanal» e «Historial». «Carpeta» es un botón, no una pestaña. «Flujo» e «Historial» pueden estar ocultas si no hay un implementador instalado. */
-export type Pestana = 'inicio' | 'flujo' | 'semana' | 'historial'
+/** Las pestañas del panel: «Inicio», «Flujo», «Gasto semanal», «Historial» y «Agentes». «Carpeta» es un botón, no una pestaña. «Flujo» e «Historial» pueden estar ocultas si no hay un implementador instalado; «Agentes» solo aparece si hay algún agente anotado. */
+export type Pestana = 'inicio' | 'flujo' | 'semana' | 'historial' | 'agentes'
+
+/** Un subagente visto en la sesión (de cualquier flujo), tal como lo muestra la pestaña «Agentes». */
+export type AgenteVisto = {
+  /** Su `agentId`, el que trae el resultado de `agent.spawn` y el `agentId` de sus herramientas. */
+  id: string
+  /** Su `subagent_type` tal cual (`qcc-implementador:qcc-ejecutor`); vacío si no vino. */
+  tipo: string
+  /** La `description` con que se lanzó; vacía si no vino. */
+  descripcion: string
+  /** Hora (ms) en que se lanzó. */
+  desde: number
+  /** Hora (ms) en que volvió; falta mientras corre. */
+  fin?: number
+  /** `corriendo`, `listo` (su `Agent` volvió bien) o `fallo` (su `Agent` falló). */
+  estado: 'corriendo' | 'listo' | 'fallo'
+  /** Herramientas que llamó (los `tool.call` con su `agentId`). */
+  herramientas: number
+  /** El `tool_use_id` del `Agent` que lo lanzó, para cerrarlo si su resultado vuelve sin `agentId`. Falta si no vino. */
+  llamada?: string
+}
+
+/** Un archivo editado (`Edit`, `Write` o `NotebookEdit`) en la sesión. */
+export type ArchivoTocado = {
+  ruta: string
+  /** Ediciones anotadas desde que entró en la lista. */
+  veces: number
+  /** Rol del último agente que lo tocó, o `principal` si fue el hilo principal. */
+  agente: string
+  /** Hora (ms) de la última edición. */
+  t: number
+}
 
 /**
  * Estado del freno de contexto de `prompt.submit`. Solo se escribe lo que tiene valor; sin campos el freno es `null`, nunca `{}`.
@@ -278,6 +309,10 @@ declare module 'claude-code' {
       cache?: Cache | null
       /** El umbral más alto de contexto ya avisado con un toast (80 o 95); 0 si ninguno, y vuelve a 0 cuando el % baja de 80. Si falta (estado de una versión anterior), 0. */
       avisoContexto?: 0 | 80 | 95
+      /** Los subagentes vistos en la sesión (el más viejo primero, con tope de 40); se vacía con `/clear`. Solo de esta terminal. Si falta (estado de una versión anterior), `[]`. */
+      agentes?: AgenteVisto[]
+      /** Los últimos archivos editados en la sesión (el más viejo primero, con tope de 10); se vacía con `/clear`. Solo de esta terminal. Si falta (estado de una versión anterior), `[]`. */
+      archivos?: ArchivoTocado[]
     }
   }
 }

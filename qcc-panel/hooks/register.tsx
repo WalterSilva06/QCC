@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
 
 import type { Actividad, Esfuerzo, Flujo, Medida, Pestana, Semana } from '../types'
+import { anotarAgente, anotarArchivo, anotarHerramienta, cerrarAgente, resumenAgentes } from './agentes'
 import { anotarCache, decidirAvisoContexto, restante, tasaAciertos, TTL_CACHE_MS } from './cache'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
@@ -118,6 +119,8 @@ const corridaOdd = atom({ plugin: 'qcc-panel', key: 'corridaOdd' } as const, fal
 const instalados = atom({ plugin: 'qcc-panel', key: 'instalados' } as const, null)
 const cache = atom({ plugin: 'qcc-panel', key: 'cache' } as const, null)
 const avisoContexto = atom({ plugin: 'qcc-panel', key: 'avisoContexto' } as const, 0)
+const agentes = atom({ plugin: 'qcc-panel', key: 'agentes' } as const, [])
+const archivos = atom({ plugin: 'qcc-panel', key: 'archivos' } as const, [])
 
 /** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
@@ -455,6 +458,54 @@ async function vaciarAlAbrirTanda($: EngineInterface, s: Senal) {
   }
 }
 
+/** Suma una herramienta al subagente que la llama (un agente desconocido no cambia nada). Nunca rechaza: no puede frenar una herramienta. */
+async function contarHerramienta($: EngineInterface, agentId: string | null | undefined) {
+  try {
+    if (typeof agentId === 'string') await update($, agentes, antes => anotarHerramienta(antes ?? [], agentId))
+  } catch {
+    // Sin la cuenta, la línea del agente queda con una herramienta menos.
+  }
+}
+
+/**
+ * Lo que anota una herramienta al volver: un `Agent` cierra a su subagente (`listo` si volvió bien, `fallo` si falló), y un `Edit`, `Write` o
+ * `NotebookEdit` que salió bien anota su archivo con el rol de quien lo tocó. `resultado` es lo que devolvió `next` (sin él si falló).
+ * Nunca rechaza: no puede cambiar el resultado ni el error de la herramienta.
+ */
+async function anotarAlVolver(
+  $: EngineInterface,
+  e: { tool: string; agentId?: string | null; tool_use_id?: unknown },
+  resultado: unknown,
+  bien: boolean,
+) {
+  try {
+    if (e.tool !== 'Agent' && e.tool !== 'Edit' && e.tool !== 'Write' && e.tool !== 'NotebookEdit') return
+
+    const t = await $.clock.now()
+
+    if (e.tool === 'Agent') {
+      const id = objeto(resultado)?.agentId
+      await update($, agentes, antes => cerrarAgente(antes ?? [], { id, llamada: e.tool_use_id }, bien, t))
+
+      return
+    }
+
+    if (!bien) return
+
+    const campos = e as unknown as Record<string, unknown>
+    const ruta = e.tool === 'NotebookEdit' ? (campos.notebook_path ?? campos.file_path) : campos.file_path
+    const quien = e.agentId
+    let rol = 'principal'
+    if (typeof quien === 'string') {
+      const visto = ((await read($, agentes)) ?? []).find(a => a.id === quien)
+      rol = visto === undefined ? 'agente' : rolDeAgente(visto.tipo) || 'agente'
+    }
+    await update($, archivos, antes => anotarArchivo(antes ?? [], ruta, rol, t))
+  } catch {
+    // Sin la anotación, la pestaña «Agentes» queda como estaba.
+  }
+}
+
 /**
  * Elige la pestaña, la recuerda entre sesiones y lleva la fila de pestañas al borde de la ventana. Pulsarla de nuevo no cambia nada.
  * Con «Historial» mira además si `flujos.jsonl` cambió.
@@ -743,6 +794,8 @@ export const register: Register = on => {
         await update($, sesion, () => null)
         await update($, cache, () => null)
         await update($, avisoContexto, () => 0)
+        await update($, agentes, () => [])
+        await update($, archivos, () => [])
       } catch {
         // No puede frenar el /clear.
       }
@@ -875,7 +928,22 @@ export const register: Register = on => {
   })
 
   // Solo observa: la herramienta corre y su resultado vuelve tal cual (un error de `next` no se traga).
-  on('tool.call', async ($, e, next) => {
+  on('tool.call', async ($, e, siguiente) => {
+    // La pestaña «Agentes» anota la herramienta antes y, al volver, su archivo o el cierre de su `Agent`; el resultado y el error de `siguiente` pasan intactos.
+    await contarHerramienta($, e.agentId)
+    const next: typeof siguiente = async evento => {
+      let r: Awaited<ReturnType<typeof siguiente>>
+      try {
+        r = await siguiente(evento)
+      } catch (error) {
+        await anotarAlVolver($, e, undefined, false)
+        throw error
+      }
+      await anotarAlVolver($, e, r, true)
+
+      return r
+    }
+
     const s = senalDeHerramienta(e.tool, e as unknown as Record<string, unknown>, e.agentId)
     if (s === null) return next(e)
 
@@ -936,6 +1004,14 @@ export const register: Register = on => {
   // Solo observa: el lanzamiento sigue su camino (nunca se niega) y su resultado, o su error, vuelve tal cual.
   on('agent.spawn', async ($, e, next) => {
     const r = await next(e)
+    // Cualquier subagente (de cualquier flujo) queda anotado para la pestaña «Agentes»; sin `agentId` en el resultado no hay nada que anotar.
+    try {
+      const vivo = objeto(r)?.agentId
+      const t = await $.clock.now()
+      await update($, agentes, antes => anotarAgente(antes ?? [], { id: vivo, tipo: e.subagentType, descripcion: e.description, llamada: e.tool_use_id, t }))
+    } catch {
+      // Sin la anotación, la pestaña «Agentes» no lo muestra.
+    }
     let id = ''
     try {
       const agentId = (r as { agentId?: unknown }).agentId
@@ -969,13 +1045,15 @@ export const register: Register = on => {
     const inst = (await read($, instalados)) ?? null
     const odd = (await read($, corridaOdd)) === true
     const cac = (await read($, cache)) ?? null
+    const ags = (await read($, agentes)) ?? []
+    const arcs = (await read($, archivos)) ?? []
     await read($, ahora)
     const t = await $.clock.now()
 
     // Qué se muestra según los implementadores instalados; la evidencia de uso gana sobre un «no está».
     const vista = vistaDe(inst, { flujo: fl !== null, odd, historial: (his?.filas.length ?? 0) > 0 })
-    // Una pestaña oculta dibuja «Inicio»; la preferencia guardada no se borra.
-    const pest = pestanaValida(pestGuardada, vista)
+    // Una pestaña oculta dibuja «Inicio»; la preferencia guardada no se borra. «Agentes» solo existe con algún agente anotado.
+    const pest = pestanaValida(pestGuardada, { ...vista, agentes: ags.length > 0 })
 
     const ancho = Math.max(6, Math.min(40, e.props.bodyColumns))
 
@@ -1167,6 +1245,7 @@ export const register: Register = on => {
       ...(vista.flujo ? [{ clave: 'pestana-flujo', hotkey: 'f', label: 'Flujo', alPulsar: () => elegirPestana($, 'flujo') }] : []),
       { clave: 'pestana-semana', hotkey: 's', label: 'Semana', alPulsar: () => elegirPestana($, 'semana') },
       ...(vista.historial ? [{ clave: 'pestana-historial', hotkey: 'h', label: 'Hist.', alPulsar: () => elegirPestana($, 'historial') }] : []),
+      ...(ags.length > 0 ? [{ clave: 'pestana-agentes', hotkey: 'a', label: 'Agentes', alPulsar: () => elegirPestana($, 'agentes') }] : []),
     ]
     const filaPestanas = (
       <Box key="pestanas" flexDirection="column">
@@ -1345,6 +1424,48 @@ export const register: Register = on => {
     )
 
     /**
+     * La pestaña «Agentes»: el resumen, una línea por subagente (glifo de su estado, rol, descripción, tiempo y herramientas) y los
+     * archivos tocados, de lo más reciente a lo más viejo.
+     */
+    const lineasAgentes = resumenAgentes(ags, arcs, t, Math.min(e.props.bodyColumns, COLUMNAS))
+    const bloqueAgentes = (
+      <Box key="agentes" flexDirection="column">
+        <Text dimColor wrap="truncate-end">
+          {lineasAgentes.resumen}
+        </Text>
+        {lineasAgentes.agentes.map((a, i) => (
+          <Box key={`agente-${i}`}>
+            <Text color={a.color}>{`${a.glifo} `}</Text>
+            <Box flexShrink={0}>
+              <Text>{a.rol}</Text>
+            </Box>
+            <Box flexGrow={1}>
+              {a.descripcion !== '' && (
+                <Text dimColor wrap="truncate-end">
+                  {` ${a.descripcion}`}
+                </Text>
+              )}
+            </Box>
+            <Box flexShrink={0}>
+              <Text dimColor>{a.cola}</Text>
+            </Box>
+          </Box>
+        ))}
+        {lineasAgentes.archivos.length > 0 && (
+          <Box key="agentes-archivos" flexDirection="column" marginTop={1}>
+            <Text bold>Archivos tocados</Text>
+            {lineasAgentes.archivos.map((a, i) => (
+              <Box key={`archivo-${i}`}>
+                <Text wrap="truncate-end">{a.ruta}</Text>
+                <Text dimColor>{a.cola}</Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Box>
+    )
+
+    /**
      * Leyenda de los tramos de las barras de las dos tablas; se dibuja en «Inicio» y en «Gasto semanal».
      * Va en filas (`repartir`) y ninguna pasa de 32 columnas.
      */
@@ -1390,6 +1511,19 @@ export const register: Register = on => {
           {bloqueLimites}
           {regla(1)}
           {bloqueFlujo}
+          {pieCarpeta}
+        </Box>
+      )
+    }
+
+    if (pest === 'agentes') {
+      return (
+        <Box flexDirection="column">
+          {filaPestanas}
+          {regla(0)}
+          {bloqueLimites}
+          {regla(1)}
+          {bloqueAgentes}
           {pieCarpeta}
         </Box>
       )
