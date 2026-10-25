@@ -101,7 +101,7 @@ La vista `inline` (terminal angosta) es una sola línea: `ctx 42% · 5h 30% (en 
 
 ## Comandos
 
-- `/qcc-panel`: abre el panel. Pide 40 columnas de ancho (`COLUMNAS`) y está pensado para ese ancho; si arrastras el borde del dock, manda el ancho que elijas. Antes se llamaba `/uso`.
+- `/qcc-panel`: abre el panel. Pide 44 columnas de ancho (`COLUMNAS_APERTURA`: el marco del dock se lleva algunas y el cuerpo tiene que dejar los cuatro botones de las pestañas, 38, en una fila); el contenido está pensado para 40 (`COLUMNAS`, el tope de la leyenda). Si arrastras el borde del dock, o ya guardaste un ancho, manda el ancho que elijas. Antes se llamaba `/uso`.
 - `/qcc-panel carpeta`: abre la carpeta del proyecto. Funciona sin foco en el panel y sin ratón.
 
 ## Datos

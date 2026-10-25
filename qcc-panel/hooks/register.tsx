@@ -91,6 +91,8 @@ import type { NivelEsfuerzo, Registro, Uso } from './semana'
 
 const PANEL = 'qcc-panel'
 const COLUMNAS = 40
+/** Columnas que pide al abrirse: el marco del dock se lleva algunas y los cuatro botones de las pestañas (38) tienen que caber en el cuerpo. */
+const COLUMNAS_APERTURA = 44
 const TICK_MS = 30_000
 const SCROLL_MS = 150
 
@@ -584,7 +586,7 @@ async function releerTrasLimpiar($: EngineInterface) {
 }
 
 function abrir($: EngineInterface) {
-  return $.ui.open({ id: PANEL, title: 'Uso', columns: COLUMNAS, rows: 3 })
+  return $.ui.open({ id: PANEL, title: 'Uso', columns: COLUMNAS_APERTURA, rows: 3 })
 }
 
 export const register: Register = on => {

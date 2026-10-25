@@ -81,7 +81,7 @@ const PANE = {
 /** El panel con el ancho real del usuario (49 columnas): ahí caben varios ■ en la fila. */
 const PANE_ANCHO = { ...PANE, props: { ...PANE.props, bodyColumns: 49 } } as const
 
-/** El panel con el ancho que pide al abrirse (40 columnas). */
+/** El panel con el ancho de diseño (40 columnas de cuerpo; al abrirse pide 44 para descontar el marco). */
 const PANE_40 = { ...PANE, props: { ...PANE.props, bodyColumns: 40 } } as const
 
 const MEDIDA: SessionMeasureInput = {
