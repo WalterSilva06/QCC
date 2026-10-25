@@ -7,7 +7,7 @@ Son herramientas personales, en tres partes separadas.
 
 | Parte | Carpeta | Qué es | Documentación |
 |---|---|---|---|
-| Mod | `qcc-panel/` | Panel lateral con los límites de uso (5 horas, semanal y de gasto) y cuatro pestañas: Inicio (contexto de la sesión, esfuerzo y tokens), Flujo (el paso del flujo en curso), Gasto semanal e Historial de flujos (de `/qcc-implementador` y de `/qcc-implementador-odd`). Comandos `/qcc-panel` y `/qcc-panel carpeta`. | [MODS.md](MODS.md) |
+| Mod | `qcc-panel/` | Panel lateral con los límites de uso (5 horas, semanal y de gasto) y cuatro pestañas: Inicio (contexto de la sesión y SESIÓN: modelo, esfuerzo y tokens), Flujo (el paso del flujo en curso), Semana (el gasto semanal) e Hist. (historial de flujos de `/qcc-implementador` y de `/qcc-implementador-odd`). Comandos `/qcc-panel` y `/qcc-panel carpeta`. | [MODS.md](MODS.md) |
 | Flujos | `flujos/` | `/qcc-implementador` (explora, planifica, pide aprobación, ejecuta por subtareas y cierra con una revisión final independiente) y `/qcc-commit` (pregunta si hacer commit + push, solo commit o commit en una rama nueva, y hace un commit por grupo de cambios, todo en Haiku high), con sus agentes y herramientas. | [FLUJOS.md](FLUJOS.md) |
 | Flujo odd | `flujos-odd/` | `/qcc-implementador-odd`, en prueba: versión lite inspirada en el ODD de gentle-ai. Implementa inline las tareas chicas, delega las grandes en ejecutores (con un documento `odd/tasks/<feature>.md` para retomarlas) y revisa con un agente independiente solo lo riesgoso. Separado de `flujos/`: skill, agentes, herramientas e instalador propios. | [FLUJOS-ODD.md](FLUJOS-ODD.md) |
 

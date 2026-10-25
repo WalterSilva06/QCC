@@ -43,6 +43,7 @@ import {
   barra,
   barraTramos,
   cuando,
+  cuotaUsado,
   desgloseTramos,
   duracion,
   etiquetasAlineadas,
@@ -53,12 +54,16 @@ import {
   marcador,
   nombreCorto,
   ordenar,
+  ordenLeyenda,
   pct,
+  pctParte,
   pestanaValida,
   relleno,
   repartir,
+  resumenContexto,
   tokens,
   tono,
+  tonoCompactacion,
   totalConSalida,
   tramos,
 } from './formato'
@@ -70,6 +75,7 @@ import {
   comoRegistro,
   estadosDeCuadros,
   etiquetaDia,
+  familia,
   idDeFila,
   idFila,
   idsDeActividad,
@@ -995,6 +1001,7 @@ export const register: Register = on => {
       conActividad = false,
       conDesglose = false,
       conDias = false,
+      cabecera: JSX.Element | null = null,
     ) => {
       const conSalida = s === null ? '' : totalConSalida(s.total, s.salida)
       // Las etiquetas van en columnas y dejan sitio a las cifras y, con `conActividad`, a los ■ (2 celdas cada uno).
@@ -1009,14 +1016,16 @@ export const register: Register = on => {
         <Box key={`tabla-${prefijo}`} flexDirection="column" marginTop={prefijo === 'n' ? 0 : 1}>
           <Box>
             <Box flexGrow={1}>
-              <Text bold>{titulo}</Text>
+              {cabecera ?? <Text bold>{titulo}</Text>}
               {/* Esta sesión vacía cabe en una línea: el título y, detrás, lo que falta. */}
-              {prefijo === 'n' && (s === null || s.filas.length === 0) && <Text dimColor>{' · sin respuestas anotadas'}</Text>}
+              {cabecera === null && prefijo === 'n' && (s === null || s.filas.length === 0) && (
+                <Text dimColor>{' · sin respuestas anotadas'}</Text>
+              )}
             </Box>
-            {s !== null && s.total > 0 && <Text>{conSalida}</Text>}
+            {cabecera === null && s !== null && s.total > 0 && <Text>{conSalida}</Text>}
           </Box>
           {s === null || s.filas.length === 0 ? (
-            prefijo === 'n' ? null : <Text dimColor>sin respuestas anotadas todavía</Text>
+            prefijo === 'n' && cabecera === null ? null : <Text dimColor>sin respuestas anotadas todavía</Text>
           ) : (
             <Box flexDirection="column">
               <Box>
@@ -1087,7 +1096,11 @@ export const register: Register = on => {
           )}
           {s !== null && (desde !== null || s.total > 0) && (
             <Box key={`nota-${prefijo}`} marginTop={prefijo === 'n' ? 1 : 0}>
-              <Text dimColor>{[desde, s.total > 0 ? 'total incluye caché' : null].filter(Boolean).join(' · ')}</Text>
+              <Text dimColor wrap="truncate-end">
+                {[cabecera !== null && s.total > 0 ? conSalida : null, desde, s.total > 0 ? 'total incluye caché' : null]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Text>
             </Box>
           )}
         </Box>
@@ -1116,17 +1129,17 @@ export const register: Register = on => {
     }
 
     /**
-     * Los botones de las pestañas, arriba en todas las vistas, repartidos en filas según el ancho (cada uno mide `[ label ]`);
-     * debajo, en su propia fila, «Carpeta», que abre la carpeta sin cambiar de pestaña.
+     * Los botones de las pestañas, arriba de todo en todas las vistas, repartidos en filas según el ancho (cada uno mide `[ label ]`;
+     * las etiquetas son cortas para que los cuatro quepan en una fila de 40 columnas). «Carpeta» va al pie (`pieCarpeta`).
      */
     const botones = [
       { clave: 'pestana-inicio', hotkey: 'i', label: 'Inicio', alPulsar: () => elegirPestana($, 'inicio') },
       ...(vista.flujo ? [{ clave: 'pestana-flujo', hotkey: 'f', label: 'Flujo', alPulsar: () => elegirPestana($, 'flujo') }] : []),
-      { clave: 'pestana-semana', hotkey: 's', label: 'Gasto semanal', alPulsar: () => elegirPestana($, 'semana') },
-      ...(vista.historial ? [{ clave: 'pestana-historial', hotkey: 'h', label: 'Historial', alPulsar: () => elegirPestana($, 'historial') }] : []),
+      { clave: 'pestana-semana', hotkey: 's', label: 'Semana', alPulsar: () => elegirPestana($, 'semana') },
+      ...(vista.historial ? [{ clave: 'pestana-historial', hotkey: 'h', label: 'Hist.', alPulsar: () => elegirPestana($, 'historial') }] : []),
     ]
     const filaPestanas = (
-      <Box key="pestanas" flexDirection="column" marginBottom={1}>
+      <Box key="pestanas" flexDirection="column">
         {repartir(
           botones.map(b => `[ ${b.label} ]`.length),
           e.props.bodyColumns,
@@ -1139,18 +1152,29 @@ export const register: Register = on => {
             })}
           </Box>
         ))}
-        <Box key="pestanas-carpeta">
-          <Button key="carpeta" hotkey="c" label="Carpeta" onPress={() => abrirCarpeta($)} />
-        </Box>
       </Box>
     )
 
+    /** «Carpeta», al pie de todas las vistas: abre la carpeta sin cambiar de pestaña. */
+    const pieCarpeta = (
+      <Box key="pie-carpeta" marginTop={1}>
+        <Button key="carpeta" hotkey="c" label="Carpeta" onPress={() => abrirCarpeta($)} />
+      </Box>
+    )
+
+    /** La regla fina que separa los bloques de todas las vistas (`n` distingue las claves). */
+    const regla = (n: number) => (
+      <Text key={`regla-${n}`} dimColor>
+        {'─'.repeat(Math.max(1, e.props.bodyColumns))}
+      </Text>
+    )
+
     /**
-     * Los límites, arriba de la fila de pestañas y en todas las vistas: una línea por límite
+     * Los límites, bajo la fila de pestañas y en todas las vistas: una línea por límite
      * (etiqueta, mini barra, % y cuánto falta; barra y % con el tono del %). Sin límites, un aviso dim.
      */
     const bloqueLimites = (
-      <Box key="limites" flexDirection="column" marginBottom={1}>
+      <Box key="limites" flexDirection="column">
         {limites.length === 0 ? (
           <Text dimColor>límites tras la 1.ª respuesta</Text>
         ) : (
@@ -1173,7 +1197,7 @@ export const register: Register = on => {
 
     /** El bloque de la pestaña «Flujo»: el resumen, los nodos con su detalle y el consumo. */
     const bloqueFlujo = (
-      <Box key="flujo" flexDirection="column" marginBottom={1}>
+      <Box key="flujo" flexDirection="column">
         <Box key="flujo-resumen">
           <Text dimColor wrap="truncate-end">
             {resumenFlujo(fl, t)}
@@ -1331,9 +1355,12 @@ export const register: Register = on => {
     if (pest === 'flujo') {
       return (
         <Box flexDirection="column">
-          {bloqueLimites}
           {filaPestanas}
+          {regla(0)}
+          {bloqueLimites}
+          {regla(1)}
           {bloqueFlujo}
+          {pieCarpeta}
         </Box>
       )
     }
@@ -1341,9 +1368,12 @@ export const register: Register = on => {
     if (pest === 'historial') {
       return (
         <Box flexDirection="column">
-          {bloqueLimites}
           {filaPestanas}
+          {regla(0)}
+          {bloqueLimites}
+          {regla(1)}
           {bloqueHistorial}
+          {pieCarpeta}
         </Box>
       )
     }
@@ -1351,9 +1381,11 @@ export const register: Register = on => {
     if (pest === 'semana') {
       return (
         <Box flexDirection="column">
-          {bloqueLimites}
           {filaPestanas}
-          {leyenda(true)}
+          {regla(0)}
+          {bloqueLimites}
+          {regla(1)}
+          {leyenda(false)}
 
           {tabla(
             'Esta semana',
@@ -1368,23 +1400,59 @@ export const register: Register = on => {
             false,
             true,
           )}
+          {pieCarpeta}
         </Box>
       )
     }
 
     const sesionUnida = ses === null ? null : unirOrigenes(ses)
-    // Una sola fila como las de los límites: etiqueta, barra (con tramos si hay desglose), cifra y cola.
+    /**
+     * La cabecera de «Esta sesión»: «SESIÓN  Opus 5.5 · high · flujo —». El modelo con el esfuerzo (y «según ajustes»
+     * antes del primer turno) y, con un implementador instalado, el resumen del flujo. Si no cabe se recorta el flujo,
+     * nunca el modelo ni el esfuerzo. El total de la sesión va en la nota de abajo, no en esta fila.
+     */
+    const cabeceraSesion = (
+      <Box key="sesion-cabecera">
+        <Box flexShrink={0}>
+          <Text bold>{'SESIÓN  '}</Text>
+        </Box>
+        <Box flexShrink={0}>
+          <Text dimColor>
+            {esf === null ? '—' : `${familia(esf.modelo)} · ${nivel}${esf.origen === 'ajustes' ? ' · según ajustes' : ''}`}
+          </Text>
+        </Box>
+        {vista.flujo && (
+          <Box>
+            <Text dimColor wrap="truncate-end">
+              {' · flujo '}
+            </Text>
+            <Box key="flujo-resumen">
+              <Text dimColor wrap="truncate-end">
+                {fl === null ? '—' : resumenFlujo(fl, t)}
+              </Text>
+            </Box>
+          </Box>
+        )}
+      </Box>
+    )
+    // Una sola fila como las de los límites: etiqueta, barra, cifra y cola. Con desglose y medición, solo etiqueta y
+    // barra a todo el ancho: la cifra y los tokens ya van en la cabecera, pegada bajo la barra, y no se repiten.
     const lineaCtx = lineaContexto(m, e.props.bodyColumns)
+    const resumen = d === null ? null : resumenContexto(d)
+    const barraAncha = d !== null && lineaCtx.medido
+    const anchoBarra = barraAncha ? Math.max(3, e.props.bodyColumns - lineaCtx.etiqueta.length - 1) : lineaCtx.barra.length
 
     return (
       <Box flexDirection="column">
-        {bloqueLimites}
         {filaPestanas}
+        {regla(0)}
+        {bloqueLimites}
+        {regla(1)}
         <Box key="contexto-fila">
           <Text>{`${lineaCtx.etiqueta} `}</Text>
           {d !== null ? (
             <Box>
-              {tramos(d.partes, lineaCtx.barra.length).map((tr, i) => (
+              {tramos(d.partes, anchoBarra).map((tr, i) => (
                 <Text key={`t${i}`} color={tr.color}>
                   {relleno(tr.tipo).repeat(tr.celdas)}
                 </Text>
@@ -1395,24 +1463,45 @@ export const register: Register = on => {
           ) : (
             <Text color="subtle">{lineaCtx.barra}</Text>
           )}
-          {lineaCtx.medido && m?.porcentaje !== undefined ? (
+          {!barraAncha && (lineaCtx.medido && m?.porcentaje !== undefined ? (
             <Text color={tono(m.porcentaje)}>{lineaCtx.cifra}</Text>
           ) : (
             <Text dimColor>{lineaCtx.cifra}</Text>
-          )}
-          {lineaCtx.cola !== '' && <Text dimColor>{lineaCtx.cola}</Text>}
+          ))}
+          {!barraAncha && lineaCtx.cola !== '' && <Text dimColor>{lineaCtx.cola}</Text>}
         </Box>
+
+        {resumen !== null && (
+          <Box key="resumen-ctx" justifyContent="space-between">
+            <Text bold color={tonoCompactacion(resumen.porcentaje)}>{`${resumen.porcentaje}%`}</Text>
+            <Text wrap="truncate-end">
+              <Text>{tokens(resumen.usados)}</Text>
+              <Text dimColor>{` / ${tokens(resumen.ventana)}`}</Text>
+            </Text>
+          </Box>
+        )}
+        {resumen !== null && resumen.compacta && (
+          <Box key="compactacion-ctx" justifyContent="space-between">
+            <Text dimColor>{`╰ compacta en ${tokens(resumen.punto)}`}</Text>
+            <Text dimColor>{`faltan ${tokens(Math.max(0, resumen.punto - resumen.usados))}`}</Text>
+          </Box>
+        )}
 
         {d !== null && (
           <Box key="desglose" flexDirection="column" marginTop={1}>
-            {d.partes.map(p => (
+            {ordenLeyenda(d.partes).map((p, i) => (
               <Box key={`p-${p.nombre}`}>
                 <Text color={p.color}>{marcador(p.tipo)} </Text>
                 <Box flexGrow={1}>
                   <Text wrap="truncate-end">{p.nombre}</Text>
                 </Box>
                 <Text>{tokens(p.tokens).padStart(6)}</Text>
-                <Text dimColor>{pct(p.porcentaje).padStart(7)}</Text>
+                <Text dimColor>{pctParte(p).padStart(7)}</Text>
+                {i === 0 && p.tipo === 'usado' && resumen !== null && (
+                  <Box marginLeft={1}>
+                    <Text dimColor>{cuotaUsado(p.tokens, resumen.usados)}</Text>
+                  </Box>
+                )}
               </Box>
             ))}
             {m !== null && d.ventana !== m.ventana && (
@@ -1447,38 +1536,18 @@ export const register: Register = on => {
           </Box>
         )}
 
-        {/* Espacioso: una línea en blanco entre la fila ctx, el desglose, lo más pesado, «Precisar», esfuerzo y flujo, y la sesión. */}
-        <Box key="esfuerzo-flujo" flexDirection="column" marginTop={1}>
-          {/* Una sola fila; el modelo se trunca para no saltar de línea en 40 columnas. */}
-          <Box key="esfuerzo-fila">
-            <Text>{'esf'.padEnd(5) + ' '}</Text>
-            <Text color="claude">{nivel}</Text>
-            {esf !== null && (
-              <Text dimColor wrap="truncate-end">
-                {` · ${esf.modelo}${esf.origen === 'ajustes' ? ' · según ajustes' : ''}`}
-              </Text>
-            )}
-          </Box>
-          {vista.flujo && (
-            <Box>
-              <Text>{'flujo '}</Text>
-              <Box key="flujo-resumen">
-                <Text dimColor wrap="truncate-end">
-                  {fl === null ? '—' : resumenFlujo(fl, t)}
-                </Text>
-              </Box>
-            </Box>
-          )}
-        </Box>
+        {regla(2)}
 
-        <Box key="sesion-bloque" flexDirection="column" marginTop={1}>
-          {sesionUnida !== null && sesionUnida.filas.length > 0 && leyenda(false)}
-
+        <Box key="sesion-bloque" flexDirection="column">
           {/* La hora anotada se redondea a la hora entera: «desde» mentiría en la sesión. */}
-          <Box key="sesion-tabla" flexDirection="column" marginTop={sesionUnida !== null && sesionUnida.filas.length > 0 ? 1 : 0}>
-            {tabla('Esta sesión', 'n', sesionUnida, null, true, true)}
+          <Box key="sesion-tabla" flexDirection="column">
+            {tabla('Esta sesión', 'n', sesionUnida, null, true, true, false, cabeceraSesion)}
           </Box>
+
+          {sesionUnida !== null && sesionUnida.filas.length > 0 && leyenda(true)}
         </Box>
+
+        {pieCarpeta}
       </Box>
     )
   })

@@ -321,11 +321,67 @@ export function aDesglose(b: SessionContextBreakdown, exacto: boolean): Desglose
       nombre: nombreParte(c.name),
       tokens: c.tokens,
       porcentaje: ventana > 0 ? (c.tokens / ventana) * 100 : 0,
-      color: c.color,
+      color: colorParte(c.name, c.kind, c.color),
       tipo: TIPO[c.kind as keyof typeof TIPO] ?? 'usado',
     }))
 
   return { partes, ventana, pesados: pesados(b, 3), exacto }
+}
+
+/** Mensajes en naranja del tema, libre y reserva en gris del tema; lo demás conserva el color del motor. */
+function colorParte(nombre: string, kind: string, colorMotor: string): string {
+  if (nombre === 'Messages') return 'claude'
+  if (kind === 'free') return 'subtle'
+  if (kind === 'buffer') return 'inactive'
+
+  return colorMotor
+}
+
+/**
+ * La cabecera del desglose: lo usado, la ventana, el punto donde compacta (ventana menos la reserva) y el
+ * porcentaje de lo usado sobre ese punto (0 si el punto no es positivo). `compacta` si hay reserva con tokens.
+ */
+export function resumenContexto(d: Desglose): { usados: number, ventana: number, punto: number, porcentaje: number, compacta: boolean } {
+  const suma = (tipo: Parte['tipo']) => d.partes.filter(p => p.tipo === tipo).reduce((s, p) => s + p.tokens, 0)
+  const usados = suma('usado')
+  const reserva = suma('reserva')
+  const punto = d.ventana - reserva
+
+  return {
+    usados,
+    ventana: d.ventana,
+    punto,
+    porcentaje: punto <= 0 ? 0 : Math.round((usados / punto) * 100),
+    compacta: d.partes.some(p => p.tipo === 'reserva' && p.tokens > 0),
+  }
+}
+
+/** Color de la cabecera del desglose según cuánto falta para compactar: verde bajo 70, ámbar de 70 a 89, rojo desde 90. */
+export function tonoCompactacion(p: number): 'success' | 'warning' | 'error' {
+  if (p >= 90) return 'error'
+  if (p >= 70) return 'warning'
+
+  return 'success'
+}
+
+/** El porcentaje de una parte en la leyenda: vacío en libre y reserva, «<0,1%» en lo usado que pesa menos de 0,1. */
+export function pctParte(p: Parte): string {
+  if (p.tipo !== 'usado') return ''
+  if (p.porcentaje > 0 && p.porcentaje < 0.1) return '<0,1%'
+
+  return pct(p.porcentaje)
+}
+
+/** El orden de la leyenda: lo usado de mayor a menor (el empate queda en el orden del motor), y al final libre y reserva. */
+export function ordenLeyenda(partes: readonly Parte[]): Parte[] {
+  const usadas = partes.filter(p => p.tipo === 'usado').sort((a, b) => b.tokens - a.tokens)
+
+  return [...usadas, ...partes.filter(p => p.tipo !== 'usado')]
+}
+
+/** Qué parte de lo usado es una parte, como «◀57%»; vacío si no hay nada usado. */
+export function cuotaUsado(tokens: number, usados: number): string {
+  return usados > 0 ? `◀${Math.round((tokens / usados) * 100)}%` : ''
 }
 
 /** Los `n` elementos sueltos que más pesan: archivos de memoria, servidores MCP, skills y agentes. */
@@ -389,9 +445,9 @@ export function tramos(partes: readonly Parte[], ancho: number): Tramo[] {
 }
 
 export function relleno(tipo: Parte['tipo']): string {
-  return tipo === 'usado' ? '█' : tipo === 'reserva' ? '▒' : '░'
+  return tipo === 'usado' ? '█' : tipo === 'reserva' ? '░' : '─'
 }
 
 export function marcador(tipo: Parte['tipo']): string {
-  return tipo === 'usado' ? '■' : tipo === 'reserva' ? '▒' : '□'
+  return tipo === 'usado' ? '■' : tipo === 'reserva' ? '░' : '─'
 }
