@@ -2,7 +2,7 @@
 // Guardia PreToolUse del agente qcc-generador-commit: solo deja pasar git status, diff, log y show simples.
 // La única opción global permitida es `-c core.quotePath=false`, para ver las rutas con tildes sin escapar.
 // Hook del plugin (`hooks/hooks.json`): corre en cada Bash y PowerShell de la sesión, y solo vigila cuando el `agent_type`
-// del evento es `qcc-commit:qcc-generador-commit` (los agentes de un plugin ignoran `hooks:` en su frontmatter). Con otro
+// del evento es `commit:qcc-generador-commit` (los agentes de un plugin ignoran `hooks:` en su frontmatter). Con otro
 // agente, o sin él (la sesión principal), no hace nada: si no, bloquearía todo Bash.
 // Lee el evento por stdin y, si el comando no se permite, imprime un deny. No escribe registros.
 import path from 'node:path'
@@ -33,12 +33,12 @@ function esOpcionProhibida(token) {
 }
 
 /**
- * Si `agentType` es el agente de commits: `qcc-commit:qcc-generador-commit`, o `qcc-generador-commit` sin plugin.
+ * Si `agentType` es el agente de commits: `commit:qcc-generador-commit`, o `qcc-generador-commit` sin plugin.
  * @param {unknown} agentType
  * @returns {boolean}
  */
 export function esAgenteDeCommit(agentType) {
-  return typeof agentType === 'string' && /^(?:qcc-commit:)?qcc-generador-commit$/.test(agentType.trim())
+  return typeof agentType === 'string' && /^(?:commit:)?qcc-generador-commit$/.test(agentType.trim())
 }
 
 /**
@@ -77,7 +77,7 @@ async function main() {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
-      permissionDecisionReason: `Guardia /qcc-commit: ${motivo}. Solo se permiten git status, diff, log y show simples, con -c core.quotePath=false como única opción global.`,
+      permissionDecisionReason: `Guardia /commit: ${motivo}. Solo se permiten git status, diff, log y show simples, con -c core.quotePath=false como única opción global.`,
     },
   }))
 }

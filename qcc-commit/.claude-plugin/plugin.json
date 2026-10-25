@@ -1,7 +1,7 @@
 {
-  "name": "qcc-commit",
+  "name": "commit",
   "displayName": "QCC",
   "version": "0.1.0",
-  "description": "/qcc-commit: separa los cambios sin commit en commits por grupo, con mensaje en español, y los hace solo cuando el usuario lo escribe",
+  "description": "/commit: separa los cambios sin commit en commits por grupo, con mensaje en español, y los hace solo cuando el usuario lo escribe",
   "author": { "name": "WalterSilva06" }
 }

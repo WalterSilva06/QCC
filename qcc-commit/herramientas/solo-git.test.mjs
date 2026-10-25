@@ -89,7 +89,7 @@ test('motivoDe niega lo que no es texto', () => {
   }
 })
 
-const AGENTE = 'qcc-commit:qcc-generador-commit'
+const AGENTE = 'commit:qcc-generador-commit'
 
 /** Corre la guardia como hook real y devuelve el resultado. */
 function correr(input) {
@@ -101,6 +101,7 @@ test('hook real: Bash con git push se niega', () => {
   const salida = JSON.parse(r.stdout)
   assert.equal(salida.hookSpecificOutput.permissionDecision, 'deny')
   assert.equal(salida.hookSpecificOutput.hookEventName, 'PreToolUse')
+  assert.match(salida.hookSpecificOutput.permissionDecisionReason, /^Guardia \/commit: /)
 })
 
 test('hook real: PowerShell con git status --short pasa sin salida', () => {
@@ -120,15 +121,15 @@ test('hook real: un input que no es JSON no imprime y sale en 0', () => {
 })
 
 test('esAgenteDeCommit: el agente del plugin y su nombre sin plugin; ningún otro', () => {
-  assert.equal(esAgenteDeCommit('qcc-commit:qcc-generador-commit'), true)
+  assert.equal(esAgenteDeCommit('commit:qcc-generador-commit'), true)
   assert.equal(esAgenteDeCommit('qcc-generador-commit'), true)
-  for (const otro of [undefined, null, '', 'qcc-implementador:qcc-ejecutor', 'otro:qcc-generador-commit', 'qcc-commit:otro', 'xqcc-generador-commit', 42]) {
+  for (const otro of [undefined, null, '', 'impl:qcc-ejecutor', 'otro:qcc-generador-commit', 'commit:otro', 'qcc-commit:qcc-generador-commit', 'xqcc-generador-commit', 42]) {
     assert.equal(esAgenteDeCommit(otro), false, String(otro))
   }
 })
 
 test('hook real: sin agent_type (sesión principal) o con otro agente, ni un git push se niega', () => {
-  for (const evento of [{ tool_name: 'Bash', tool_input: { command: 'git push' } }, { agent_type: 'qcc-implementador:qcc-ejecutor', tool_name: 'Bash', tool_input: { command: 'git commit -m x' } }, { agent_type: 'otro', tool_name: 'PowerShell', tool_input: { command: 'rm -rf x' } }]) {
+  for (const evento of [{ tool_name: 'Bash', tool_input: { command: 'git push' } }, { agent_type: 'impl:qcc-ejecutor', tool_name: 'Bash', tool_input: { command: 'git commit -m x' } }, { agent_type: 'otro', tool_name: 'PowerShell', tool_input: { command: 'rm -rf x' } }]) {
     const r = correr(JSON.stringify(evento))
     assert.equal(r.stdout, '')
     assert.equal(r.status, 0)
