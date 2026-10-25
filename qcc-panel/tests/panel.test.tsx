@@ -2,6 +2,7 @@ import type { On, SessionContextBreakdown, SessionMeasureInput } from 'claude-co
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
+import { anotarCache, decidirAvisoContexto, restante, tasaAciertos, TTL_CACHE_MS } from '../hooks/cache'
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
   PASOS,
@@ -60,7 +61,7 @@ import {
   unirOrigenes,
 } from '../hooks/semana'
 import type { Cuentas, Registro } from '../hooks/semana'
-import type { Actividad, Desglose, FilaSemana, Flujo, Freno, Parte, Semana } from '../types'
+import type { Actividad, Cache, Desglose, FilaSemana, Flujo, Freno, Parte, Semana } from '../types'
 
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
 
@@ -8573,5 +8574,181 @@ describe('freno y avisos en el panel', () => {
     await $.skill.prompt({ skill: 'qcc-implementador', text: '' })
     expect(await preguntar($, 'Plan')).toEqual({ result: 'listo' })
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
+  })
+})
+
+describe('caché del prompt (puro)', () => {
+  const T = 1_000_000
+  const usoDe = (input: number, leidos: number, escritos: number) => ({
+    input_tokens: input,
+    output_tokens: 50,
+    cache_read_input_tokens: leidos,
+    cache_creation_input_tokens: escritos,
+  })
+
+  test('anotarCache acumula leídos y entrada, guarda la hora y no muta', () => {
+    expect(TTL_CACHE_MS).toBe(300_000)
+
+    const primero = anotarCache(null, usoDe(1_000, 90_000, 7_000), T)
+    expect(primero).toEqual({ leidos: 90_000, entrada: 98_000, t: T })
+
+    const copia: Cache = { ...primero! }
+    expect(anotarCache(primero, usoDe(500, 1_500, 0), T + 60_000)).toEqual({ leidos: 91_500, entrada: 100_000, t: T + 60_000 })
+    expect(primero).toEqual(copia)
+  })
+
+  test('anotarCache ignora campos ausentes, NaN o negativos y una respuesta sin entrada deja el caché igual', () => {
+    const mal = { input_tokens: 100, output_tokens: 5, cache_read_input_tokens: Number.NaN, cache_creation_input_tokens: -5 }
+    expect(anotarCache(null, mal, T)).toEqual({ leidos: 0, entrada: 100, t: T })
+
+    const faltan = { output_tokens: 9 } as unknown as Parameters<typeof anotarCache>[1]
+    expect(anotarCache(null, faltan, T)).toBeNull()
+
+    const antes: Cache = { leidos: 10, entrada: 20, t: 5 }
+    expect(anotarCache(antes, usoDe(0, -1, Number.NaN), T)).toBe(antes)
+  })
+
+  test('restante: ms hasta el vencimiento, 0 si venció y null sin dato', () => {
+    const c: Cache = { leidos: 1, entrada: 2, t: 1_000 }
+    expect(restante(null, 5_000)).toBeNull()
+    expect(restante(undefined, 5_000)).toBeNull()
+    expect(restante(c, 1_000)).toBe(300_000)
+    expect(restante(c, 181_000)).toBe(120_000)
+    expect(restante(c, 301_000)).toBe(0)
+    expect(restante(c, 400_000)).toBe(0)
+  })
+
+  test('tasaAciertos: 0 a 100 redondeado y null sin entrada', () => {
+    expect(tasaAciertos(null)).toBeNull()
+    expect(tasaAciertos(undefined)).toBeNull()
+    expect(tasaAciertos({ leidos: 0, entrada: 0, t: 1 })).toBeNull()
+    expect(tasaAciertos({ leidos: 90_000, entrada: 98_000, t: 1 })).toBe(92)
+    expect(tasaAciertos({ leidos: 0, entrada: 100, t: 1 })).toBe(0)
+    expect(tasaAciertos({ leidos: 100, entrada: 100, t: 1 })).toBe(100)
+    expect(tasaAciertos({ leidos: 1, entrada: 3, t: 1 })).toBe(33)
+  })
+
+  test('decidirAvisoContexto: avisa una vez a los 80 y otra a los 95, y rearma bajo 80', () => {
+    const A80 = 'El contexto pasó del 80 %: conviene compactar pronto.'
+    const A95 = 'El contexto pasó del 95 %: compacta o haz /clear antes de seguir.'
+    const casos: [0 | 80 | 95, number | undefined, string | null, 0 | 80 | 95][] = [
+      [0, undefined, null, 0],
+      [80, undefined, null, 80],
+      [95, Number.NaN, null, 95],
+      [0, 79, null, 0],
+      [0, 80, A80, 80],
+      [0, 94.9, A80, 80],
+      [80, 85, null, 80],
+      [80, 95, A95, 95],
+      [0, 96, A95, 95],
+      [95, 100, null, 95],
+      [95, 90, null, 95],
+      [95, 79.9, null, 0],
+      [80, 50, null, 0],
+    ]
+
+    for (const [antes, p, aviso, despues] of casos) {
+      expect(decidirAvisoContexto(antes, p)).toEqual({ aviso, avisado: despues })
+    }
+  })
+})
+
+describe('caché y contexto en el panel', () => {
+  /** El motor bajo el panel con un reloj movible: `reloj.t` es la hora; `avisos` recoge los toasts. */
+  function motor(on: On, toastFalla = false) {
+    const reloj = { t: AHORA }
+    const avisos: string[] = []
+    on('clock.now', () => ({ value: reloj.t }))
+    on('clock.every', () => ({ value: undefined }))
+    on('clock.after', () => ({ value: undefined }))
+    motorMide(on)
+    motorUsa(on)
+    motorStore(on)
+    on('session.id', () => ({ value: 's1' }))
+    on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+    motorResponde(on, 'claude-opus-5-5')
+    on('ui.toast', (_$, e) => {
+      if (toastFalla) throw new Error('sin toast')
+      avisos.push(e.text)
+
+      return { value: undefined }
+    })
+
+    return { reloj, avisos }
+  }
+
+  const medirPorcentaje = ($: Engine, percent: number) => $.session.measure({ ...MEDIDA, context: { ...MEDIDA.context, percent } })
+
+  /** El texto y el color de la línea del caché en Inicio. */
+  async function lineaCache($: Engine) {
+    const ui = await $.ui.mount({ ...PANE_40, surface: 'terminal' })
+    const nodo = await ui.find({ type: 'Text', text: /caché/ })
+    await ui.unmount()
+
+    return { texto: nodo?.text, color: nodo?.props.color }
+  }
+
+  test('la línea del caché: sin dato, tras la respuesta del hilo principal (no la del subagente), con su cuenta regresiva y colores', async ($, on) => {
+    const { reloj } = motor(on)
+    await $.session.measure(MEDIDA)
+
+    expect((await lineaCache($)).texto).toBe('caché: tras la 1.ª respuesta')
+
+    // Un subagente no mueve el caché del hilo principal.
+    await paso($, 'claude-opus-5-5', 'medium', 'agente-1')
+    expect((await lineaCache($)).texto).toBe('caché: tras la 1.ª respuesta')
+
+    await paso($, 'claude-opus-5-5', 'medium')
+    expect(await lineaCache($)).toEqual({ texto: 'caché ⏱ en 5 min · aciertos 92 %', color: 'success' })
+
+    reloj.t = AHORA + 120_000
+    expect(await lineaCache($)).toEqual({ texto: 'caché ⏱ en 3 min · aciertos 92 %', color: 'success' })
+
+    reloj.t = AHORA + 250_000
+    expect(await lineaCache($)).toEqual({ texto: 'caché ⏱ en menos de 1 min · aciertos 92 %', color: 'warning' })
+
+    reloj.t = AHORA + 300_000
+    expect(await lineaCache($)).toEqual({ texto: 'caché vencido · aciertos 92 %', color: 'error' })
+
+    // Tras /clear el caché de antes ya no vale.
+    await $.session.end({ reason: 'clear', sessionId: 's1', resume: { id: 's1' } })
+    expect((await lineaCache($)).texto).toBe('caché: tras la 1.ª respuesta')
+  })
+
+  test('toasts de contexto: una vez a los 80 %, otra a los 95 %, y se rearman bajo 80 %', async ($, on) => {
+    const { avisos } = motor(on)
+    const A80 = 'El contexto pasó del 80 %: conviene compactar pronto.'
+    const A95 = 'El contexto pasó del 95 %: compacta o haz /clear antes de seguir.'
+
+    await medirPorcentaje($, 79)
+    expect(avisos).toEqual([])
+    await medirPorcentaje($, 80)
+    await medirPorcentaje($, 90)
+    expect(avisos).toEqual([A80])
+    await medirPorcentaje($, 95)
+    await medirPorcentaje($, 99)
+    await medirPorcentaje($, 85)
+    expect(avisos).toEqual([A80, A95])
+
+    await medirPorcentaje($, 79)
+    await medirPorcentaje($, 96)
+    expect(avisos).toEqual([A80, A95, A95])
+  })
+
+  test('toasts de contexto: una medición sin porcentaje ni avisa ni rearma', async ($, on) => {
+    const { avisos } = motor(on)
+    await medirPorcentaje($, 85)
+    await $.session.measure({ context: { window: 200_000 }, rateLimits: [], changed: ['context'] })
+    await medirPorcentaje($, 86)
+    expect(avisos).toHaveLength(1)
+  })
+
+  test('un toast que falla no rompe la medición', async ($, on) => {
+    motor(on, true)
+
+    await medirPorcentaje($, 96)
+    const ui = await $.ui.mount({ ...PANE_40, surface: 'terminal' })
+    expect(await ui.find({ type: 'Text', text: /caché/ })).toBeDefined()
+    await ui.unmount()
   })
 })

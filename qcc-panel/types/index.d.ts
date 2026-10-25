@@ -235,6 +235,16 @@ export type Freno = {
   cierreVisto?: number
 }
 
+/** El caché del prompt del hilo principal: lo acumulado de sus respuestas y cuándo fue la última. */
+export type Cache = {
+  /** Tokens de entrada leídos del caché, sumados. */
+  leidos: number
+  /** Tokens de entrada totales (nuevos, leídos y escritos), sumados. */
+  entrada: number
+  /** Hora (ms) de la última respuesta que trajo entrada; el caché vence 5 minutos después. */
+  t: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'qcc-panel': {
@@ -264,6 +274,10 @@ declare module 'claude-code' {
       corridaOdd?: boolean
       /** Los implementadores detectados (ajustes y `SKILL.md`); `null` si aún no se detectó o si la detección fue dudosa. Si falta (estado de una versión anterior), `null`. */
       instalados?: Instalados | null
+      /** El caché del prompt del hilo principal; `null` hasta la primera respuesta o tras un `/clear`. Solo de esta terminal. Si falta (estado de una versión anterior), `null`. */
+      cache?: Cache | null
+      /** El umbral más alto de contexto ya avisado con un toast (80 o 95); 0 si ninguno, y vuelve a 0 cuando el % baja de 80. Si falta (estado de una versión anterior), 0. */
+      avisoContexto?: 0 | 80 | 95
     }
   }
 }

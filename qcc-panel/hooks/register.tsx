@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
 
 import type { Actividad, Esfuerzo, Flujo, Medida, Pestana, Semana } from '../types'
+import { anotarCache, decidirAvisoContexto, restante, tasaAciertos, TTL_CACHE_MS } from './cache'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
 import { decidirFreno } from './freno'
@@ -115,6 +116,8 @@ const home = atom({ plugin: 'qcc-panel', key: 'home' } as const, null)
 const freno = atom({ plugin: 'qcc-panel', key: 'freno' } as const, null)
 const corridaOdd = atom({ plugin: 'qcc-panel', key: 'corridaOdd' } as const, false)
 const instalados = atom({ plugin: 'qcc-panel', key: 'instalados' } as const, null)
+const cache = atom({ plugin: 'qcc-panel', key: 'cache' } as const, null)
+const avisoContexto = atom({ plugin: 'qcc-panel', key: 'avisoContexto' } as const, 0)
 
 /** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
@@ -676,6 +679,19 @@ export const register: Register = on => {
 
   on('session.measure', async ($, e, next) => {
     await update($, medida, () => aMedida(e.context, e.rateLimits))
+    // Un toast al cruzar 80 % y otro al cruzar 95 %; bajo 80 % se rearma. Un error aquí no frena la medición.
+    try {
+      const decision: { aviso: string | null } = { aviso: null }
+      await update($, avisoContexto, antes => {
+        const d = decidirAvisoContexto(antes === 80 || antes === 95 ? antes : 0, e.context.percent)
+        decision.aviso = d.aviso
+
+        return d.avisado
+      })
+      if (decision.aviso !== null) avisar($, decision.aviso)
+    } catch {
+      // Sin el aviso el panel sigue midiendo.
+    }
     if (e.changed.includes('context')) await medirDesglose($, 'summary')
     // El reinicio del límite semanal decide dónde empieza la semana.
     if (e.changed.includes('rateLimits')) await releerSemana($)
@@ -725,6 +741,8 @@ export const register: Register = on => {
         await update($, desglose, () => null)
         await update($, precisando, () => false)
         await update($, sesion, () => null)
+        await update($, cache, () => null)
+        await update($, avisoContexto, () => 0)
       } catch {
         // No puede frenar el /clear.
       }
@@ -784,6 +802,15 @@ export const register: Register = on => {
         await anotarUso($, r.usage.model || e.model, e.effort, e.agentId !== undefined, deFlujo, r.usage)
       } catch {
         // Perder una cuenta es mejor que frenar la respuesta.
+      }
+      // El caché del prompt es del hilo principal; las respuestas de los subagentes no lo mueven.
+      if (e.agentId === undefined) {
+        try {
+          const hora = await $.clock.now()
+          await update($, cache, antes => anotarCache(antes ?? null, uso, hora))
+        } catch {
+          // Sin la cuenta regresiva la respuesta sigue igual.
+        }
       }
     }
 
@@ -941,6 +968,7 @@ export const register: Register = on => {
     const his = (await read($, historial)) ?? null
     const inst = (await read($, instalados)) ?? null
     const odd = (await read($, corridaOdd)) === true
+    const cac = (await read($, cache)) ?? null
     await read($, ahora)
     const t = await $.clock.now()
 
@@ -1441,6 +1469,14 @@ export const register: Register = on => {
     // barra a todo el ancho: la cifra y los tokens ya van en la cabecera, pegada bajo la barra, y no se repiten.
     const lineaCtx = lineaContexto(m, e.props.bodyColumns)
     const resumen = d === null ? null : resumenContexto(d)
+    // El caché del prompt: cuenta regresiva a su vencimiento (TTL de 5 min desde la última respuesta) y tasa de aciertos.
+    const quedaCache = restante(cac, t)
+    const aciertos = tasaAciertos(cac)
+    const textoCache =
+      cac === null || quedaCache === null
+        ? 'caché: tras la 1.ª respuesta'
+        : `${quedaCache === 0 ? 'caché vencido' : `caché ⏱ ${falta(t, cac.t + TTL_CACHE_MS)}`}${aciertos === null ? '' : ` · aciertos ${aciertos} %`}`
+    const colorCache = quedaCache === null ? undefined : quedaCache === 0 ? 'error' : quedaCache <= 60_000 ? 'warning' : 'success'
     const barraAncha = d !== null && lineaCtx.medido
     const anchoBarra = barraAncha ? Math.max(3, e.props.bodyColumns - lineaCtx.etiqueta.length - 1) : lineaCtx.barra.length
 
@@ -1488,6 +1524,13 @@ export const register: Register = on => {
             <Text dimColor>{`faltan ${tokens(Math.max(0, resumen.punto - resumen.usados))}`}</Text>
           </Box>
         )}
+        <Box key="cache-ctx">
+          {colorCache === undefined ? (
+            <Text dimColor wrap="truncate-end">{textoCache}</Text>
+          ) : (
+            <Text color={colorCache} wrap="truncate-end">{textoCache}</Text>
+          )}
+        </Box>
 
         {d !== null && (
           <Box key="desglose" flexDirection="column" marginTop={1}>
