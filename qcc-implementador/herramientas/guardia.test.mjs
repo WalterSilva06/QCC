@@ -15,7 +15,7 @@ import path from 'node:path'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, rolDeAgente, analizar, raizDe, registroDe, flujoDe, arbolDe, configDe, coincide } from './guardia.mjs'
-import { listaPermitidos, enAlcance, opcionesDe, tokensDe, anotarFlujo, filaDelFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta, mapaDelRepo, decisionesDelPlan, contextoDelProyecto } from './estado.mjs'
+import { listaPermitidos, enAlcance, lotesDe, opcionesDe, tokensDe, anotarFlujo, filaDelFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta, mapaDelRepo, decisionesDelPlan, contextoDelProyecto } from './estado.mjs'
 import { pasosDe, detalleTipos, resumenTest, detalleTest, conDetalle, claveDe, marcaDe, esBuild, salidasDe } from './verificar.mjs'
 import { costoDelFlujo, costoDePedido, metricasDelFlujo, precioDe, problemasDe } from './costos.mjs'
 
@@ -465,6 +465,9 @@ test('estado: opciones y --paso', () => {
   assert.equal(opcionesDe(['--cambios', '--sub']).sub, null)
   assert.equal(opcionesDe(['--cambios', 'abc123', '--sub', '1']).base, 'abc123')
   assert.equal(opcionesDe(['--base', '--sub', '3']).sub, 3)
+  assert.deepEqual(opcionesDe(['--base', '--sub', '1,2']).sub, [1, 2])
+  assert.deepEqual(opcionesDe(['--cambios', '--sub', '3,1,2']).sub, [1, 2, 3])
+  for (const malo of ['1,1', '1,', ',1', '1,x', '0,1', '1,,2', '1 ,2']) assert.equal(opcionesDe(['--base', '--sub', malo]).sub, null, malo)
 
   const d = opcionesDe(['--diff', 'abc123', '--', 'x.ts', '--paso', '2'])
   assert.equal(d.modo, 'diff')
@@ -1113,6 +1116,197 @@ test('estado: --base --sub y --cambios --sub/--global toman la foto y los permit
   assert.match(estadoEn(vieja, ['--cambios', '--global', '--permitidos', 'src/a.ts'], entorno).salida, /permitidos: 0 del plan \+ 1 ampliados$/m)
 })
 
+test('estado: lotesDe junta subtareas independientes cuyos permitidos no se pisan', () => {
+  const s = (n, permitidos, depende) => ({ n, permitidos, depende })
+  const a = ['a.ts']
+  const casos = [
+    ['sin subtareas', [], []],
+    ['serial: ausente depende de la anterior', [s(1, a), s(2, ['b.ts']), s(3, ['c.ts'])], [[1], [2], [3]]],
+    ['null cuenta como ausente', [s(1, a), s(2, ['b.ts'], null)], [[1], [2]]],
+    ['independientes', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], [])], [[1, 2, 3]]],
+    ['tope de 3', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], []), s(4, ['d.ts'], [])], [[1, 2, 3], [4]]],
+    ['depende de un miembro del lote', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], [1])], [[1, 2], [3]]],
+    ['el lote siguiente puede seguir sumando', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], [1]), s(4, ['d.ts'], [])], [[1, 2], [3, 4]]],
+    ['carpeta pisa archivo', [s(1, ['src/']), s(2, ['src/a.ts'], [])], [[1], [2]]],
+    ['archivo pisa carpeta', [s(1, ['src/a.ts']), s(2, ['src/'], [])], [[1], [2]]],
+    ['glob pisa archivo', [s(1, ['docs/*.md']), s(2, ['docs/x.md'], [])], [[1], [2]]],
+    ['carpetas disjuntas', [s(1, ['src/']), s(2, ['docs/'], [])], [[1, 2]]],
+    ['dos globs que se pisan', [s(1, ['src/**/*.test.ts']), s(2, ['src/a/*.ts'], [])], [[1], [2]]],
+    ['dos globs, a la inversa', [s(1, ['src/a/*.ts']), s(2, ['src/**/*.test.ts'], [])], [[1], [2]]],
+    ['dos globs de carpetas distintas', [s(1, ['src/a/*.ts']), s(2, ['lib/*.ts'], [])], [[1, 2]]],
+    ['dos globs desde la raíz se pisan', [s(1, ['*.md']), s(2, ['docs/*.md'], [])], [[1], [2]]],
+    ['un glob contra una carpeta que lo contiene', [s(1, ['src/']), s(2, ['src/a/*.ts'], [])], [[1], [2]]],
+    ['pisa a un miembro que no es el primero', [s(1, a), s(2, ['b.ts'], []), s(3, ['b.ts'], [])], [[1, 2], [3]]],
+    ['sin permitidos no entra a un lote', [s(1, a), s(2, [], [])], [[1], [2]]],
+    ['sin permitidos tampoco recibe a otra', [s(1, []), s(2, ['b.ts'], [])], [[1], [2]]],
+    ['sin permitidos corta el lote siguiente', [s(1, a), s(2, [], []), s(3, ['c.ts'], [])], [[1], [2], [3]]],
+  ]
+  for (const [nombre, subtareas, esperado] of casos) assert.deepEqual(lotesDe(subtareas), esperado, nombre)
+})
+
+test('estado: --guardar plan lee «Depende de» y calcula los lotes', () => {
+  const subtarea = (n, permitidos, dep) => `S${n} · Tarea ${n}\n- Crítica: no\n- Archivos permitidos: ${permitidos}\n${dep === undefined ? '' : `- Depende de: ${dep}\n`}- Hecho cuando: x\n- Tests: t\n- Riesgos: r\n- Reversión: v`
+  const plan = [
+    'PLAN · Dependencias\nClasificación: sin criterios\nObjetivo: probar',
+    subtarea(1, 'src/a.ts'),
+    subtarea(2, 'src/b.ts', 'ninguna'),
+    subtarea(3, 'src/c.ts', 'S1, S2'),
+    subtarea(4, 'src/d.ts', 'S9'),
+    subtarea(5, 'src/e.ts', 'S5'),
+    subtarea(6, 'src/f.ts', 'S7'),
+    subtarea(7, 'src/g.ts'),
+  ].join('\n\n')
+  const entorno = { CLAUDE_CONFIG_DIR: transcripts({ plano: plan, ajuste: subtarea(3, 'src/c.ts', 'ninguna') }) }
+  const raiz = repo('depende', { 'src/a.ts': 'a\n' })
+  temporales.push(raiz)
+  estadoEn(raiz, ['--paso', '0'], entorno)
+  const salida = estadoEn(raiz, ['--guardar', 'plano', 'plan'], entorno).salida
+  const subtareas = () => JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8')).subtareas
+  const depende = (n) => subtareas().find((x) => x.n === n).depende
+  assert.equal(depende(1), undefined)
+  assert.deepEqual(depende(2), [])
+  assert.deepEqual(depende(3), [1, 2])
+  for (const n of [4, 5, 6]) {
+    assert.equal(depende(n), undefined, `S${n}`)
+    assert.match(salida, new RegExp(`^ {2}- S${n} · Depende de: `, 'm'))
+  }
+  assert.doesNotMatch(salida, /S[123] · Depende de: /)
+  assert.doesNotMatch(salida, /falta «Depende de»/)
+  assert.match(salida, /^LOTES: S1\+S2 \| S3 \| S4 \| S5 \| S6 \| S7$/m)
+
+  // Con --ajuste la línea se recalcula sobre el plan fusionado: S3 ya no depende de S1 ni de S2.
+  const ajuste = estadoEn(raiz, ['--guardar', 'ajuste', 'plan', '--ajuste'], entorno).salida
+  assert.match(ajuste, /^LOTES: S1\+S2\+S3 \| S4 \| S5 \| S6 \| S7$/m)
+  assert.deepEqual(depende(3), [])
+})
+
+test('estado: --base --sub y --cambios --sub con una lista miden el lote entero', () => {
+  const subtarea = (n, permitidos, dep) => `S${n} · Tarea ${n}\n- Crítica: no\n- Archivos permitidos: ${permitidos}\n${dep === undefined ? '' : `- Depende de: ${dep}\n`}- Hecho cuando: x\n- Tests: t\n- Riesgos: r\n- Reversión: v`
+  const plan = `PLAN · Lote\nClasificación: sin criterios\nObjetivo: probar\n\n${subtarea(1, 'src/a.ts')}\n\n${subtarea(2, 'docs/x.md', 'ninguna')}\n\n${subtarea(3, 'src/c.ts')}`
+  const entorno = { CLAUDE_CONFIG_DIR: transcripts({ plano: plan }) }
+  const raiz = repo('lote', { 'src/a.ts': 'a\n', 'docs/x.md': 'd\n', 'dist/x.js': 'x\n', 'src/c.ts': 'c\n' })
+  temporales.push(raiz)
+  estadoEn(raiz, ['--paso', '0'], entorno)
+  assert.match(estadoEn(raiz, ['--guardar', 'plano', 'plan'], entorno).salida, /^LOTES: S1\+S2 \| S3$/m)
+  const bases = () => JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8')).bases
+  const estadoCrudo = () => fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8')
+
+  // Una sola foto para el lote, guardada en cada n con su lote.
+  const foto = estadoEn(raiz, ['--base', '--sub', '1,2', '--paso', '5'], entorno)
+  const f = /^BASE=(\w+) DESDE=(\S+)$/m.exec(foto.salida)
+  assert.ok(f, foto.salida)
+  assert.match(foto.salida, /^LOTE=S1\+S2$/m)
+  assert.doesNotMatch(foto.salida, /AVISO/)
+  assert.deepEqual(bases(), { 1: { base: f[1], desde: f[2], lote: [1, 2] }, 2: { base: f[1], desde: f[2], lote: [1, 2] } })
+
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
+  fs.writeFileSync(path.join(raiz, 'docs/x.md'), 'd2\n')
+  fs.writeFileSync(path.join(raiz, 'dist/x.js'), 'x2\n')
+
+  // La unión de los permitidos: lo de S1 y lo de S2 está dentro; lo demás, fuera.
+  const lote = estadoEn(raiz, ['--cambios', '--sub', '1,2', '--paso', '6'], entorno)
+  assert.match(lote.salida, new RegExp(`^FOTO S1\\+S2: BASE=${f[1].slice(0, 9)} DESDE=${f[2]} · permitidos: 2 del plan \\+ 0 ampliados$`, 'm'))
+  assert.match(lote.salida, /^ {2}✓ M src\/a\.ts$/m)
+  assert.match(lote.salida, /^ {2}✓ M docs\/x\.md$/m)
+  assert.match(lote.salida, /^ {2}✗ M dist\/x\.js {3}← FUERA DE ALCANCE$/m)
+  assert.match(lote.salida, /ALCANCE: FUERA \(1\)\s*$/)
+  assert.equal(lote.codigo, 0)
+
+  // Un miembro suelto mide el lote entero y lo avisa.
+  const suelto = estadoEn(raiz, ['--cambios', '--sub', '2'], entorno)
+  assert.match(suelto.salida, /^AVISO: S2 es del lote S1\+S2: mide el lote entero \(--cambios --sub 1,2\)$/m)
+  assert.match(suelto.salida, /^FOTO S1\+S2: BASE=/m)
+  assert.match(suelto.salida, /^ {2}✓ M src\/a\.ts$/m)
+  assert.equal(suelto.codigo, 0)
+
+  // Listas inválidas o sin foto: ERROR y código 2, y el estado no cambia.
+  const antes = estadoCrudo()
+  for (const lista of ['1,1', '1,x', '1,']) {
+    for (const modo of ['--base', '--cambios']) {
+      const r = estadoEn(raiz, [modo, '--sub', lista], entorno)
+      assert.match(r.salida, /^ERROR: /m, `${modo} ${lista}`)
+      assert.equal(r.codigo, 2, `${modo} ${lista}`)
+    }
+  }
+  const sinFoto = estadoEn(raiz, ['--cambios', '--sub', '1,3'], entorno)
+  assert.match(sinFoto.salida, /^ERROR: sin foto de S3 en la carpeta del flujo/m)
+  assert.equal(sinFoto.codigo, 2)
+  assert.equal(estadoCrudo(), antes)
+
+  // Repetir la foto del lote conserva la primera: un AVISO por subtarea y nada cambia.
+  const otra = estadoEn(raiz, ['--base', '--sub', '1,2'], entorno).salida
+  assert.match(otra, /^AVISO: S1 ya tenía foto; se conserva la primera \(la de antes de su ejecutor\)$/m)
+  assert.match(otra, /^AVISO: S2 ya tenía foto; se conserva la primera \(la de antes de su ejecutor\)$/m)
+  assert.match(otra, new RegExp(`^BASE=${f[1]} DESDE=${f[2]}$`, 'm'))
+  assert.equal(estadoCrudo(), antes)
+
+  // Un solo número se comporta como siempre: BASE y DESDE, sin LOTE y sin `lote` en el estado.
+  const una = estadoEn(raiz, ['--base', '--sub', '3'], entorno).salida
+  const g = /^BASE=(\w+) DESDE=(\S+)$/m.exec(una)
+  assert.ok(g, una)
+  assert.doesNotMatch(una, /LOTE|AVISO/)
+  assert.deepEqual(bases()['3'], { base: g[1], desde: g[2] })
+  const solo = estadoEn(raiz, ['--cambios', '--sub', '3'], entorno).salida
+  assert.match(solo, /^FOTO S3: BASE=\w+ DESDE=\S+ · permitidos: 1 del plan \+ 0 ampliados$/m)
+  assert.doesNotMatch(solo, /AVISO/)
+
+  // Fotos de lote y de una sola subtarea no se mezclan: ni al tomarlas ni al medir.
+  const mezcla = estadoEn(raiz, ['--base', '--sub', '2,3'], entorno)
+  assert.match(mezcla.salida, /^ERROR: /m)
+  assert.equal(mezcla.codigo, 2)
+  const medir = estadoEn(raiz, ['--cambios', '--sub', '2,3'], entorno)
+  assert.match(medir.salida, /^ERROR: .*lote/m)
+  assert.equal(medir.codigo, 2)
+  assert.deepEqual(bases()['3'], { base: g[1], desde: g[2] })
+})
+
+test('estado: --base --sub con lista no absorbe una foto suelta', () => {
+  const { raiz } = estadoCon({}, () => ['--paso', '0'])
+  const estadoCrudo = () => fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8')
+  assert.match(estadoEn(raiz, ['--base', '--sub', '1']).salida, /^BASE=\w+ DESDE=/m)
+  const antes = estadoCrudo()
+  const r = estadoEn(raiz, ['--base', '--sub', '1,2'])
+  assert.match(r.salida, /^ERROR: S1 ya tiene una foto suelta, sin lote; no entra en un lote$/m)
+  assert.doesNotMatch(r.salida, /LOTE=|AVISO/)
+  assert.equal(r.codigo, 2)
+  assert.equal(estadoCrudo(), antes)
+
+  // Una lista tomada entera sí se puede repetir: conserva la primera foto.
+  assert.match(estadoEn(raiz, ['--base', '--sub', '3,4']).salida, /^LOTE=S3\+S4$/m)
+  const repetida = estadoEn(raiz, ['--base', '--sub', '3,4'])
+  assert.match(repetida.salida, /^AVISO: S3 ya tenía foto; se conserva la primera/m)
+  assert.equal(repetida.codigo, 0)
+})
+
+test('cierre: atribuye archivos y líneas por subtarea también dentro de un lote', () => {
+  const { raiz } = estadoCon({}, () => ['--paso', '0'])
+  const carpeta = flujoDe(raiz)
+  const estado = JSON.parse(fs.readFileSync(path.join(carpeta, 'estado.json'), 'utf8'))
+  estado.subtareas = [
+    { n: 1, objetivo: 'x', critica: 'no', permitidos: ['src/a.ts'] },
+    { n: 2, objetivo: 'y', critica: 'no', permitidos: ['dist/'] },
+    { n: 3, objetivo: 'z', critica: 'no', permitidos: ['docs/z.md'] },
+  ]
+  fs.writeFileSync(path.join(carpeta, 'estado.json'), JSON.stringify(estado))
+  assert.match(estadoEn(raiz, ['--base', '--sub', '1,2']).salida, /^LOTE=S1\+S2$/m)
+  // Los dos ejecutores del lote editan a la vez: S1 +3 −1 en src/a.ts y S2 +1 −1 en dist/x.js.
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a3\nb\nc\n')
+  fs.writeFileSync(path.join(raiz, 'dist/x.js'), 'y\n')
+  // S3 empieza después del lote: lo suyo no cuenta en el lote.
+  assert.match(estadoEn(raiz, ['--base', '--sub', '3']).salida, /^BASE=\w+ DESDE=/m)
+  fs.mkdirSync(path.join(raiz, 'docs'), { recursive: true })
+  fs.writeFileSync(path.join(raiz, 'docs/z.md'), 'z1\nz2\n')
+
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  estadoEn(raiz, ['--cambios', sha, '--paso', '7', '--resultado', 'COMPLETO'])
+  const fila = filasDeFlujos(raiz).at(-1)
+  assert.deepEqual(fila.subtareas, [
+    { n: 1, critica: false, archivos: 1, mas: 3, menos: 1 },
+    { n: 2, critica: false, archivos: 1, mas: 1, menos: 1 },
+    { n: 3, critica: false, archivos: 1, mas: 2, menos: 0 },
+  ])
+})
+
 test('estado: --cambios agrupa muchos archivos por carpeta y el cierre da la reversión exacta', () => {
   assert.deepEqual(agruparPorCarpeta(['a/b/c/1', 'a/b/d/2', 'x/3'], 2), [
     { carpeta: 'a/b/', rutas: ['a/b/c/1', 'a/b/d/2'] },
@@ -1248,7 +1442,7 @@ test('estado: --guardar exploracion dice si la exploración toca rutas críticas
   const entorno = { CLAUDE_CONFIG_DIR: claude }
   const critica = estadoCon({ criticos: CRITICOS }, () => ['--guardar', 'critica', 'exploracion', '--paso', '2'], {}, entorno)
   assert.match(critica.salida, /^RUTAS CRÍTICAS EN LA EXPLORACIÓN: #1 \(flujos\/herramientas\/estado\.mjs\), #5 \(flujos\/herramientas\/estado\.mjs\)$/m)
-  assert.match(estadoEn(critica.raiz, ['--guardar', 'tranquila', 'exploracion'], entorno).salida, /^RUTAS CRÍTICAS EN LA EXPLORACIÓN: ninguna \(planificador con effort medium\)$/m)
+  assert.match(estadoEn(critica.raiz, ['--guardar', 'tranquila', 'exploracion'], entorno).salida, /^RUTAS CRÍTICAS EN LA EXPLORACIÓN: ninguna$/m)
   const sinCriticos = estadoCon({}, () => ['--guardar', 'tranquila', 'exploracion'], {}, entorno)
   assert.match(sinCriticos.salida, /^RUTAS CRÍTICAS EN LA EXPLORACIÓN: el proyecto no declara «criticos»/m)
 })

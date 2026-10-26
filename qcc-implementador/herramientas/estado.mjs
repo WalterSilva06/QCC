@@ -401,6 +401,67 @@ export function permitidosDe(valor) {
     .filter((p) => p && !/^(ninguno|nada)$/i.test(p))
 }
 
+/**
+ * Campo opcional «Depende de» de la subtarea `n` → `{ depende, aviso }`. `ninguna` da `[]` y `S1, S2` da `[1, 2]`, siempre que sean
+ * subtareas anteriores del plan (`existentes`); `valor` null (falta) o inválido da `depende` undefined, y el inválido trae `aviso`.
+ * Sin valor, la subtarea depende de la anterior.
+ */
+export function dependeDe(valor, n, existentes) {
+  if (valor === null) return {}
+  const texto = valor.replace(/\s+[—–]\s+.*$/, '').replace(/\s*\([^)]*\)/g, '').trim()
+  if (/^ninguna$/i.test(texto)) return { depende: [] }
+  const numeros = texto.split(',').map((p) => {
+    const m = /^S(\d+)$/i.exec(p.trim())
+    return m ? Number(m[1]) : NaN
+  })
+  if (numeros.every((k) => existentes.includes(k) && k < n)) return { depende: [...new Set(numeros)].sort((a, b) => a - b) }
+  return { aviso: `S${n} · Depende de: «${valor}» no es «ninguna» ni subtareas anteriores del plan; se trata como ausente (depende de la anterior)` }
+}
+
+const RE_GLOB = /[*?[{]/
+
+/** Carpeta del tramo literal de un glob, antes de su primer carácter de glob: `src/a/*.ts` → `src/a/`. */
+const carpetaLiteral = (p) => {
+  const literal = p.slice(0, p.search(RE_GLOB))
+  const carpeta = literal.slice(0, literal.lastIndexOf('/') + 1)
+  return WIN ? carpeta.toLowerCase() : carpeta
+}
+
+/** ¿Se pisan dos rutas permitidas? Dos globs, si la carpeta literal de uno es prefijo de la del otro; si no, si una cae dentro de la otra. */
+const pisa = (p, q) => {
+  if (RE_GLOB.test(p) && RE_GLOB.test(q)) {
+    const a = carpetaLiteral(p)
+    const b = carpetaLiteral(q)
+    return a.startsWith(b) || b.startsWith(a)
+  }
+  return enAlcance(p, [q]) || enAlcance(q, [p])
+}
+
+const sePisan = (a, b) => a.some((p) => b.some((q) => pisa(p, q)))
+
+/**
+ * Lotes de ejecución del plan, en orden: `[[1], [2, 3], [4]]`. `subtareas`: `{ n, permitidos, depende }` (`depende` ausente = depende
+ * de la anterior). Una subtarea entra al lote en curso solo si no depende de ninguna de sus miembros, sus permitidos no se pisan con
+ * los de ninguna (un archivo dentro de una carpeta o de un glob de la otra cuenta como pisarse), tiene permitidos y el lote tiene
+ * menos de 3; si no, abre otro lote.
+ */
+export function lotesDe(subtareas) {
+  const lotes = []
+  let actual = []
+  subtareas.forEach((s, i) => {
+    const permitidos = Array.isArray(s.permitidos) ? s.permitidos : []
+    const depende = Array.isArray(s.depende) ? s.depende : i > 0 ? [subtareas[i - 1].n] : []
+    const cabe = actual.length > 0 && actual.length < 3 && permitidos.length > 0
+      && actual.every((m) => m.permitidos.length > 0 && !depende.includes(m.n) && !sePisan(m.permitidos, permitidos))
+    if (!cabe) {
+      actual = []
+      lotes.push(actual)
+    }
+    actual.push({ n: s.n, permitidos })
+  })
+  return lotes.map((l) => l.map((m) => m.n))
+}
+
 /** Criterios que `criticos` (de `.claude/qcc-implementador.json`) pide para `ruta`: los fijos y los que dependen de una condición. */
 export function criticosDe(ruta, reglas) {
   const fijos = new Set()
@@ -498,6 +559,8 @@ function resumirPlan(texto, destino) {
     for (const c of CAMPOS_SUBTAREA) if (campoDe(s.lineas, c) === null) avisos.push(`S${s.n} · falta «${c}»`)
     const permitidos = permitidosDe(campoDe(s.lineas, 'Archivos permitidos'))
     const critica = campoDe(s.lineas, 'Crítica')
+    const { depende, aviso } = dependeDe(campoDe(s.lineas, 'Depende de'), s.n, subtareas.map((x) => x.n))
+    if (aviso) avisos.push(aviso)
     const fijos = new Set()
     for (const ruta of permitidos) {
       const { fijos: f, condicionales } = criticosDe(ruta, criticos)
@@ -510,7 +573,7 @@ function resumirPlan(texto, destino) {
     if (fijos.size && critica !== null && /^no\b/i.test(critica)) {
       avisos.push(`S${s.n} · Crítica: no, pero sus rutas críticas piden #${[...fijos].sort((a, b) => a - b).join(', #')}: debe ser sí`)
     }
-    resumen.push({ n: s.n, objetivo: s.objetivo, critica, permitidos })
+    resumen.push({ n: s.n, objetivo: s.objetivo, critica, permitidos, ...(depende ? { depende } : {}) })
     paraDecidir.push({ n: s.n, critica, permitidos, fijos: [...fijos] })
     console.log(`S${s.n} · ${s.objetivo} · Crítica: ${critica ?? '(falta)'} · permitidos: ${permitidos.join(', ') || '(faltan)'} → ${archivo}`)
   }
@@ -525,6 +588,7 @@ function resumirPlan(texto, destino) {
   }
   if (!subtareas.length) avisos.push('no encontré subtareas «S<n> · …»: despacha copiando los campos del plan')
   console.log(avisos.length ? `AVISOS:\n${avisos.map((a) => `  - ${a}`).join('\n')}` : 'AVISOS: ninguno')
+  if (resumen.length) console.log(`LOTES: ${lotesDe(resumen).map((l) => l.map((n) => `S${n}`).join('+')).join(' | ')}`)
   const decisiones = decisionesDelPlan({ clasificacion, subtareas: paraDecidir, pedidos: pedidos.map((n) => ({ n, ruta: porCriterio.get(n) })) })
   console.log('DECISIONES (con los AVISOS resueltos a lo más estricto):')
   for (const l of lineasDeDecisiones(decisiones)) console.log(l)
@@ -543,19 +607,18 @@ export function rutasDeTexto(texto) {
 }
 
 /**
- * Qué criterios de `criticos` tocan las rutas de la exploración, para elegir el esfuerzo del planificador:
- * «ninguna (planificador con effort medium)» solo si el proyecto declara `criticos` y ninguna ruta citada cae en ellos.
- * Una regla condicional (`si`) cuenta como crítica.
+ * Qué criterios de `criticos` tocan las rutas de la exploración: «ninguna» solo si el proyecto declara `criticos` y
+ * ninguna ruta citada cae en ellos. Una regla condicional (`si`) cuenta como crítica.
  */
 function criticasDeExploracion(texto) {
   const { criticos } = configDe(RAIZ)
-  if (!criticos.length) return 'el proyecto no declara «criticos» (planificador con su esfuerzo de siempre)'
+  if (!criticos.length) return 'el proyecto no declara «criticos»'
   const porCriterio = new Map()
   for (const ruta of rutasDeTexto(texto)) {
     const { fijos, condicionales } = criticosDe(ruta, criticos)
     for (const n of [...fijos, ...condicionales.flatMap((c) => c.ns)]) if (!porCriterio.has(n)) porCriterio.set(n, ruta)
   }
-  if (!porCriterio.size) return 'ninguna (planificador con effort medium)'
+  if (!porCriterio.size) return 'ninguna'
   return [...porCriterio.keys()].sort((a, b) => a - b).map((n) => `#${n} (${porCriterio.get(n)})`).join(', ')
 }
 
@@ -1078,14 +1141,14 @@ function versionInstalada() {
   }
 }
 
-/** `git diff --numstat` entre dos fotos: `{ archivos, mas, menos }` (un binario cuenta como archivo, sin líneas). */
-function numstat(desdeFoto, hastaFoto) {
+/** `git diff --numstat` entre dos fotos: `{ archivos, mas, menos }` (un binario cuenta como archivo, sin líneas). Con `permitidos`, solo las rutas que caen en ellos. */
+function numstat(desdeFoto, hastaFoto, permitidos = []) {
   let archivos = 0
   let mas = 0
   let menos = 0
-  for (const linea of git(['diff', '--numstat', '--no-renames', desdeFoto, hastaFoto]).split('\n')) {
-    const m = /^(\d+|-)\t(\d+|-)\t/.exec(linea)
-    if (!m) continue
+  for (const linea of git(['-c', 'core.quotepath=off', 'diff', '--numstat', '--no-renames', desdeFoto, hastaFoto]).split('\n')) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.*)$/.exec(linea)
+    if (!m || !enAlcance(m[3], permitidos)) continue
     archivos++
     mas += Number(m[1]) || 0
     menos += Number(m[2]) || 0
@@ -1095,17 +1158,23 @@ function numstat(desdeFoto, hastaFoto) {
 
 /**
  * Lo que cambió cada subtarea: la diferencia entre su foto (`--base --sub`) y la de la siguiente; la última, contra el árbol
- * de ahora. `{ "<n>": { archivos, mas, menos } }`; una subtarea cuya diferencia falla queda fuera.
+ * de ahora. Las de un lote (`--base --sub 1,2`) comparten foto: su siguiente es la del próximo n fuera del lote y cada miembro
+ * cuenta solo lo que cae en sus propios permitidos. `{ "<n>": { archivos, mas, menos } }`; una subtarea cuya diferencia falla queda fuera.
  */
 function cambiosPorSubtarea(estado) {
   const bases = basesDe(estado)
   const numeros = Object.keys(bases).map(Number).sort((a, b) => a - b)
+  const plan = Array.isArray(estado.subtareas) ? estado.subtareas : []
   const porSubtarea = {}
   let ahora = null
   numeros.forEach((n, i) => {
     try {
-      const siguiente = bases[String(numeros[i + 1])]?.base ?? (ahora ??= foto())
-      porSubtarea[n] = numstat(bases[String(n)].base, siguiente)
+      const lote = loteDe(bases[String(n)])
+      const proximo = numeros.slice(i + 1).find((m) => !lote?.includes(m))
+      const siguiente = bases[String(proximo)]?.base ?? (ahora ??= foto())
+      const delPlan = plan.find((s) => Number(s?.n) === n)?.permitidos
+      const propios = lote && Array.isArray(delPlan) ? delPlan.map(String) : []
+      porSubtarea[n] = numstat(bases[String(n)].base, siguiente, propios)
     } catch {
       // Sin esta diferencia, el cierre sigue.
     }
@@ -1291,6 +1360,7 @@ function cancelar() {
  */
 function fotoDeSubtarea(n) {
   if (n === null) throw new Error('--sub necesita el número de la subtarea (un entero ≥ 1)')
+  if (Array.isArray(n)) return fotoDeLote(n)
   const bases = basesDe(leerEstado())
   const previa = bases[String(n)]
   if (previa) console.log(`AVISO: S${n} ya tenía foto; se conserva la primera (la de antes de su ejecutor)`)
@@ -1299,9 +1369,38 @@ function fotoDeSubtarea(n) {
   console.log(`BASE=${vigente.base} DESDE=${vigente.desde}`)
 }
 
+/** El lote (`[1, 2]`) con que se tomó una foto (`--base --sub 1,2`); null si es de una sola subtarea. */
+function loteDe(f) {
+  const lote = f?.lote
+  return Array.isArray(lote) && lote.length > 1 && lote.every((n) => Number.isSafeInteger(n) && n >= 1) ? lote : null
+}
+
 /**
- * `--cambios --sub <n>` o `--cambios --global`: BASE, DESDE y permitidos salen de la carpeta del flujo.
- * Los permitidos son los del plan (los de la subtarea, o los de todas) más los `--permitidos` explícitos (los ampliados).
+ * `--base --sub 1,2`: una sola foto para el lote, guardada en cada n como `{ base, desde, lote }`. Nunca reemplaza una foto previa:
+ * si alguna subtarea ya tenía, el lote usa esa (con el aviso de siempre) y, si las previas son de fotos distintas o alguna es una
+ * foto suelta (sin `lote`), es un error y no se guarda nada.
+ */
+function fotoDeLote(numeros) {
+  const bases = basesDe(leerEstado())
+  const previas = numeros.filter((n) => bases[String(n)])
+  const primera = bases[String(previas[0])]
+  const suelta = previas.find((n) => !loteDe(bases[String(n)]))
+  if (suelta !== undefined) throw new Error(`S${suelta} ya tiene una foto suelta, sin lote; no entra en un lote`)
+  if (previas.some((n) => bases[String(n)].base !== primera.base || bases[String(n)].desde !== primera.desde)) {
+    throw new Error(`${previas.map((n) => `S${n}`).join(', ')} ya tienen fotos distintas: no se pueden juntar en el lote ${numeros.join(',')}`)
+  }
+  for (const n of previas) console.log(`AVISO: S${n} ya tenía foto; se conserva la primera (la de antes de su ejecutor)`)
+  const vigente = primera ? { base: primera.base, desde: primera.desde } : { base: foto(), desde: new Date().toISOString() }
+  const nuevas = numeros.filter((n) => !bases[String(n)])
+  if (nuevas.length) anotarEstado({ bases: { ...bases, ...Object.fromEntries(nuevas.map((n) => [String(n), { ...vigente, lote: numeros }])) } })
+  console.log(`BASE=${vigente.base} DESDE=${vigente.desde}`)
+  console.log(`LOTE=${numeros.map((n) => `S${n}`).join('+')}`)
+}
+
+/**
+ * `--cambios --sub <n>`, `--cambios --sub 1,2` (un lote) o `--cambios --global`: BASE, DESDE y permitidos salen de la carpeta del flujo.
+ * Los permitidos son los del plan (los de la subtarea, los del lote o los de todas) más los `--permitidos` explícitos (los ampliados).
+ * Un número que es de un lote de varios mide el lote entero y lo avisa.
  * Devuelve `{ base, desde, permitidos }` e imprime la línea `FOTO`; lanza un error si falta algo.
  */
 function contextoDelFlujo({ base, desde, permitidos, sub, global }) {
@@ -1322,11 +1421,29 @@ function contextoDelFlujo({ base, desde, permitidos, sub, global }) {
     inicio = { base: e.base_global, desde: e.desde_global }
     previstos = [...new Set(subtareas.flatMap(delPlan))]
   } else {
-    const f = basesDe(e)[String(sub)]
-    if (!f) throw new Error(`sin foto de S${sub} en la carpeta del flujo: usa --cambios <BASE> --desde <DESDE> --permitidos "…"`)
-    etiqueta = `S${sub}`
-    inicio = f
-    previstos = [...new Set(delPlan(subtareas.find((s) => Number(s?.n) === sub)))]
+    const bases = basesDe(e)
+    const fotoDe = (n) => {
+      const f = bases[String(n)]
+      if (!f) throw new Error(`sin foto de S${n} en la carpeta del flujo: usa --cambios <BASE> --desde <DESDE> --permitidos "…"`)
+      return f
+    }
+    let miembros = [sub]
+    if (Array.isArray(sub)) {
+      const lotes = sub.map((n) => loteDe(fotoDe(n)))
+      if (lotes.some((l) => !l || l.join() !== lotes[0].join())) {
+        throw new Error(`${sub.map((n) => `S${n}`).join(' y ')} no son del mismo lote: toma su foto con --base --sub ${sub.join(',')}`)
+      }
+      miembros = lotes[0]
+    } else {
+      const lote = loteDe(fotoDe(sub))
+      if (lote) {
+        miembros = lote
+        console.log(`AVISO: S${sub} es del lote ${lote.map((n) => `S${n}`).join('+')}: mide el lote entero (--cambios --sub ${lote.join(',')})`)
+      }
+    }
+    etiqueta = miembros.map((n) => `S${n}`).join('+')
+    inicio = fotoDe(miembros[0])
+    previstos = [...new Set(miembros.flatMap((n) => delPlan(subtareas.find((s) => Number(s?.n) === n))))]
   }
   const ampliados = [...new Set(permitidos)].filter((p) => !previstos.includes(p))
   const unidos = [...previstos, ...ampliados]
@@ -1354,12 +1471,20 @@ function diff(base, permitidos, rutas) {
   }
 }
 
+/** Valor de `--sub`: un entero ≥ 1, o una lista `1,2,3` de enteros ≥ 1 sin repetir (ordenada); null si no vale. */
+function subDe(texto) {
+  if (!/^\d+(,\d+)*$/.test(texto ?? '')) return null
+  const numeros = texto.split(',').map(Number)
+  if (numeros.some((n) => !Number.isSafeInteger(n) || n < 1) || new Set(numeros).size !== numeros.length) return null
+  return numeros.length === 1 ? numeros[0] : numeros.sort((a, b) => a - b)
+}
+
 /**
  * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar }`. Las opciones
  * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --estado > --cancelar > --guardar > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
  * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar`.
- * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta). `--sub <n>` agrega `sub` (el entero ≥ 1, o null si no lo es) y `--global` agrega `global: true`; sin el flag no aparece la clave.
+ * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
  * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
 export function opcionesDe(args) {
@@ -1409,7 +1534,7 @@ export function opcionesDe(args) {
     tipo: modo === 'guardar' ? valor('--guardar', 2) : undefined,
     ajuste: opciones.includes('--ajuste'),
     forzar: opciones.includes('--forzar'),
-    ...(conSub ? { sub: /^\d+$/.test(valor('--sub') ?? '') && Number.isSafeInteger(Number(valor('--sub'))) && Number(valor('--sub')) >= 1 ? Number(valor('--sub')) : null } : {}),
+    ...(conSub ? { sub: subDe(valor('--sub')) } : {}),
     ...(conGlobal ? { global: true } : {}),
     ...(modo === 'guia' ? { guia: valor('--guia') ?? '' } : {}),
   }

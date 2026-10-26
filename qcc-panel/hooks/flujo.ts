@@ -822,7 +822,7 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
  */
 export const AGENTE_DE_PASO = {
   explorador: { agente: 'explorador', config: 'Haiku high' },
-  planificador: { agente: 'planificador', config: 'Opus high' },
+  planificador: { agente: 'planificador', config: 'Sonnet high' },
   revisorPlan: { agente: 'revisor-plan', config: 'Sonnet medium' },
   ejecutor: { agente: 'ejecutor', config: 'Sonnet high' },
   revisorSubtarea: { agente: 'revisor', config: 'Sonnet high/medium' },

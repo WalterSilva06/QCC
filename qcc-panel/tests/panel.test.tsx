@@ -3544,8 +3544,8 @@ describe('flujo (puro)', () => {
     expect(detallePaso({ etiqueta: 'Exploración', estado: 'actual', exploradores: 2 })).toEqual(['2 exploradores · Haiku high'])
 
     // Plan: el planificador si se lanzó.
-    expect(detallePaso(pasado('Plan', { veces: 1 }))).toEqual(['planificador · Opus high'])
-    expect(detallePaso(pasado('Plan', { veces: 2 }))).toEqual(['planificador · Opus high'])
+    expect(detallePaso(pasado('Plan', { veces: 1 }))).toEqual(['planificador · Sonnet high'])
+    expect(detallePaso(pasado('Plan', { veces: 2 }))).toEqual(['planificador · Sonnet high'])
     expect(detallePaso(pasado('Plan'))).toEqual([])
     expect(detallePaso(pasado('Plan', { revisiones: 1 }))).toEqual([])
 
@@ -3575,7 +3575,7 @@ describe('flujo (puro)', () => {
 
     expect(lineas).toEqual([
       '99 exploradores · Haiku high',
-      'planificador · Opus high',
+      'planificador · Sonnet high',
       'revisor-plan · Sonnet medium',
       'ejecutor · Sonnet high',
       'revisor · Sonnet high/medium',
@@ -3606,7 +3606,7 @@ describe('flujo (puro)', () => {
     expect(detallePaso(nodoPasado('Verificación final', { revisiones: 1, configs: { revisor: ['Opus 5.5 high'] } }), undefined, 30)).toEqual(['revisor · Opus 5.5 high'])
     expect(detallePaso(nodoPasado('Verificación final', { revisiones: 1, configs: { revisor: ['Opus 5.5 high'] } }), undefined, 20)).toEqual(['revisor · Opus high'])
     expect(detallePaso(nodoPasado('Ejecución', { veces: 1, revisiones: 1, configs: { ejecutor: ['Sonnet 5.5 high'] } }))).toEqual(['ejecutor · Sonnet 5.5 high', 'revisor · Sonnet high/medium'])
-    expect(detallePaso(nodoPasado('Plan', { veces: 1, configs: { planificador: [] } }))).toEqual(['planificador · Opus high'])
+    expect(detallePaso(nodoPasado('Plan', { veces: 1, configs: { planificador: [] } }))).toEqual(['planificador · Sonnet high'])
   })
 
   test('revisor-plan observado se acorta a 30', async () => {
@@ -3927,8 +3927,8 @@ describe('gasto por paso (puro)', () => {
   })
 
   test('detallePaso: línea de gasto al final, también en Aprobación, y cabe en 30 caracteres', async () => {
-    expect(detallePaso(pasado('Plan', { veces: 1, gasto: [100_000, 2_000] }))).toEqual(['planificador · Opus high', 'gasto 100k · sal 2k'])
-    expect(detallePaso(pasado('Plan', { veces: 1, gasto: [950, 0] }))).toEqual(['planificador · Opus high', 'gasto 950'])
+    expect(detallePaso(pasado('Plan', { veces: 1, gasto: [100_000, 2_000] }))).toEqual(['planificador · Sonnet high', 'gasto 100k · sal 2k'])
+    expect(detallePaso(pasado('Plan', { veces: 1, gasto: [950, 0] }))).toEqual(['planificador · Sonnet high', 'gasto 950'])
     expect(detallePaso(pasado('Plan', { gasto: [950, 0] }))).toEqual(['gasto 950'])
     expect(detallePaso({ etiqueta: 'Plan', estado: 'pendiente', veces: 1, gasto: [100_000, 2_000] })).toEqual([])
     expect(detallePaso(pasado('Aprobación', { ms: 1_000, gasto: [100_000, 2_000] }))).toEqual(['gasto 100k · sal 2k'])

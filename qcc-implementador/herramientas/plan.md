@@ -26,6 +26,7 @@ Base: <rama>@<HEAD> · sucios previos: <lista | ninguno> · verificación inicia
 
 S1 · <objetivo de la subtarea>
 - Crítica: sí (#n) | no — <por qué, una línea>
+- Depende de: ninguna | S<n>, S<m>   (opcional)
 - Archivos permitidos: <rutas exactas, relativas a la raíz del repo; glob solo para archivos nuevos; «(generado)» para lo que cambia solo con el build o una herramienta>
 - Hecho cuando: <comando → resultado, o comportamiento que un test comprueba>
 - Tests: <existentes que lo cubren | nuevos (ruta)> · sin tests: <cómo se verifica y qué queda manual>
@@ -40,6 +41,7 @@ Costo: <n> ejecutor(es) · revisión final
 ```
 
 - `Crítica: sí` si la subtarea toca algo de un criterio de §2, de `criticos` o de las reglas del proyecto; `no` solo si todo lo que toca es UI, textos, estilos o documentación sin criterio. Ante la duda, `sí`. Con Clasificación «sin criterios», todas `no`. No hay revisor por subtarea: la revisión final mira primero lo crítico.
+- `Depende de` (opcional): sin el campo, la subtarea depende de la anterior y corre después de ella. Escribe `Depende de: ninguna` solo si la subtarea no necesita el código, los tipos, los datos ni los tests de otra y sus archivos permitidos no se pisan con los de otra (un archivo dentro de una carpeta o glob de otra también se pisa): `estado.mjs` junta en un lote, hasta 3 y corriendo a la vez, las subtareas que no dependen unas de otras. Si necesita una concreta, `Depende de: S<n>, S<m>` (solo anteriores). Ante la duda, omite el campo.
 - Subtareas pequeñas: ≤ 4 archivos de código más sus tests, cada una verificable sola, en orden de dependencia (migración → tipos → servidor → UI). Las que cambian menos de ~50 líneas y comparten capa o archivos van juntas, con un máximo de ~6 subtareas. Una fusión no pasa de ~300 líneas cambiadas estimadas, y una subtarea que ya pasa de ese tamaño se parte. Lo que toca los criterios #1, #2 o #4 (seguridad, auth, permisos, datos, esquema) no se fusiona con otra cosa. La documentación de un cambio va en los permitidos de la subtarea que lo cambia; una subtarea aparte de documentación queda solo para docs transversales que dependen de varias subtareas, y va al final. Solo texto (todos los archivos permitidos son documentación o prompts `.md`): hasta ~10 archivos por subtarea; si son el mismo tipo de cambio y ninguno tiene que quedar aplicado antes que otro, van en una sola subtarea. Si alguno es de una ruta crítica, la subtarea entera es `Crítica: sí`. Siguen los 2 ciclos por subtarea.
 - Preguntas sobre el modelo de datos: si el pedido define entidades, cantidades o dónde vive un dato (p. ej. «un texto o uno por sede»), la PREGUNTA es sobre ese modelo, con las alternativas reales, no sobre la precedencia dentro de un modelo ya supuesto.
 - «Hecho cuando» con Grep: solo ausencia («0 coincidencias de <texto viejo> en <rutas>») o presencia («≥ 1 en <archivo>»), nunca un conteo exacto, y con un patrón que no coincida con texto que la subtarea no toca (pruébalo con Grep sobre el árbol actual).
