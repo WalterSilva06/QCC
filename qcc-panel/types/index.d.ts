@@ -222,8 +222,8 @@ export type Instalados = {
   odd: boolean | null
 }
 
-/** Las pestañas del panel: «Inicio», «Flujo», «Gasto semanal», «Historial» y «Agentes». «Carpeta» es un botón, no una pestaña. «Flujo» e «Historial» pueden estar ocultas si no hay un implementador instalado; «Agentes» solo aparece si hay algún agente anotado. */
-export type Pestana = 'inicio' | 'flujo' | 'semana' | 'historial' | 'agentes'
+/** Las pestañas del panel: «Inicio», «Gasto semanal», «Historial» y «Agentes». «Carpeta» es un botón, no una pestaña. «Historial» puede estar oculta si no hay un implementador instalado; «Agentes» solo aparece si hay algún agente anotado. Un `flujo` guardado por una versión anterior ya no es una pestaña: abre «Inicio». */
+export type Pestana = 'inicio' | 'semana' | 'historial' | 'agentes'
 
 /** Un subagente visto en la sesión (de cualquier flujo), tal como lo muestra la pestaña «Agentes». */
 export type AgenteVisto = {

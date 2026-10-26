@@ -19,15 +19,12 @@ import {
   cerrarEspera,
   cerrarExploradorSinId,
   congelarConsumo,
-  consumoDeFlujo,
   cuadradosDeFila,
   datosDeExplorador,
-  detallePaso,
   esSkillOdd,
   iniciarFlujo,
   marcarAgente,
   marcarOrquestador,
-  nodos,
   nombreOrquestador,
   resumenFlujo,
   rolDeAgente,
@@ -47,7 +44,6 @@ import {
   cuando,
   cuotaUsado,
   desgloseTramos,
-  duracion,
   etiquetasAlineadas,
   falta,
   historialVigente,
@@ -78,7 +74,6 @@ import {
   estadosDeCuadros,
   etiquetaDia,
   familia,
-  idDeFila,
   idFila,
   idsDeActividad,
   inicioSemana,
@@ -128,10 +123,7 @@ const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtl
 /** La pestaña abierta. Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. Las claves viejas (`prefs:semana`, `prefs:flujo`, `prefs:historial`) se ignoran. */
 const PREF_PESTANA = 'prefs:pestana'
 
-/** Color del glifo de «Terminado» según cómo terminó el flujo. */
-const COLOR_FIN = { completo: 'success', detenido: 'warning', interrumpido: 'error' } as const
-
-/** Color del tramo de subagentes en las dos tablas («Esta sesión» y «Esta semana») y de la etiqueta de «Flujo › consumo». */
+/** Color del tramo de subagentes en las dos tablas («Esta sesión» y «Esta semana»). */
 const COLOR_SUB = 'purple_FOR_SUBAGENTS_ONLY'
 
 /** Color del tramo del hilo principal durante un flujo en las barras de «Esta sesión» y «Esta semana»; distinto de `claude`, de `COLOR_SUB` y de success/warning/subtle de los ■. */
@@ -1215,10 +1207,6 @@ export const register: Register = on => {
       )
     }
 
-    // Lo que gastó el flujo: en curso se calcula con la sesión; terminado, lo fijado al terminar.
-    const filasConsumo = fl === null ? [] : fl.estado === 'en curso' ? consumoDeFlujo(fl, ses) : (fl.consumo ?? [])
-    const etiquetasConsumo = etiquetasAlineadas(filasConsumo, Math.max(1, e.props.bodyColumns - COLUMNAS_CIFRAS))
-
     const limites = m?.limites ?? []
     const nivel = esf === null ? '—' : esf.nivel
 
@@ -1242,7 +1230,6 @@ export const register: Register = on => {
      */
     const botones = [
       { clave: 'pestana-inicio', hotkey: 'i', label: 'Inicio', alPulsar: () => elegirPestana($, 'inicio') },
-      ...(vista.flujo ? [{ clave: 'pestana-flujo', hotkey: 'f', label: 'Flujo', alPulsar: () => elegirPestana($, 'flujo') }] : []),
       { clave: 'pestana-semana', hotkey: 's', label: 'Semana', alPulsar: () => elegirPestana($, 'semana') },
       ...(vista.historial ? [{ clave: 'pestana-historial', hotkey: 'h', label: 'Hist.', alPulsar: () => elegirPestana($, 'historial') }] : []),
       ...(ags.length > 0 ? [{ clave: 'pestana-agentes', hotkey: 'a', label: 'Agentes', alPulsar: () => elegirPestana($, 'agentes') }] : []),
@@ -1300,96 +1287,6 @@ export const register: Register = on => {
               </Box>
             )
           })
-        )}
-      </Box>
-    )
-
-    /** El bloque de la pestaña «Flujo»: el resumen, los nodos con su detalle y el consumo. */
-    const bloqueFlujo = (
-      <Box key="flujo" flexDirection="column">
-        <Box key="flujo-resumen">
-          <Text dimColor wrap="truncate-end">
-            {resumenFlujo(fl, t)}
-          </Text>
-        </Box>
-        {fl?.orquestador !== undefined && (
-          <Text dimColor wrap="truncate-end">
-            {`orquestador ${fl.orquestador}`}
-          </Text>
-        )}
-        {fl !== null &&
-          nodos(fl, t).flatMap((n, i, todos) => {
-            const glifo =
-              n.estado === 'pasado'
-                ? { texto: '✓ ', color: 'success' as const }
-                : n.estado === 'pendiente'
-                  ? { texto: '○ ', color: undefined }
-                  : i === todos.length - 1 && fl.estado !== 'en curso'
-                    ? { texto: '● ', color: COLOR_FIN[fl.estado] }
-                    : { texto: '▸ ', color: 'claude' as const }
-
-            return [
-              ...(i > 0 ? [<Text key={`flujo-sep-${i}`} dimColor>│</Text>] : []),
-              <Box key={`flujo-${i}`}>
-                <Box flexGrow={1}>
-                  <Text color={glifo.color} dimColor={n.estado === 'pendiente'}>
-                    {glifo.texto}
-                  </Text>
-                  <Text bold={n.estado === 'actual'} dimColor={n.estado === 'pendiente'} wrap="truncate-end">
-                    {n.etiqueta}
-                  </Text>
-                  {n.exploradores !== undefined && (
-                    <Text dimColor wrap="truncate-end">
-                      {` ×${n.exploradores}`}
-                    </Text>
-                  )}
-                  {n.veces !== undefined && (
-                    <Text dimColor wrap="truncate-end">
-                      {` ×${n.veces}`}
-                    </Text>
-                  )}
-                  {n.revisiones !== undefined && (
-                    <Text dimColor wrap="truncate-end">
-                      {` · rev ×${n.revisiones}`}
-                    </Text>
-                  )}
-                </Box>
-                {n.ms !== undefined && <Text dimColor>{` ${duracion(n.ms)}`}</Text>}
-                {n.esperaUsuario !== undefined && <Text dimColor>{` · espera ${duracion(n.esperaUsuario)}`}</Text>}
-              </Box>,
-              // La sangría de 2 va dentro del `Text`: a 32 columnas se trunca con el resto de la línea.
-              ...detallePaso(n, fl.orquestador, Math.max(1, e.props.bodyColumns - 2)).map((linea, j) => (
-                <Text key={`flujo-detalle-${i}-${j}`} dimColor wrap="truncate-end">
-                  {`  ${linea}`}
-                </Text>
-              )),
-            ]
-          })}
-        {filasConsumo.length > 0 && (
-          <Box flexDirection="column" marginTop={1}>
-            <Box>
-              <Box flexGrow={1}>
-                <Text dimColor>consumo</Text>
-              </Box>
-              <Text>
-                {totalConSalida(
-                  filasConsumo.reduce((suma, f) => suma + f.total, 0),
-                  filasConsumo.reduce((suma, f) => suma + f.salida, 0),
-                )}
-              </Text>
-            </Box>
-            {filasConsumo.map((f, i) => (
-              <Box key={`consumo-${idDeFila(f)}`}>
-                <Box flexGrow={1}>
-                  <Text color={f.origen === 'subagente' ? COLOR_SUB : undefined} wrap="truncate-end">
-                    {etiquetasConsumo[i] ?? ''}
-                  </Text>
-                </Box>
-                <Text>{tokens(f.total).padStart(7)}</Text>
-                <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
-              </Box>
-            ))}
-          </Box>
         )}
       </Box>
     )
@@ -1503,19 +1400,6 @@ export const register: Register = on => {
     )
 
     // Cada pestaña dibuja la fila de pestañas y solo su contenido; `pestana-inicio` vuelve a «Inicio».
-    if (pest === 'flujo') {
-      return (
-        <Box flexDirection="column">
-          {filaPestanas}
-          {regla(0)}
-          {bloqueLimites}
-          {regla(1)}
-          {bloqueFlujo}
-          {pieCarpeta}
-        </Box>
-      )
-    }
-
     if (pest === 'agentes') {
       return (
         <Box flexDirection="column">

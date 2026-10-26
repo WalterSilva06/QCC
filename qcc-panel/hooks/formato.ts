@@ -266,11 +266,10 @@ export function historialVigente(actual: Pick<Historial, 'v' | 'mtimeMs'> | null
 }
 
 /**
- * La pestaña guardada si es una de las cinco; con cualquier otro valor, `'inicio'`. Con `vista`, una pestaña oculta
- * (`flujo`, `historial` o `agentes` en `false`) también da `'inicio'`; sin ella, todas valen.
+ * La pestaña guardada si es una de las cuatro; con cualquier otro valor (también el viejo `flujo`), `'inicio'`. Con `vista`, una
+ * pestaña oculta (`historial` o `agentes` en `false`) también da `'inicio'`; sin ella, todas valen.
  */
-export function pestanaValida(x: unknown, vista?: { flujo: boolean; historial: boolean; agentes?: boolean }): Pestana {
-  if (x === 'flujo') return vista?.flujo === false ? 'inicio' : x
+export function pestanaValida(x: unknown, vista?: { historial: boolean; agentes?: boolean }): Pestana {
   if (x === 'historial') return vista?.historial === false ? 'inicio' : x
   if (x === 'agentes') return vista?.agentes === false ? 'inicio' : x
 
