@@ -229,44 +229,54 @@ function recortar(caracteres: string[], sobra: number): string[] {
 }
 
 /**
- * La línea 1 de un flujo, con sus cuatro cifras destacadas: `dd/mm hh:mm <repo> <marca> <rev> · $x,xx · <min> · <tokens> tok · sal <salida>`.
- * La marca es `n` (`/impl`) u `odd` (`/odd`). Un dato sin valor se muestra como `—`. Las cifras no se recortan:
- * si la línea no cabe en `ancho` (columnas, por caracteres) se prueba, en este orden, con fecha y repo (entero, o acortado a 2 caracteres más «…»),
- * con fecha sin repo y sin fecha, y en cada caso con ` · ` entre las cifras y, si no cabe, con solo un espacio. Si ni así cabe, se pierde el glifo
- * de revisión (`odd $4,99 36m …`) y, si aún no cabe, la marca: quedan solo las cifras, cortadas a `ancho`.
+ * La línea de identidad de un flujo: `dd/mm hh:mm <repo> <marca> <rev>` y, detrás, la clasificación si cabe entera. La marca es `n` (`/impl`)
+ * u `odd` (`/odd`). Si no cabe en `ancho` (columnas, por caracteres) se prueba, en este orden, con fecha y repo (entero, o acortado a 2 caracteres
+ * más «…»), con fecha sin repo y sin fecha (con las mismas tres formas del repo). Si ni así cabe se pierde el glifo de revisión y, si aún no cabe,
+ * la marca se corta a `ancho`.
  */
-export function lineaHistorial(f: FilaHistorial, ancho: number): string {
-  const dato = (n?: number): string => (n === undefined ? '—' : tokens(n))
-  const cifras = (sep: string): string => [cifraUsd(f.usd), cifraMinutos(f.minutos), `${dato(f.tokens)} tok`, `sal ${dato(f.salida)}`].join(sep)
-  const marca = `${f.flujo === 'odd' ? 'odd' : 'n'} ${f.revision}`
+export function lineaIdentidad(f: FilaHistorial, ancho: number): string {
+  const nombreMarca = f.flujo === 'odd' ? 'odd' : 'n'
   const repo = Array.from(f.repo)
-  const armar = (fecha: boolean, nombre: string[], sep: string): string =>
-    `${[fecha ? fechaLocal(f.t) : '', nombre.join(''), marca].filter(p => p !== '').join(' ')}${sep}${cifras(sep)}`
+  const armar = (fecha: boolean, nombre: string[]): string => [fecha ? fechaLocal(f.t) : '', nombre.join(''), nombreMarca, f.revision].filter(p => p !== '').join(' ')
+  const conClasificacion = (linea: string): string =>
+    f.clasificacion !== '' && medir(`${linea} ${f.clasificacion}`) <= ancho ? `${linea} ${f.clasificacion}` : linea
   // `completo`: el repo entero; `corto`: acortado a 2 caracteres o más y «…»; `sin`: sin repo. `null` si esa forma no cabe.
-  const probar = (fecha: boolean, repoEn: 'completo' | 'corto' | 'sin', sep: string): string | null => {
-    const sin = armar(fecha, [], sep)
+  const probar = (fecha: boolean, repoEn: 'completo' | 'corto' | 'sin'): string | null => {
+    const sin = armar(fecha, [])
     if (medir(sin) > ancho) return null
     if (repoEn === 'sin' || repo.length === 0) return sin
-    if (repoEn === 'completo') return medir(armar(fecha, repo, sep)) <= ancho ? armar(fecha, repo, sep) : null
+    if (repoEn === 'completo') return medir(armar(fecha, repo)) <= ancho ? armar(fecha, repo) : null
 
     const sobra = ancho - medir(sin) - 1
 
-    return sobra >= 3 ? armar(fecha, recortar(repo, sobra), sep) : null
+    return sobra >= 3 ? armar(fecha, recortar(repo, sobra)) : null
   }
 
   for (const fecha of [true, false]) {
     for (const repoEn of ['completo', 'corto', 'sin'] as const) {
-      for (const sep of [' · ', ' ']) {
-        const linea = probar(fecha, repoEn, sep)
-        if (linea !== null) return linea
-      }
+      const linea = probar(fecha, repoEn)
+      if (linea !== null) return conClasificacion(linea)
     }
   }
 
-  // Ni la marca con el glifo cabe: primero se pierde el glifo y, si aun así no cabe, la marca; quedan las cifras, cortadas a `ancho` si hace falta.
-  const sinGlifo = `${f.flujo === 'odd' ? 'odd' : 'n'} ${cifras(' ')}`
+  return Array.from(nombreMarca).slice(0, Math.max(ancho, 0)).join('')
+}
 
-  return medir(sinGlifo) <= ancho ? sinGlifo : Array.from(cifras(' ')).slice(0, Math.max(ancho, 0)).join('')
+/**
+ * La línea de cifras de un flujo: `$x,xx · <min> · <tokens> tok · sal <salida>` (un dato sin valor es `—`) y, detrás, cada uno solo si cabe,
+ * `+<mas> −<menos>` y `×<subtareas>`. Las cifras van con ` · ` y, si así no caben en `ancho`, con un espacio; si ni así, se cortan a `ancho`.
+ */
+export function lineaCifras(f: FilaHistorial, ancho: number): string {
+  const dato = (n?: number): string => (n === undefined ? '—' : tokens(n))
+  const cifras = (sep: string): string => [cifraUsd(f.usd), cifraMinutos(f.minutos), `${dato(f.tokens)} tok`, `sal ${dato(f.salida)}`].join(sep)
+  const sep = medir(cifras(' · ')) <= ancho ? ' · ' : ' '
+  const base = cifras(sep)
+
+  if (medir(base) > ancho) return Array.from(base).slice(0, Math.max(ancho, 0)).join('')
+
+  const cola = [f.mas === undefined && f.menos === undefined ? '' : `+${f.mas ?? 0} −${f.menos ?? 0}`, f.subtareas === undefined ? '' : `×${f.subtareas}`]
+
+  return cola.filter(p => p !== '').reduce((acc, p) => (medir(`${acc}${sep}${p}`) <= ancho ? `${acc}${sep}${p}` : acc), base)
 }
 
 /** `texto` cortado a `ancho` caracteres (no unidades de código) con «…» al final si no cabe. */
@@ -278,18 +288,34 @@ function cortar(texto: string, ancho: number): string {
   return `${letras.slice(0, ancho - 1).join('').trimEnd()}…`
 }
 
+/** `texto` repartido en hasta `lineas` líneas de `ancho` caracteres, cortando entre palabras; lo que no cabe en la última se corta con «…». */
+function partir(texto: string, ancho: number, lineas: number): string[] {
+  const salida: string[] = []
+  let resto = texto.replace(/\s+/g, ' ').trim()
+
+  while (resto !== '' && ancho > 0) {
+    if (salida.length === lineas - 1 || medir(resto) <= ancho) {
+      salida.push(cortar(resto, ancho))
+      break
+    }
+
+    const letras = Array.from(resto)
+    const espacio = letras.slice(0, ancho + 1).lastIndexOf(' ')
+    const corte = espacio > 0 ? espacio : ancho
+
+    salida.push(letras.slice(0, corte).join(''))
+    resto = letras.slice(corte).join('').trim()
+  }
+
+  return salida
+}
+
 /**
- * Las dos líneas de un flujo, ninguna más larga que `ancho` caracteres: la de `lineaHistorial` y el resumen del cambio, `  <título>` (con `⚠ `
- * antes si el flujo se canceló o quedó bloqueado; `sin título` si falta). Un título que no cabe se corta con «…». Si cabe entero, detrás van,
- * cada uno solo si cabe, `+<mas> −<menos>`, `×<subtareas>` y la clasificación, unidos con ` · `. Los roles y la espera no se dibujan.
+ * Las líneas de un flujo, ninguna más larga que `ancho` caracteres: la de `lineaIdentidad`, el título en hasta 2 líneas (con `⚠ ` antes si el
+ * flujo se canceló o quedó bloqueado; `sin título` si falta; lo que no cabe se corta con «…») y la de `lineaCifras`. Los roles y la espera no se dibujan.
  */
 export function lineasHistorial(f: FilaHistorial, ancho: number): string[] {
-  const titulo = `  ${f.aviso ? '⚠ ' : ''}${f.titulo ?? 'sin título'}`
-  const cola = [f.mas === undefined && f.menos === undefined ? '' : `+${f.mas ?? 0} −${f.menos ?? 0}`, f.subtareas === undefined ? '' : `×${f.subtareas}`, f.clasificacion]
-  const resumen =
-    medir(titulo) > ancho
-      ? cortar(titulo, ancho)
-      : cola.filter(p => p !== '').reduce((acc, p) => (medir(`${acc} · ${p}`) <= ancho ? `${acc} · ${p}` : acc), titulo)
+  const titulo = `${f.aviso ? '⚠ ' : ''}${f.titulo ?? 'sin título'}`
 
-  return [lineaHistorial(f, ancho), resumen]
+  return [lineaIdentidad(f, ancho), ...partir(titulo, ancho, 2), lineaCifras(f, ancho)]
 }

@@ -1395,8 +1395,8 @@ export const register: Register = on => {
     )
 
     /**
-     * La pestaña «Historial»: el promedio y, por flujo, sus 2 líneas (la primera con tiempo, tokens, salida y dólares; la segunda, dim, con el
-     * resumen del cambio). Sin filas, un aviso.
+     * La pestaña «Historial»: el promedio y, por flujo, sus líneas (la de identidad; después, dim, el título en hasta 2 líneas y las cifras
+     * con dólares, tiempo, tokens y cambios). Sin filas, un aviso.
      */
     const promedio = his === null ? {} : promedioHistorial(his.filas)
     const bloqueHistorial = (
@@ -1424,8 +1424,8 @@ export const register: Register = on => {
     )
 
     /**
-     * La pestaña «Agentes»: el resumen, una línea por subagente (glifo de su estado, rol, descripción, tiempo y herramientas) y los
-     * archivos tocados, de lo más reciente a lo más viejo.
+     * La pestaña «Agentes»: el resumen, por subagente una línea con el glifo de su estado, el rol, el tiempo y las herramientas y debajo su
+     * descripción, y los archivos tocados, de lo más reciente a lo más viejo.
      */
     const lineasAgentes = resumenAgentes(ags, arcs, t, Math.min(e.props.bodyColumns, COLUMNAS))
     const bloqueAgentes = (
@@ -1434,21 +1434,21 @@ export const register: Register = on => {
           {lineasAgentes.resumen}
         </Text>
         {lineasAgentes.agentes.map((a, i) => (
-          <Box key={`agente-${i}`}>
-            <Text color={a.color}>{`${a.glifo} `}</Text>
-            <Box flexShrink={0}>
-              <Text>{a.rol}</Text>
+          <Box key={`agente-${i}`} flexDirection="column">
+            <Box>
+              <Text color={a.color}>{`${a.glifo} `}</Text>
+              <Box flexGrow={1}>
+                <Text wrap="truncate-end">{a.rol}</Text>
+              </Box>
+              <Box flexShrink={0}>
+                <Text dimColor>{a.cola}</Text>
+              </Box>
             </Box>
-            <Box flexGrow={1}>
-              {a.descripcion !== '' && (
-                <Text dimColor wrap="truncate-end">
-                  {` ${a.descripcion}`}
-                </Text>
-              )}
-            </Box>
-            <Box flexShrink={0}>
-              <Text dimColor>{a.cola}</Text>
-            </Box>
+            {a.descripcion !== '' && (
+              <Text dimColor wrap="truncate-end">
+                {`  ${a.descripcion}`}
+              </Text>
+            )}
           </Box>
         ))}
         {lineasAgentes.archivos.length > 0 && (

@@ -37,7 +37,7 @@ import {
 } from '../hooks/flujo'
 import type { Nodo, Senal } from '../hooks/flujo'
 import { decidirFreno, UMBRAL_FRENO } from '../hooks/freno'
-import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaHistorial, lineasHistorial, promedioHistorial, rutaHistorial, rutaHistorialOdd, unirHistorial } from '../hooks/historial'
+import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaCifras, lineaIdentidad, lineasHistorial, promedioHistorial, rutaHistorial, rutaHistorialOdd, unirHistorial } from '../hooks/historial'
 import { detectar, rutaSkill, vistaDe } from '../hooks/instalados'
 import { aDesglose, barra, barraPartida, barraTramos, cuotaUsado, desgloseTramos, duracion, etiquetasAlineadas, falta, historialVigente, lineaContexto, lineaLimite, marcador, ordenLeyenda, pct, pctParte, pestanaValida, relleno, repartir, resumenContexto, tokens, tono, tonoCompactacion, totalConSalida, tramos } from '../hooks/formato'
 import {
@@ -7236,46 +7236,56 @@ describe('historial', () => {
     expect(cifraMinutos()).toBe('—m')
   })
 
-  test('línea 1: las cuatro cifras destacadas, la marca del flujo y los recortes a 49, 40 y 32 columnas', () => {
+  test('lineaIdentidad: fecha, repo, marca del flujo, revisión y clasificación, y los recortes por ancho', () => {
     const fila = { t: T, repo: 'QCC', usd: 1.29, minutos: 11, revision: '✓' as const, clasificacion: 'CRÍTICO (#1, #5)', subtareas: 3, aviso: true, tokens: 2_500_000, salida: 91_000 }
+    const larga = { ...fila, repo: 'mi-repositorio-largo' }
     const largo = (s: string) => Array.from(s).length
 
-    // Ancho de sobra: fecha, repo, marca, revisión y las cifras con « · » (el aviso, la clasificación y ×n van en la línea 2).
-    expect(lineaHistorial(fila, 80)).toBe('18/10 09:30 QCC n ✓ · $1,29 · 11m · 2,5M tok · sal 91k')
-    expect(lineaHistorial({ ...fila, flujo: 'odd' }, 80)).toBe('18/10 09:30 QCC odd ✓ · $1,29 · 11m · 2,5M tok · sal 91k')
-    expect(lineaHistorial({ ...fila, flujo: 'normal' }, 80)).toBe(lineaHistorial(fila, 80))
-    expect(lineaHistorial({ ...fila, t: 'nada' }, 80).startsWith('??/?? ??:?? ')).toBe(true)
-    // Un dato sin valor se muestra `—`.
-    expect(lineaHistorial({ ...fila, usd: undefined, minutos: undefined, tokens: undefined, salida: undefined }, 80)).toBe('18/10 09:30 QCC n ✓ · $— · —m · — tok · sal —')
-    expect(lineaHistorial({ ...fila, tokens: 0, salida: 0 }, 80)).toBe('18/10 09:30 QCC n ✓ · $1,29 · 11m · 0 tok · sal 0')
+    // Ancho de sobra: fecha, repo, marca, revisión y la clasificación entera.
+    expect(lineaIdentidad(fila, 80)).toBe('18/10 09:30 QCC n ✓ CRÍTICO (#1, #5)')
+    expect(lineaIdentidad({ ...fila, flujo: 'odd' }, 80)).toBe('18/10 09:30 QCC odd ✓ CRÍTICO (#1, #5)')
+    expect(lineaIdentidad({ ...fila, flujo: 'normal' }, 80)).toBe(lineaIdentidad(fila, 80))
+    expect(lineaIdentidad({ ...fila, t: 'nada' }, 80).startsWith('??/?? ??:?? ')).toBe(true)
+    expect(lineaIdentidad({ ...fila, clasificacion: '' }, 80)).toBe('18/10 09:30 QCC n ✓')
+    // La clasificación entra entera o no entra.
+    expect(lineaIdentidad(fila, 30)).toBe('18/10 09:30 QCC n ✓')
+    // El repo largo se acorta con «…» antes de perder la fecha; sin sitio para 2 caracteres más «…», se quita el repo.
+    expect(lineaIdentidad(larga, 49)).toBe('18/10 09:30 mi-repositorio-largo n ✓')
+    expect(lineaIdentidad(larga, 30)).toBe('18/10 09:30 mi-repositori… n ✓')
+    expect(lineaIdentidad(larga, 18)).toBe('18/10 09:30 n ✓')
+    // Sin sitio para la fecha, queda el repo (entero o acortado).
+    expect(lineaIdentidad(fila, 14)).toBe('QCC n ✓')
+    expect(lineaIdentidad({ ...fila, flujo: 'odd' }, 14)).toBe('QCC odd ✓')
+    expect(lineaIdentidad(larga, 14)).toBe('mi-reposi… n ✓')
+    // Ni la marca con el glifo cabe: se pierde el glifo y, si ni así cabe, la marca se corta.
+    expect(lineaIdentidad({ ...fila, flujo: 'odd' }, 4)).toBe('odd')
+    expect(lineaIdentidad({ ...fila, flujo: 'odd' }, 2)).toBe('od')
+    expect(lineaIdentidad(fila, 0)).toBe('')
 
-    // 49: con la fecha no caben las cifras con « · », así que van con un espacio y el repo se conserva.
-    expect(lineaHistorial(fila, 49)).toBe('18/10 09:30 QCC n ✓ $1,29 11m 2,5M tok sal 91k')
-    // El repo largo se acorta con «…» antes que cualquier cifra.
-    const larga = { ...fila, repo: 'mi-repositorio-largo' }
-    expect(lineaHistorial(larga, 49)).toBe('18/10 09:30 mi-re… n ✓ $1,29 11m 2,5M tok sal 91k')
-    expect(lineaHistorial(larga, 80)).toBe('18/10 09:30 mi-repositorio-largo n ✓ · $1,29 · 11m · 2,5M tok · sal 91k')
-    // 40: sin fecha (con ella no caben las cifras), con el repo mientras tenga sitio.
-    expect(lineaHistorial(fila, 40)).toBe('QCC n ✓ $1,29 11m 2,5M tok sal 91k')
-    expect(lineaHistorial({ ...fila, flujo: 'odd' }, 40)).toBe('QCC odd ✓ $1,29 11m 2,5M tok sal 91k')
-    expect(lineaHistorial(larga, 40)).toBe('mi-repos… n ✓ $1,29 11m 2,5M tok sal 91k')
-    // 32: sin fecha ni repo; las cifras enteras, la marca y la revisión.
-    expect(lineaHistorial(fila, 32)).toBe('n ✓ $1,29 11m 2,5M tok sal 91k')
-    expect(lineaHistorial({ ...fila, flujo: 'odd' }, 32)).toBe('odd ✓ $1,29 11m 2,5M tok sal 91k')
-    // Sin sitio para 2 caracteres del repo más «…», el repo se quita (no queda un `n…` confuso junto a la marca).
-    expect(lineaHistorial(larga, 45)).toBe('18/10 09:30 n ✓ $1,29 11m 2,5M tok sal 91k')
-    // Cifras grandes a 32 columnas: caben. Si no cabe la marca con el glifo, se pierde el glifo y no la marca; si ni así, quedan las cifras enteras.
-    const grande = { ...fila, usd: 12.34, minutos: 125, tokens: 12_000_000, salida: 480_000 }
-    expect(lineaHistorial(grande, 32)).toBe('n ✓ $12,34 125m 12M tok sal 480k')
-    expect(lineaHistorial({ ...grande, flujo: 'odd' }, 32)).toBe('odd $12,34 125m 12M tok sal 480k')
-    expect(lineaHistorial({ ...grande, flujo: 'odd' }, 31)).toBe('$12,34 125m 12M tok sal 480k')
-    expect(lineaHistorial({ ...grande, flujo: 'odd' }, 28)).toBe('$12,34 125m 12M tok sal 480k')
-    // Una corrida odd real (4,99 USD, 36 min, 11,7M tokens, 166k de salida) a 32 columnas conserva la marca `odd`.
-    const real = { ...fila, flujo: 'odd' as const, usd: 4.99, minutos: 36, tokens: 11_700_000, salida: 166_000 }
-    expect(lineaHistorial(real, 32)).toBe('odd $4,99 36m 11,7M tok sal 166k')
-    expect(lineaHistorial({ ...real, flujo: 'normal' }, 32)).toBe('n ✓ $4,99 36m 11,7M tok sal 166k')
+    for (const ancho of [80, 60, 49, 40, 32, 28, 20, 10, 1, 0]) for (const f of [fila, larga, { ...fila, flujo: 'odd' as const }]) expect(largo(lineaIdentidad(f, ancho))).toBeLessThanOrEqual(ancho)
+  })
 
-    for (const ancho of [80, 60, 49, 40, 32, 28, 20, 10, 1, 0]) for (const f of [fila, larga, grande, { ...fila, flujo: 'odd' as const }]) expect(largo(lineaHistorial(f, ancho))).toBeLessThanOrEqual(ancho)
+  test('lineaCifras: dólares, minutos, tokens y salida, y +mas −menos y ×subtareas mientras quepan', () => {
+    const fila = { t: T, repo: 'QCC', usd: 1.29, minutos: 11, revision: '✓' as const, clasificacion: 'x', aviso: false, tokens: 2_500_000, salida: 91_000 }
+    const largo = (s: string) => Array.from(s).length
+
+    expect(lineaCifras(fila, 80)).toBe('$1,29 · 11m · 2,5M tok · sal 91k')
+    expect(lineaCifras({ ...fila, mas: 123, menos: 63, subtareas: 3 }, 80)).toBe('$1,29 · 11m · 2,5M tok · sal 91k · +123 −63 · ×3')
+    expect(lineaCifras({ ...fila, mas: 123 }, 80)).toBe('$1,29 · 11m · 2,5M tok · sal 91k · +123 −0')
+    // Cada parte entra solo si cabe: a 40 `×3` entra aunque `+123 −63` ya no.
+    expect(lineaCifras({ ...fila, mas: 123, menos: 63, subtareas: 3 }, 40)).toBe('$1,29 · 11m · 2,5M tok · sal 91k · ×3')
+    // Un dato sin valor se muestra `—`; el 0 es un dato.
+    expect(lineaCifras({ ...fila, usd: undefined, minutos: undefined, tokens: undefined, salida: undefined }, 80)).toBe('$— · —m · — tok · sal —')
+    expect(lineaCifras({ ...fila, tokens: 0, salida: 0 }, 80)).toBe('$1,29 · 11m · 0 tok · sal 0')
+    // Justo a 32 caben las cifras con « · »; a 31 van con un espacio y entonces cabe también `×3`; a 20 se cortan.
+    expect(lineaCifras(fila, 32)).toBe('$1,29 · 11m · 2,5M tok · sal 91k')
+    expect(lineaCifras({ ...fila, subtareas: 3 }, 31)).toBe('$1,29 11m 2,5M tok sal 91k ×3')
+    expect(lineaCifras(fila, 20)).toBe('$1,29 11m 2,5M tok s')
+    expect(lineaCifras(fila, 0)).toBe('')
+    // Cifras grandes.
+    expect(lineaCifras({ ...fila, usd: 12.34, minutos: 125, tokens: 12_000_000, salida: 480_000 }, 40)).toBe('$12,34 · 125m · 12M tok · sal 480k')
+
+    for (const ancho of [80, 60, 49, 40, 32, 28, 20, 10, 1, 0]) expect(largo(lineaCifras({ ...fila, mas: 123, menos: 63, subtareas: 3 }, ancho))).toBeLessThanOrEqual(ancho)
   })
 
   test('filaDeRegistro: titulo, roles y espera de una fila v2, y sus dos líneas sin roles ni espera', () => {
@@ -7292,8 +7302,9 @@ describe('historial', () => {
 
     expect(f).toMatchObject({ titulo: 'Historial detallado', espera: 2.5, mas: 15, menos: 2, subtareas: 3 })
     expect(f?.roles).toEqual([{ rol: 'ejecutor', usd: 0.5 }, { rol: 'orquestador', usd: 0.3 }, { rol: 'planificador', usd: 0.1 }])
-    // Los roles y la espera se leen y se guardan, pero ya no se dibujan: la 2.ª línea es el título con los cambios y lo que quepa.
-    expect(lineasHistorial(f!, 80)).toEqual([lineaHistorial(f!, 80), '  Historial detallado · +15 −2 · ×3 · CRÍTICO (#1, #5)'])
+    // Los roles y la espera se leen y se guardan, pero ya no se dibujan: el título va en su línea y los cambios, en la de cifras.
+    expect(lineasHistorial(f!, 80)[1]).toBe('Historial detallado')
+    expect(lineasHistorial(f!, 80)[2]).toContain('+15 −2 · ×3')
     expect(lineasHistorial(f!, 80).join('\n')).not.toMatch(/ejec|orq|plan|espera/)
 
     const sinTitulo = filaDeRegistro(v2({ pedido: '\n  Primera línea del pedido  \nsegunda' }))
@@ -7301,7 +7312,7 @@ describe('historial', () => {
     expect(filaDeRegistro(v2({ titulo: '', pedido: 'x'.repeat(200) }))?.titulo).toBe(`${'x'.repeat(119)}…`)
     expect(filaDeRegistro(v2({ titulo: '', pedido: '  \n ' }))?.titulo).toBeUndefined()
     expect(filaDeRegistro(v2({ tiempos: { activo: 720, espera: 0 } }))?.espera).toBeUndefined()
-    expect(lineasHistorial({ ...f!, roles: [{ rol: 'raro', usd: 1 }], espera: undefined, mas: undefined, menos: 4 }, 80)[1]).toBe('  Historial detallado · +0 −4 · ×3 · CRÍTICO (#1, #5)')
+    expect(lineasHistorial({ ...f!, roles: [{ rol: 'raro', usd: 1 }], espera: undefined, mas: undefined, menos: 4 }, 80)[2]).toContain('+0 −4 · ×3')
   })
 
   /** Una corrida de `odd.jsonl` como la anota `odd.mjs --cierre` (fila v1). */
@@ -7364,21 +7375,24 @@ describe('historial', () => {
     expect(normal?.roles).toEqual([{ rol: 'orquestador', usd: 0.3, tokens: 10 }])
   })
 
-  test('lineasHistorial: la marca de flujo va en la línea 1, igual para los dos flujos, y no hay tercera línea', () => {
+  test('lineasHistorial: la marca de flujo va en la línea de identidad, igual para los dos flujos, y el título y las cifras en líneas propias', () => {
     const f = filaDeRegistro(odd({ costo: { ...odd().costo, tokens: { entrada: 64, leidos: 2_400_000, escritos: 0, salida: 91_000 } } }), 'odd')!
     const normal = { ...f, flujo: 'normal' as const }
 
     expect(lineasHistorial(f, 100)).toEqual([
-      '18/10 09:30 QCC odd ✓ · $4,98 · 36m · 2,5M tok · sal 91k',
-      '  Mejoras de odd · +846 −56 · grande',
+      '18/10 09:30 QCC odd ✓ grande',
+      'Mejoras de odd',
+      '$4,98 · 36m · 2,5M tok · sal 91k · +846 −56',
     ])
-    expect(lineasHistorial(normal, 100)[0]).toBe('18/10 09:30 QCC n ✓ · $4,98 · 36m · 2,5M tok · sal 91k')
+    expect(lineasHistorial(normal, 100)[0]).toBe('18/10 09:30 QCC n ✓ grande')
     // Los dos flujos tienen el mismo formato: solo cambia la marca.
     expect(lineasHistorial(normal, 100)[0].replace(' n ', ' odd ')).toBe(lineasHistorial(f, 100)[0])
+    expect(lineasHistorial(normal, 100).slice(1)).toEqual(lineasHistorial(f, 100).slice(1))
     // Una fila sin `flujo` (caché de una versión anterior) se dibuja como normal. Sin título, `sin título`.
     expect(lineasHistorial({ ...f, flujo: undefined, roles: undefined, mas: undefined, menos: undefined, titulo: undefined, clasificacion: '' }, 80)).toEqual([
-      '18/10 09:30 QCC n ✓ · $4,98 · 36m · 2,5M tok · sal 91k',
-      '  sin título',
+      '18/10 09:30 QCC n ✓',
+      'sin título',
+      '$4,98 · 36m · 2,5M tok · sal 91k',
     ])
   })
 
@@ -7424,7 +7438,7 @@ describe('historial', () => {
     expect(filaDeRegistro(v2())).not.toHaveProperty('menos')
   })
 
-  test('lineasHistorial: siempre 2 líneas, ninguna más larga que el ancho, a 49, 40 y 32', () => {
+  test('lineasHistorial: el título en hasta 2 líneas, ninguna más larga que el ancho, a 49, 40 y 32', () => {
     const base = { t: T, repo: 'mi-repo', usd: 0.98, minutos: 12, revision: '✓' as const, clasificacion: 'sin criterios', aviso: false }
     const rica = {
       ...base,
@@ -7436,26 +7450,35 @@ describe('historial', () => {
     }
     const largo = (s: string) => Array.from(s).length
 
-    // Sin título, `sin título`; con título corto, detrás van `+mas −menos` y la clasificación mientras quepan.
-    expect(lineasHistorial(base, 49)).toEqual([lineaHistorial(base, 49), '  sin título · sin criterios'])
-    expect(lineasHistorial({ ...base, titulo: 'solo título' }, 49)).toEqual([lineaHistorial(base, 49), '  solo título · sin criterios'])
-    expect(lineasHistorial({ ...base, titulo: 'solo título', mas: 3, subtareas: 2 }, 80)[1]).toBe('  solo título · +3 −0 · ×2 · sin criterios')
-    // Cada parte entra solo si cabe: a 19 columnas `×2` entra aunque `+3 −0` ya no.
-    expect(lineasHistorial({ ...base, titulo: 'solo título', mas: 3, subtareas: 2 }, 25)[1]).toBe('  solo título · +3 −0')
-    expect(lineasHistorial({ ...base, titulo: 'solo título', mas: 3, subtareas: 2 }, 19)[1]).toBe('  solo título · ×2')
-    // El aviso abre la línea 2.
-    expect(lineasHistorial({ ...base, titulo: 'solo título', aviso: true }, 49)[1]).toBe('  ⚠ solo título · sin criterios')
+    // Sin título, `sin título`; con título corto, una sola línea de título entre la identidad y las cifras.
+    expect(lineasHistorial(base, 49)).toEqual(['18/10 09:30 mi-repo n ✓ sin criterios', 'sin título', '$0,98 · 12m · — tok · sal —'])
+    expect(lineasHistorial({ ...base, titulo: 'solo título' }, 49)[1]).toBe('solo título')
+    expect(lineasHistorial({ ...base, titulo: 'solo título', mas: 3, subtareas: 2 }, 80)[2]).toBe('$0,98 · 12m · — tok · sal — · +3 −0 · ×2')
+    // Cada parte de las cifras entra solo si cabe: a 33 columnas `×2` entra aunque `+3 −0` ya no.
+    expect(lineasHistorial({ ...base, titulo: 'solo título', mas: 3, subtareas: 2 }, 35)[2]).toBe('$0,98 · 12m · — tok · sal — · +3 −0')
+    expect(lineasHistorial({ ...base, titulo: 'solo título', mas: 3, subtareas: 2 }, 33)[2]).toBe('$0,98 · 12m · — tok · sal — · ×2')
+    // El aviso abre la línea del título.
+    expect(lineasHistorial({ ...base, titulo: 'solo título', aviso: true }, 49)[1]).toBe('⚠ solo título')
     // Ni los roles ni la espera se dibujan.
     expect(lineasHistorial({ ...base, espera: 2 }, 49)).toEqual(lineasHistorial(base, 49))
-    expect(lineasHistorial(rica, 80)[1]).toBe('  Un título bastante largo con ñandú y 🙂 emojis para forzar recorte · +120 −30')
+    expect(lineasHistorial(rica, 80)).toEqual([
+      '18/10 09:30 mi-repo n ✓ sin criterios',
+      'Un título bastante largo con ñandú y 🙂 emojis para forzar recorte',
+      '$0,98 · 12m · — tok · sal — · +120 −30',
+    ])
+    // Un título que no cabe pasa a una segunda línea, cortando entre palabras, y solo la segunda se corta con «…».
+    expect(lineasHistorial(rica, 49)[1]).toBe('Un título bastante largo con ñandú y 🙂 emojis')
+    expect(lineasHistorial(rica, 49)[2]).toBe('para forzar recorte')
+    expect(lineasHistorial(rica, 32)[1]).toBe('Un título bastante largo con')
+    expect(lineasHistorial(rica, 32)[2]).toBe('ñandú y 🙂 emojis para forzar re…')
+    // Una palabra más larga que el ancho se parte en el ancho; los saltos de línea del título cuentan como espacios.
+    expect(lineasHistorial({ ...base, titulo: 'x'.repeat(50) }, 20).slice(1, 3)).toEqual(['x'.repeat(20), `${'x'.repeat(19)}…`])
+    expect(lineasHistorial({ ...base, titulo: 'uno\ndos' }, 49)[1]).toBe('uno dos')
 
     for (const ancho of [49, 40, 32]) {
       const ls = lineasHistorial(rica, ancho)
-      expect(ls).toHaveLength(2)
-      for (const l of ls) expect(largo(l)).toBeLessThanOrEqual(ancho)
-      // Un título que no cabe se corta con «…» y no lleva cola.
-      expect(ls[1].endsWith('…')).toBe(true)
-      expect(ls[1]).not.toContain('+120')
+      expect(ls.length).toBeGreaterThanOrEqual(3)
+      expect(ls.length).toBeLessThanOrEqual(4)
     }
 
     for (const ancho of [80, 60, 49, 40, 32, 20, 10, 1, 0]) for (const l of lineasHistorial(rica, ancho)) expect(largo(l)).toBeLessThanOrEqual(Math.max(ancho, 0))
@@ -7499,8 +7522,8 @@ describe('historial en el panel', () => {
     tiempos: { activo: 600, espera: 120 },
     subtareas: [{ n: 1, estado: 'HECHO', mas: 30, menos: 4 }],
   })
-  /** La línea 1 de un flujo: sus cifras (`… tok sal <salida>`), con o sin fecha delante; la de `promedio` y el título no la cumplen. */
-  const ES_FILA = /^\S.* tok (· )?sal \S+$/
+  /** La línea de identidad de un flujo: fecha y repo si caben, la marca (`n` u `odd`) y su revisión; ni el `promedio`, ni el título, ni las cifras la cumplen. */
+  const ES_FILA = /^(\d\d\/\d\d \d\d:\d\d )?(\S+ )?(n|odd) [✓↻✗·]/
   const respuesta = (answer: string) => ({ reason: 'answer' as const, answer, durationMs: 10, isAborted: false, turnId: 't' })
 
   /**
@@ -7677,7 +7700,7 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  test('Historial: 2 líneas por flujo (cifras y resumen) y aviso sin filas', async ($, on) => {
+  test('Historial: identidad, título y cifras en líneas propias por flujo, y aviso sin filas', async ($, on) => {
     const { archivo } = motorHistorial(on)
     // Un archivo sin filas de flujo: título y aviso, sin promedio.
     archivo.texto = '{ roto\n'
@@ -7690,7 +7713,7 @@ describe('historial en el panel', () => {
     expect(vacio).toContain(AVISO_VACIO)
     expect(vacio.some(t => t.startsWith('promedio'))).toBe(false)
 
-    // Tres flujos: uno con título, roles y líneas, uno solo con título y uno sin título. Todos con 2 líneas.
+    // Tres flujos: uno con título, roles y líneas, uno solo con título y uno sin título. Todos con 3 líneas.
     const completo = JSON.stringify({
       v: 2,
       t: T,
@@ -7711,21 +7734,20 @@ describe('historial en el panel', () => {
     const arbol = await ui.findAll({ type: 'Text' })
     const textos = arbol.map(t => t.text ?? '')
     expect(textos).toContain('promedio $1,33 · 11m · 3 flujos')
-    // El más reciente (la última línea del archivo) primero: sus cifras normales (sin tokens: `—`) y el resumen atenuado, sin roles ni espera.
+    // El más reciente (la última línea del archivo) primero: su identidad, el título y las cifras (sin tokens: `—`) atenuados, sin roles ni espera.
     const i = textos.findIndex(t => t.includes('repoA'))
-    expect(textos.slice(i, i + 2)).toEqual(['18/10 09:30 repoA n ✓ $2,00 10m — tok sal —', '  Historial como pestaña · +30 −4 · ×1'])
-    expect(arbol.slice(i, i + 2).map(t => t.props.dimColor === true)).toEqual([false, true])
+    expect(textos.slice(i, i + 3)).toEqual(['18/10 09:30 repoA n ✓ CRÍTICO (#6)', 'Historial como pestaña', '$2,00 · 10m · — tok · sal — · +30 −4 · ×1'])
+    expect(arbol.slice(i, i + 3).map(t => t.props.dimColor === true)).toEqual([false, true, true])
     // El segundo: solo el título.
     const j = textos.findIndex(t => t.includes('repoB'))
-    expect(j).toBeGreaterThan(i + 1)
-    expect(textos[j]).toBe('18/10 09:30 repoB n · $1,00 —m — tok sal —')
-    expect(textos[j + 1]).toBe('  Solo título')
+    expect(j).toBeGreaterThan(i + 2)
+    expect(textos.slice(j, j + 3)).toEqual(['18/10 09:30 repoB n ·', 'Solo título', '$1,00 · —m · — tok · sal —'])
     expect(arbol[j]?.props.dimColor).not.toBe(true)
     // El tercero: sin título; lo que le sigue ya no es suyo.
     const k = textos.findIndex(t => t.includes('repo3'))
-    expect(k).toBeGreaterThan(j + 1)
-    expect(textos[k + 1]).toBe('  sin título · ×1 · CRÍTICO (#1, #5)')
-    expect(textos.slice(k + 2).some(t => t.startsWith('  '))).toBe(false)
+    expect(k).toBeGreaterThan(j + 2)
+    expect(textos.slice(k, k + 3)).toEqual(['18/10 09:30 repo3 n ✓ CRÍTICO (#1, #5)', 'sin título', '$0,98 · 12m · — tok · sal — · ×1'])
+    expect(textos.slice(k + 3).some(t => t.includes(' tok '))).toBe(false)
     // Nada de roles, espera ni la etiqueta de flujo como tercera línea.
     expect(textos.some(t => /\b(orq|ejec|espera)\b/.test(t) || t.startsWith('  normal'))).toBe(false)
     // Entre flujos hay una línea en blanco (marginTop 1) y el primero no la lleva.
@@ -7759,12 +7781,12 @@ describe('historial en el panel', () => {
     // Ya no hay bloque de totales sumados.
     expect(textos.some(t => /^(normal|odd) ×\d/.test(t) || /^\s*\S+ tok · sal /.test(t))).toBe(false)
     expect(await ui.find({ type: 'Box', key: 'totales' })).toBeUndefined()
-    // La corrida odd (19/10) va antes que el flujo normal (18/10); las dos con el mismo formato y su marca, y 2 líneas cada una.
+    // La corrida odd (19/10) va antes que el flujo normal (18/10); las dos con el mismo formato y su marca, y 3 líneas cada una.
     const i = textos.findIndex(t => t.includes('repoOdd'))
-    expect(textos.slice(i, i + 2)).toEqual(['19/10 09:30 repoOdd odd · $0,50 5m 1,2M tok sal 3', '  Corrida odd · chico'])
+    expect(textos.slice(i, i + 3)).toEqual(['19/10 09:30 repoOdd odd · chico', 'Corrida odd', '$0,50 · 5m · 1,2M tok · sal 3'])
     const j = textos.findIndex(t => t.includes('repo1'))
-    expect(j).toBe(i + 2)
-    expect(textos.slice(j, j + 2)).toEqual(['18/10 09:30 repo1 n ✓ $0,98 12m — tok sal —', '  sin título · ×1 · CRÍTICO (#1, #5)'])
+    expect(j).toBe(i + 3)
+    expect(textos.slice(j, j + 3)).toEqual(['18/10 09:30 repo1 n ✓ CRÍTICO (#1, #5)', 'sin título', '$0,98 · 12m · — tok · sal — · ×1'])
     expect(textos).toContain('promedio $0,74 · 9m · 2 flujos')
     expect(llamadas.odd).toEqual(['stat C:\\Users\\x\\.claude\\flujos-odd\\registros\\odd.jsonl', 'read C:\\Users\\x\\.claude\\flujos-odd\\registros\\odd.jsonl'])
 
@@ -7957,20 +7979,21 @@ describe('historial en el panel', () => {
       await abrirHistorial(ui)
 
       const textos = await textosDe(ui)
-      // Sin totales sumados. 4 flujos (odd, 1, A y 3), 2 líneas cada uno: la de cifras y la de resumen, esta con dos espacios.
+      // Sin totales sumados. 4 flujos (odd, 1, A y 3): cada uno con su línea de identidad y su línea de cifras, y entre ellas el título.
       expect(textos.some(t => /^(normal|odd) ×\d|^odd · sin flujos/.test(t))).toBe(false)
-      const cifras = textos.filter(t => ES_FILA.test(t))
-      const resumenes = textos.filter(t => t.startsWith('  '))
+      const identidades = textos.filter(t => ES_FILA.test(t))
+      const cifras = textos.filter(t => /^\$\S+ .* tok .*sal \S+/.test(t))
+      expect(identidades).toHaveLength(4)
       expect(cifras).toHaveLength(4)
-      expect(resumenes).toHaveLength(4)
-      for (const l of [...cifras, ...resumenes]) expect(Array.from(l).length).toBeLessThanOrEqual(pane.props.bodyColumns)
-      // Las cuatro cifras están en toda línea 1, sea cual sea el ancho; sin tokens anotados van con `—`.
-      expect(cifras.every(l => / tok (· )?sal \S+$/.test(l) && /\$\S+/.test(l) && /\d+m|—m/.test(l))).toBe(true)
+      for (const l of textos.slice(textos.findIndex(t => t.startsWith('promedio')) + 1)) expect(Array.from(l).length).toBeLessThanOrEqual(pane.props.bodyColumns)
+      // Las cuatro cifras están en toda línea de cifras, sea cual sea el ancho; sin tokens anotados van con `—`.
+      expect(cifras.every(l => /^\$\S+ (· )?(\d+m|—m) (· )?\S+ tok (· )?sal \S+/.test(l))).toBe(true)
       // La corrida odd va primero (20/10) y mantiene sus cifras enteras y su marca hasta a 32 columnas; las normales, la suya.
-      expect(cifras[0]).toMatch(/(^| )odd ✓ (\$4,98 · 36m · 12M tok · sal 480k|\$4,98 36m 12M tok sal 480k)$/)
-      expect(cifras.slice(1).every(l => /(^| )n [✓·] /.test(l))).toBe(true)
-      // Resumen: título cortado con «…» al ancho, sin roles ni espera.
-      expect(resumenes.some(l => l.includes('Historial como pestaña'))).toBe(true)
+      expect(cifras[0]).toMatch(/^(\$4,98 · 36m · 12M tok · sal 480k|\$4,98 36m 12M tok sal 480k)/)
+      expect(identidades[0]).toMatch(/(^| )odd ✓/)
+      expect(identidades.slice(1).every(l => /(^| )n [✓·]/.test(l))).toBe(true)
+      // El título largo pasa a otra línea, sin roles ni espera.
+      expect(textos.some(l => l.includes('Historial como pestaña'))).toBe(true)
       expect(textos.some(t => /\b(orq|ejec|espera)\b/.test(t))).toBe(false)
       await ui.unmount()
     }
@@ -9008,8 +9031,8 @@ describe('agentes en el panel', () => {
       '1 agente · 1 corriendo · 3 herramientas',
       '▸ ',
       'ejecutor',
-      ' Editar API',
       ' 5 s · 3 herr.',
+      '  Editar API',
       'Archivos tocados',
       'src/b.ts',
       ' ×1 · principal',
@@ -9037,12 +9060,12 @@ describe('agentes en el panel', () => {
       '2 agentes · 0 corriendo · 4 herramientas',
       '✗ ',
       'Explore',
-      ' Buscar usos',
       ' 0 s · 1 herr.',
+      '  Buscar usos',
       '✓ ',
       'ejecutor',
-      ' Editar API',
       ' 5 s · 3 herr.',
+      '  Editar API',
     ])
     await ui.unmount()
   })
@@ -9062,7 +9085,7 @@ describe('agentes en el panel', () => {
     expect(await vuelo).toEqual({ result: 'listo' })
 
     await ui.press({ key: 'pestana-agentes' })
-    expect((await deAgentes(ui)).slice(0, 5)).toEqual(['1 agente · 0 corriendo · 0 herramientas', '✓ ', 'revisor', ' Sin id', ' 3 s · 0 herr.'])
+    expect((await deAgentes(ui)).slice(0, 5)).toEqual(['1 agente · 0 corriendo · 0 herramientas', '✓ ', 'revisor', ' 3 s · 0 herr.', '  Sin id'])
     await ui.unmount()
   })
 
@@ -9107,8 +9130,8 @@ describe('agentes en el panel', () => {
       '1 agente · 1 corriendo · 1 herramienta',
       '▸ ',
       'ejecutor',
-      ' Algo',
       ' 0 s · 1 herr.',
+      '  Algo',
       'Archivos tocados',
       'cuaderno.ipynb',
       ' ×1 · principal',
@@ -9157,7 +9180,7 @@ describe('agentes en el panel', () => {
 
     // Un agente nuevo tras /clear empieza de cero, sin archivos.
     await spawn($, 'Algo', 'impl:qcc-ejecutor', 'tu-2')
-    expect(await deAgentes(ui)).toEqual(['1 agente · 1 corriendo · 0 herramientas', '▸ ', 'ejecutor', ' Algo', ' 0 s · 0 herr.'])
+    expect(await deAgentes(ui)).toEqual(['1 agente · 1 corriendo · 0 herramientas', '▸ ', 'ejecutor', ' 0 s · 0 herr.', '  Algo'])
     await ui.unmount()
   })
 })
