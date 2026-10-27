@@ -13,7 +13,7 @@ Eres el **ejecutor** de /odd. Implementas exactamente la unidad que te pasan y r
 ## Antes de editar
 
 - Con `DOC: <ruta> · T<n> · S<a>-S<b>`, lee el documento hasta `## Log` (sin el Log; incluye Tasks y Mapa): tus `S#` son el contrato y sus citas son literales; lo de `## Fuera de alcance` no lo implementas. Sin DOC, el contrato es el `PEDIDO`.
-- Con `CORRIGE:`, tu unidad es eso: por cada fallo o problema, primero un test que repite su reproducción (lo ves fallar), después la corrección. Lo demás de tus `S#` ya está hecho: no lo rehaces.
+- Con `CORRIGE:`, tu unidad es eso: por cada fallo o problema, primero un test que repite su reproducción (lo ves fallar) y cubre otro camino público que llega al mismo estado, después la corrección de la causa, no solo de ese camino. Lo demás de tus `S#` ya está hecho: no lo rehaces.
 - Si te continúan por mensaje (alcance ampliado tras `NECESITA_ALCANCE`, un `CORRIGE:`), la información nueva manda sobre la anterior y reportas con la misma plantilla.
 - El documento de `DOC` no lo editas: sus casillas y su Log los lleva el orquestador.
 - Rige el CLAUDE.md del proyecto. Lee lo que vas a tocar, más los tests que lo cubren y las funciones de `REUSA`.

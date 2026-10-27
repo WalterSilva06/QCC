@@ -63,7 +63,7 @@ Una unidad es un comportamiento con su código, tests y docs: nunca se parte en 
 Un error sería difícil de detectar, de deshacer o llega más allá del cambio. El cambio toca:
 
 1. **Datos o irreversible:** migraciones, cambiar o borrar datos guardados, formato persistido (no guardar registros nuevos).
-2. **Seguridad:** auth, permisos, credenciales, secretos, guardias, sandbox.
+2. **Seguridad:** auth, permisos, credenciales, secretos, guardias, sandbox. También: una acción o un endpoint nuevos o cambiados que pasan por un chequeo de permisos o de rol, y actuar a nombre de otro usuario o sobre recursos que no son del que llama.
 3. **Contratos que otros consumen:** cambiar o quitar API pública, flags de CLI, formatos de config, exports, prompts o contratos espejados (agregar uno opcional no cuenta). También: el diff cambia código compartido (opciones, parsers, helpers) que usa comportamiento que el pedido no menciona, o el pedido exige que algo existente siga igual y el diff cambia una función que ese algo usa.
 4. **Concurrencia:** locks, carreras, orden asíncrono.
 5. **Entrega o entorno:** instaladores, release, CI, deploy, dependencias.
@@ -89,6 +89,7 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
   - **Tamaño.** `grande` con más de ~8 reglas pedidas, más de ~5 archivos de código por tocar, un contexto previsto de más de 150k, varias sesiones, algo externo que esperar, entregas separadas que pidió el usuario o requisitos que no sobrevivirían una compactación. Si no, `chico`. Con `grande`, desde este `--plan` la guardia te niega Edit y Write fuera de `odd/tasks/`.
   - **Riesgo:** los 6 ítems, cada uno `sí <motivo>` o `no`. Se confirma en la fase 3 contra el diff real.
   - **Bordes** (con algún `sí`), solo los que aplican: cada entrada como llega por la interfaz pública (ausente, vacía, de otro tipo: un `argv` que falta es `undefined`); datos guardados corruptos o en el formato viejo; en auth, caminos de fallo iguales en salida, código de salida y costo; en migraciones, idempotencia y que una entrada rechazada no migre nada.
+  - **Fuera de alcance**, antes del `--plan`: por cada ítem de `## Fuera de alcance` y cada supuesto, te preguntas «si no se hace, ¿el cambio deja un cobro, un permiso o un dato inconsistente, por cualquier camino público?». Si sí, sale de ahí y pasa a un `S#` con su «Hecho cuando» antes de despachar.
 
 **2. Implementar**
 - **Chico:** editas directo.
@@ -145,8 +146,9 @@ Las rutas de `CRÍTICOS DEL PROYECTO` (de `--inicio`) cuentan como el ítem que 
   ```
 
   El revisor recibe la salida del diferencial en `DIFERENCIAL` y no la rehace.
+- Cada corrección de un PROBLEMA u OBSERVACIÓN ataca la causa, no solo el camino de la reproducción: su test repite la reproducción del revisor y agrega otro camino público que llega al mismo estado (otro endpoint, el webhook, otro orden de llamadas).
 - **RECHAZADO** → un lote que corrige todos los PROBLEMAS, cada uno con un test que repite la reproducción del revisor (lo ves fallar antes de corregir), `verificar.mjs`, y el revisor otra vez, al mismo agente por SendMessage en una grande (como el ejecutor, con el fallback a uno nuevo con la plantilla completa) con `REVISIÓN ANTERIOR: <sus PROBLEMAS>` y el `VERIFICACIÓN` nuevo, que rechequea solo esos. Hay una segunda corrección solo si un mismo problema sigue fallando. Lo nuevo que traiga un rechequeo, y lo que siga abierto tras la segunda corrección, va a «Para decidir»: no abre otro ciclo.
-- **APROBADO con OBSERVACIONES** → las que traen reproducción por la interfaz pública y caen en archivos que ya tocaste las corriges en un lote, con su test, y corres `verificar.mjs`. Con ítem 2, el revisor una vez más con `REVISIÓN ANTERIOR: <esas observaciones>`; con otro ítem, sin rechequeo. Las demás, y lo que el rechequeo no dé por resuelto, van a «Para decidir». Un hueco que ya estaba en la BASE también va ahí, con su reproducción, salvo que el diff toque esa misma función: nada de paso.
+- **APROBADO con OBSERVACIONES** → las que traen reproducción por la interfaz pública y caen en archivos que ya tocaste las corriges en un lote, con su test, y corres `verificar.mjs`. Después, el revisor una vez más con `REVISIÓN ANTERIOR: <esas observaciones>`, con cualquier ítem (en una grande, al mismo agente por SendMessage). Las demás, y lo que el rechequeo no dé por resuelto, van a «Para decidir». Un hueco que ya estaba en la BASE también va ahí, con su reproducción, salvo que el diff toque esa misma función: nada de paso.
 
 **4. Cierre**
 - Si hubo temporales (`ODD_COPIA`, los `TEMPORALES` de ejecutores y revisor): `node "${CLAUDE_PLUGIN_ROOT}/herramientas/odd.mjs" --limpiar -- <rutas>`. Lo que quede en `NO BORRADOS` va a «Queda para ti».
@@ -199,6 +201,7 @@ L1 <AAAA-MM-DD> pedido (literal):
 
 - `## Mapa` copia la respuesta del explorador por ÁREA, con sus tramos `(editar)`, `FIRMA:`, `USOS:` y `TESTS:` tal como los dio, y se escribe una vez, al crear el documento. El `Qué:` de cada tarea lo escribes al crearla: es lo que el ejecutor lee en lugar de un despacho largo. La casilla y la evidencia las llenas después de cada despacho. Lo estable (Specs, Fuera de alcance, Tasks, Mapa) no se reescribe salvo por un cambio de requisito o de tramos.
 - Los `S#` citan literal los strings, mensajes de error, comandos y ejemplos del usuario: nunca los resumen ni los reescriben. No agregues requisitos que nadie pidió; los supuestos llevan «(supuesto)».
-- `## Fuera de alcance` lista lo que el usuario excluyó y lo vecino que tienta y el pedido no pide (una abstracción, un caso extra, una opción nueva). Ni el ejecutor ni el revisor lo dan por hecho: lo que está ahí no se implementa. Sin nada que listar: «nada». Si el usuario lo pide después, pasa a un `S#` con su `L<n>`.
+- Un `S#` no extiende a otra regla lo que el pedido limita a una (si el pedido dice que el plazo se evalúa sobre la elegida, el permiso no pasa a mirarse solo ahí) ni afloja una regla del CLAUDE.md del proyecto (permisos, dinero, auditoría). Si el pedido parece pedirlo, lo preguntas o va a «Para decidir».
+- `## Fuera de alcance` lista lo que el usuario excluyó y lo vecino que tienta y el pedido no pide (una abstracción, un caso extra, una opción nueva). Ni el ejecutor ni el revisor lo dan por hecho: lo que está ahí no se implementa. Sin nada que listar: «nada». Si el usuario lo pide después, pasa a un `S#` con su `L<n>`. No va ahí un defecto que causa el cambio (un cobro, un permiso o un dato que el cambio deja inconsistentes, aunque sea por un camino que el pedido no nombra): lo corriges, o va a «Para decidir» como bug, nunca como exclusión.
 - Un cambio de requisito del usuario se anota como `L<n>` literal con la fecha, reescribe solo el `S#` afectado y reabre solo su tarea. Lo demás ya hecho queda.
 - El Log es breve: correcciones del usuario, decisiones técnicas con su porqué y evidencia. No es un diario.
