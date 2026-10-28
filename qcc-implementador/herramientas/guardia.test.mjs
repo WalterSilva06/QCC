@@ -15,7 +15,7 @@ import path from 'node:path'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, rolDeAgente, analizar, raizDe, registroDe, flujoDe, arbolDe, configDe, coincide } from './guardia.mjs'
-import { listaPermitidos, enAlcance, lotesDe, opcionesDe, tokensDe, anotarFlujo, filaDelFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta, mapaDelRepo, decisionesDelPlan, contextoDelProyecto } from './estado.mjs'
+import { listaPermitidos, enAlcance, lotesDe, opcionesDe, tokensDe, anotarFlujo, filaDelFlujo, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, agruparPorCarpeta, mapaDelRepo, decisionesDelPlan, contextoDelProyecto, fusionarExploraciones } from './estado.mjs'
 import { pasosDe, detalleTipos, resumenTest, detalleTest, conDetalle, claveDe, marcaDe, esBuild, salidasDe } from './verificar.mjs'
 import { costoDelFlujo, costoDePedido, metricasDelFlujo, precioDe, problemasDe } from './costos.mjs'
 
@@ -438,6 +438,8 @@ test('estado: opciones y --paso', () => {
   assert.equal(opcionesDe(['--cambios', 'abc', '--resultado']).resultado, '')
   const g = opcionesDe(['--guardar', 'a86c3e', 'plan', '--ajuste', '--paso', '2'])
   assert.deepEqual([g.modo, g.agente, g.tipo, g.ajuste, g.paso], ['guardar', 'a86c3e', 'plan', true, 2])
+  const varios = opcionesDe(['--guardar', 'a,b', 'exploracion', '--paso', '2'])
+  assert.deepEqual([varios.modo, varios.agente, varios.tipo], ['guardar', 'a,b', 'exploracion'])
   assert.equal(opcionesDe(['--estado', '--paso', '5']).modo, 'estado')
   assert.equal(opcionesDe(['--cancelar', '--paso', '4']).modo, 'cancelar')
   assert.equal(opcionesDe(['--cancelar', '--guardar', 'a', 'plan']).modo, 'cancelar')
@@ -1432,6 +1434,62 @@ test('estado: --cancelar con fotos de subtareas no cierra', () => {
   assert.equal(fs.readFileSync(path.join(carpeta, 'estado.json'), 'utf8'), antes)
   assert.deepEqual(filasDeFlujos(raiz), [])
   assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^AVISO: hay otro flujo abierto/m)
+})
+
+test('estado: fusionarExploraciones une secciones sin repetir ruta:línea (pura)', () => {
+  const uno = 'ARCHIVOS\n- x.ts:1 — primero\n- y.ts:10 — uno\n\nTESTS\n- ninguno\n\nACOPLAMIENTOS\n- ninguno\n\nDATOS\n- ninguno\n\nDUDAS\n- ninguno'
+  const dos = 'ARCHIVOS\n- x.ts:1 — repetido\n- y.ts:1 — otro\n\nTESTS\n- t.test.ts:5 — cubre x\n\nACOPLAMIENTOS\n- ninguno\n\nDATOS\n- ninguno'
+  const { texto, incompletos } = fusionarExploraciones([{ id: 'a', texto: uno }, { id: 'b', texto: dos }])
+
+  assert.equal(texto.match(/x\.ts:1\b/g).length, 1)
+  assert.match(texto, /- x\.ts:1 — primero/)
+  assert.doesNotMatch(texto, /repetido/)
+  // ruta:1 y ruta:10 son claves distintas.
+  assert.match(texto, /- y\.ts:10 — uno/)
+  assert.match(texto, /- y\.ts:1 — otro/)
+  // Las secciones salen en orden y `ninguno` solo queda donde no hay hallazgos.
+  const orden = ['ARCHIVOS', 'TESTS', 'ACOPLAMIENTOS', 'DATOS', 'DUDAS'].map((s) => texto.indexOf(`\n${s}\n`) + (s === 'ARCHIVOS' ? 1 : 0))
+  assert.ok(orden[0] === 0 && orden.every((n, i) => n >= 0 && (i === 0 || n > orden[i - 1])), orden.join())
+  assert.match(texto, /TESTS\n- t\.test\.ts:5 — cubre x\n/)
+  assert.doesNotMatch(texto, /TESTS\n- ninguno/)
+  assert.match(texto, /ACOPLAMIENTOS\n- ninguno\n/)
+  assert.match(texto, /DUDAS\n- ninguno$/)
+  assert.deepEqual(incompletos, [{ id: 'b', faltan: ['DUDAS'] }])
+})
+
+test('estado: --guardar con varios exploradores escribe un solo exploracion.md', () => {
+  const claude = transcripts({
+    e1: 'ARCHIVOS\n- flujos/herramientas/estado.mjs:12 — modo nuevo\n- src/a.ts:3 — uso\nTESTS\n- ninguno\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\nDUDAS\n- ninguno',
+    e2: 'ARCHIVOS\n- src/a.ts:3 — mismo uso\n- src/b.ts:7 — otro\nTESTS\n- src/a.test.ts:1 — prueba\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno',
+  })
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+  const { raiz, salida } = estadoCon({ criticos: CRITICOS }, () => ['--guardar', 'e1,e2,nadie', 'exploracion', '--paso', '2'], {}, entorno)
+  const md = fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8')
+
+  assert.match(salida, /^GUARDADO: exploración → .*exploracion\.md$/m)
+  assert.match(salida, /^AVISO: no encontré el informe del agente nadie: despacha copiando su texto, como antes$/m)
+  assert.match(salida, /^INCOMPLETO: agente e2 sin DUDAS: relanza solo esa parte$/m)
+  assert.doesNotMatch(salida, /INCOMPLETO: agente e1/)
+  assert.match(salida, /^RUTAS CRÍTICAS EN LA EXPLORACIÓN: #1 \(flujos\/herramientas\/estado\.mjs\), #5 \(flujos\/herramientas\/estado\.mjs\)$/m)
+  assert.equal(md.match(/src\/a\.ts:3/g).length, 1)
+  assert.match(md, /- src\/b\.ts:7 — otro/)
+  assert.match(md, /TESTS\n- src\/a\.test\.ts:1 — prueba\n/)
+  assert.equal(md.match(/^ARCHIVOS$/gm).length, 1)
+  assert.ok(md.endsWith('\n'))
+
+  // Sin ningún informe encontrado no se escribe nada.
+  const vacio = estadoEn(raiz, ['--guardar', 'x1,x2', 'exploracion'], entorno)
+  assert.match(vacio.salida, /agente x1:/)
+  assert.match(vacio.salida, /agente x2:/)
+  assert.doesNotMatch(vacio.salida, /GUARDADO/)
+
+  // Con un solo id, un informe sin alguna sección también avisa, y el archivo queda tal cual.
+  const solo = estadoEn(raiz, ['--guardar', 'e2', 'exploracion'], entorno).salida
+  assert.match(solo, /^INCOMPLETO: agente e2 sin DUDAS: relanza solo esa parte$/m)
+  assert.equal(
+    fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8'),
+    'ARCHIVOS\n- src/a.ts:3 — mismo uso\n- src/b.ts:7 — otro\nTESTS\n- src/a.test.ts:1 — prueba\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\n',
+  )
 })
 
 test('estado: --guardar exploracion dice si la exploración toca rutas críticas', () => {

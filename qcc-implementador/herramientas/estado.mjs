@@ -8,7 +8,7 @@
 //   node <plugin>/herramientas/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"] [--resultado COMPLETO|DETENIDO:<0-7>]
 //   node <plugin>/herramientas/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo
 //   node <plugin>/herramientas/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
-//   node <plugin>/herramientas/estado.mjs --guardar <agentId> plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s)
+//   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s). La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección
 //   node <plugin>/herramientas/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan y la VERIFICACIÓN INICIAL)
 //   node <plugin>/herramientas/estado.mjs --cancelar [--paso <n>]  cierra un flujo abierto sin subtareas ejecutadas (resultado CANCELADO) y libera el candado
 //   node <plugin>/herramientas/estado.mjs --reglas                reglas del proyecto para el orquestador
@@ -36,7 +36,7 @@
 // subtareas y calidad: costos.mjs), imprime el CONTEXTO del hilo principal y archiva el flujo en `registros/historial/`
 // (las 30 carpetas más recientes).
 // `--guardar` toma el informe de un agente de su transcript, en `projects/*/*/subagents/agent-<id>.jsonl`
-// dentro de `CLAUDE_CONFIG_DIR` (o `~/.claude`).
+// dentro de `CLAUDE_CONFIG_DIR` (o `~/.claude`). Con `exploracion` acepta varios ids separados por coma y une sus informes.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -622,8 +622,58 @@ function criticasDeExploracion(texto) {
   return [...porCriterio.keys()].sort((a, b) => a - b).map((n) => `#${n} (${porCriterio.get(n)})`).join(', ')
 }
 
+const SECCIONES_EXPLORACION = ['ARCHIVOS', 'TESTS', 'ACOPLAMIENTOS', 'DATOS', 'DUDAS']
+const RE_ENCABEZADO = /^\s*(?:#{1,6}\s*)?(?:\*\*)?(ARCHIVOS|TESTS|ACOPLAMIENTOS|DATOS|DUDAS)(?:\*\*)?\s*:?\s*$/
+const RE_NINGUNO = /^\s*(?:[-*]\s*)?ninguno\.?\s*$/i
+
+/** Clave para no repetir un hallazgo: su primer `ruta:línea`, o el texto antes de « — », o la línea entera. */
+function claveDeHallazgo(linea) {
+  const ruta = /[^\s`—]+:\d+/.exec(linea)
+  if (ruta) return `ruta:${ruta[0]}`
+  return `texto:${linea.split(' — ')[0].replace(/^\s*[-*]\s*/, '').trim()}`
+}
+
 /**
- * Guarda en la carpeta del flujo el informe del agente `id`: `plan` (con su resumen) o `exploracion`.
+ * Une los informes de varios exploradores (`[{ id, texto }]`) en uno solo: las secciones ARCHIVOS, TESTS, ACOPLAMIENTOS,
+ * DATOS y DUDAS, en ese orden, con los hallazgos en el orden de llegada y sin repetir `ruta:línea` (gana la primera aparición).
+ * Devuelve `{ texto, incompletos }`; `incompletos` son los `{ id, faltan }` de los informes sin alguna sección.
+ */
+export function fusionarExploraciones(informes) {
+  const porSeccion = new Map(SECCIONES_EXPLORACION.map((s) => [s, []]))
+  const vistas = new Set()
+  const incompletos = []
+  for (const { id, texto } of informes) {
+    const presentes = new Set()
+    let actual = null
+    for (const linea of String(texto ?? '').split('\n')) {
+      const encabezado = RE_ENCABEZADO.exec(linea)
+      if (encabezado) {
+        actual = encabezado[1]
+        presentes.add(actual)
+        continue
+      }
+      if (!actual || !linea.trim() || RE_NINGUNO.test(linea)) continue
+      const clave = claveDeHallazgo(linea)
+      if (vistas.has(clave)) continue
+      vistas.add(clave)
+      porSeccion.get(actual).push(linea.trimEnd())
+    }
+    const faltan = SECCIONES_EXPLORACION.filter((s) => !presentes.has(s))
+    if (faltan.length) incompletos.push({ id, faltan })
+  }
+  const bloques = SECCIONES_EXPLORACION.map((s) => [s, ...(porSeccion.get(s).length ? porSeccion.get(s) : ['- ninguno'])].join('\n'))
+  return { texto: bloques.join('\n\n'), incompletos }
+}
+
+/** Ids de `--guardar` separados por coma: recortados y sin repetir (si no queda ninguno, el valor tal cual). */
+function idsDe(id) {
+  const lista = [...new Set(String(id ?? '').split(',').map((s) => s.trim()).filter(Boolean))]
+  return lista.length ? lista : [id]
+}
+
+/**
+ * Guarda en la carpeta del flujo el informe del agente `id`: `plan` (con su resumen) o `exploracion`
+ * (`id` puede ser una lista separada por comas de exploradores).
  * La exploración cierra con el resultado de la verificación inicial, aunque no se haya encontrado el informe.
  */
 function guardar(id, tipo, ajuste) {
@@ -638,21 +688,30 @@ function guardarInforme(id, tipo, ajuste) {
     console.log(`AVISO: --guardar <agentId> plan|exploracion: tipo desconocido «${tipo ?? ''}»; no se guardó nada`)
     return
   }
-  const archivo = transcriptDe(id)
-  const texto = archivo ? textoFinalDe(archivo) : null
-  if (!texto) {
-    console.log(`AVISO: no encontré el informe del agente ${id ?? '(sin id)'}: despacha copiando su texto, como antes`)
-    return
+  const pedidos = tipo === 'exploracion' ? idsDe(id) : [id]
+  const informes = []
+  for (const uno of pedidos) {
+    const archivo = transcriptDe(uno)
+    const texto = archivo ? textoFinalDe(archivo) : null
+    if (texto) informes.push({ id: uno, texto })
+    else console.log(`AVISO: no encontré el informe del agente ${uno ?? '(sin id)'}: despacha copiando su texto, como antes`)
   }
+  if (!informes.length) return
   fs.mkdirSync(FLUJO, { recursive: true })
   const destino = path.join(FLUJO, `${tipo}.md`)
   if (tipo === 'exploracion') {
+    const { texto: fusion, incompletos } = fusionarExploraciones(informes)
+    const texto = pedidos.length === 1 ? informes[0].texto : fusion
     fs.writeFileSync(destino, texto + '\n')
     anotarEstado({ exploracion: destino })
     console.log(`GUARDADO: exploración → ${destino}`)
+    for (const { id: agente, faltan } of incompletos) {
+      console.log(`INCOMPLETO: agente ${agente} sin ${faltan.join(', ')}: relanza solo esa parte`)
+    }
     console.log(`RUTAS CRÍTICAS EN LA EXPLORACIÓN: ${criticasDeExploracion(texto)}`)
     return
   }
+  const texto = informes[0].texto
   const previo = ajuste ? leerTexto(destino) : null
   const plan = previo ? fusionarPlanes(previo, texto) : texto
   fs.writeFileSync(destino, plan + '\n')
@@ -1483,7 +1542,7 @@ function subDe(texto) {
  * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar }`. Las opciones
  * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --estado > --cancelar > --guardar > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
- * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar`.
+ * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar` (`agente` es el texto crudo: varios ids van separados por coma, sin espacios).
  * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
  * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
