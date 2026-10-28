@@ -7890,13 +7890,13 @@ describe('caché y contexto en el panel', () => {
     expect((await lineaCache($)).texto).toBe('caché: tras la 1.ª respuesta')
 
     await paso($, 'claude-opus-5-5', 'medium')
-    expect(await lineaCache($)).toEqual({ texto: 'caché ⏱ en 5 min · aciertos 92 %', color: 'success' })
+    expect(await lineaCache($)).toEqual({ texto: 'caché ⏱  en 5 min · aciertos 92 %', color: 'success' })
 
     reloj.t = AHORA + 120_000
-    expect(await lineaCache($)).toEqual({ texto: 'caché ⏱ en 3 min · aciertos 92 %', color: 'success' })
+    expect(await lineaCache($)).toEqual({ texto: 'caché ⏱  en 3 min · aciertos 92 %', color: 'success' })
 
     reloj.t = AHORA + 250_000
-    expect(await lineaCache($)).toEqual({ texto: 'caché ⏱ en menos de 1 min · aciertos 92 %', color: 'warning' })
+    expect(await lineaCache($)).toEqual({ texto: 'caché ⏱  en menos de 1 min · aciertos 92 %', color: 'warning' })
 
     reloj.t = AHORA + 300_000
     expect(await lineaCache($)).toEqual({ texto: 'caché vencido · aciertos 92 %', color: 'error' })

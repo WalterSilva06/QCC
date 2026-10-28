@@ -1514,12 +1514,13 @@ export const register: Register = on => {
     const lineaCtx = lineaContexto(m, e.props.bodyColumns)
     const resumen = d === null ? null : resumenContexto(d)
     // El caché del prompt: cuenta regresiva a su vencimiento (TTL de 5 min desde la última respuesta) y tasa de aciertos.
+    // Tras ⏱ van dos espacios: la terminal lo dibuja ancho y con uno solo se pega al texto.
     const quedaCache = restante(cac, t)
     const aciertos = tasaAciertos(cac)
     const textoCache =
       cac === null || quedaCache === null
         ? 'caché: tras la 1.ª respuesta'
-        : `${quedaCache === 0 ? 'caché vencido' : `caché ⏱ ${falta(t, cac.t + TTL_CACHE_MS)}`}${aciertos === null ? '' : ` · aciertos ${aciertos} %`}`
+        : `${quedaCache === 0 ? 'caché vencido' : `caché ⏱  ${falta(t, cac.t + TTL_CACHE_MS)}`}${aciertos === null ? '' : ` · aciertos ${aciertos} %`}`
     const colorCache = quedaCache === null ? undefined : quedaCache === 0 ? 'error' : quedaCache <= 60_000 ? 'warning' : 'success'
     const barraAncha = d !== null && lineaCtx.medido
     const anchoBarra = barraAncha ? Math.max(3, e.props.bodyColumns - lineaCtx.etiqueta.length - 1) : lineaCtx.barra.length
