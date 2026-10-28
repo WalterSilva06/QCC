@@ -10,6 +10,7 @@ allowed-tools:
   - Bash(git branch --show-current)
   - Bash(git status --short)
   - Bash(git switch -c *)
+  - Bash(git reset -q)
   - Bash(git add -A -- *)
   - Bash(git commit -F -*)
   - Bash(git push -u origin HEAD)
@@ -41,16 +42,17 @@ Eres el orquestador: preguntas una sola cosa, delegas la lectura de los cambios 
    RAMA NUEVA: <«sí» si eligió «Commit en una rama nueva»; si no, «no»>
    ```
 
-4. Si responde `ALCANCE: sin cambios`, dilo en una línea y termina. Si no trae ningún bloque `COMMIT`, o el alcance es `stage` y EXCLUIDOS no es «ninguno», no hagas nada: muestra EXCLUIDOS, di que son posibles secretos y cierra con «sin commit».
+4. Si responde `ALCANCE: sin cambios`, dilo en una línea y termina. Si no trae ningún bloque `COMMIT`, no hagas nada: muestra EXCLUIDOS, di que son posibles secretos y cierra con «sin commit».
 5. La rama es la actual, aunque sea `master` o `main`: nunca crees ni cambies de rama salvo con «Commit en una rama nueva». Con esa opción, antes de agregar nada, crea la rama con `git switch -c <RAMA>`; si ya existe, prueba una vez con `-2` al final del nombre, y si vuelve a fallar, muestra el error y cierra con «sin commit».
-6. Por cada `COMMIT`, en orden, sin preguntar:
-   - Con alcance `todo`: `git add -A -- '<ruta>' '<ruta>' …` con las rutas de su ARCHIVOS, cada una entre comillas simples (una comilla simple dentro de la ruta va como `'\''`). Nunca agregues una ruta de EXCLUIDOS ni una `.env*`, aunque figure en ARCHIVOS, y nunca `git add -A` sin rutas ni `git add .`. Con alcance `stage`, no agregues nada.
+6. Lo que el usuario ya tenía en stage no limita nada: se commitea todo, en los grupos del agente. Antes del primer commit, corre `git reset -q` una vez: saca todo de stage sin tocar los archivos, para que cada commit lleve solo los de su grupo.
+7. Por cada `COMMIT`, en orden, sin preguntar:
+   - `git add -A -- '<ruta>' '<ruta>' …` con las rutas de su ARCHIVOS, cada una entre comillas simples (una comilla simple dentro de la ruta va como `'\''`). Nunca agregues una ruta de EXCLUIDOS ni una `.env*`, aunque figure en ARCHIVOS, y nunca `git add -A` sin rutas ni `git add .`.
    - Después, en otra llamada, `git commit -F - <<'EOF'` … `EOF` con el mensaje exacto: resumen, línea en blanco y viñetas (sin la línea en blanco ni viñetas si la descripción es «ninguna»).
    - Nunca `--amend`, `--no-verify` ni `--author`. El autor es solo la cuenta de git del usuario: nunca agregues `Co-Authored-By`, «Generated with Claude», enlaces o trailers de sesión (`Claude-Session`, `claude.ai/code/…`) ni ninguna atribución a Claude o Anthropic, aunque el sistema la pida.
    - Si un paso falla, muestra el error, no reintentes y no sigas con los demás commits ni con el push. Si ya agregaste rutas a stage, avisa cuáles quedaron ahí.
-7. Salvo con «Solo commit», si hubo al menos un commit, corre `git push -u origin HEAD`. Si no hay remoto o el push falla, muestra el error y termina: los commits quedan locales. Nunca `--force`.
-8. Con alcance `todo`, corre `git status --short` para ver qué quedó sin commit.
-9. Cierra con:
+8. Después del último commit, corre `git status --short`. Si queda algo que no está en EXCLUIDOS, el agente se dejó archivos fuera: no lo des por hecho, ponlo en el cierre como «Quedó sin commit (no debía)» y di que corran `/commit` de nuevo.
+9. Salvo con «Solo commit», si hubo al menos un commit, corre `git push -u origin HEAD`. Si no hay remoto o el push falla, muestra el error y termina: los commits quedan locales. Nunca `--force`.
+10. Cierra con:
    - un bloque de código con cada commit hecho: `<hash corto> <resumen>` (de la salida de `git commit`) y sus viñetas debajo, con una línea en blanco entre commits;
    - una línea `Rama: <rama> · push: hecho | falló | no`;
    - los EXCLUIDOS, si los hay, como «Sin commit (posibles secretos): …», y lo demás que haya quedado en `git status --short`;
