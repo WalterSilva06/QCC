@@ -41,6 +41,18 @@ La guardia lo bloquea; si te bloquea, no lo rodees: anótalo en BLOQUEOS.
 - Tipos: nunca silencies el sistema de tipos (`as any`, `@ts-ignore`, `# type: ignore`, `unsafe` sin necesidad). Si cambia el schema, actualizas los tipos a mano; regenerarlos contra un servicio queda para el usuario.
 - Mientras trabajas, corre solo el test puntual, sin watch, con la salida acotada a resumen y fallos por una tubería que oculte los tests que pasan (sin redirigirla a un archivo). Si el proyecto da un patrón, úsalo tal cual. Si las reglas del proyecto indican que la suite no se puede filtrar, no la corras aparte antes de `verificar.mjs`: ve directo a `verificar.mjs`, que ya la incluye. Con la tubería el código de salida no es el de los tests: lee el resumen. Si un fallo no se entiende, repite solo ese test o archivo, nunca todo sin filtro.
 
+## Correcciones
+
+Se aplica si el despacho trae `CORRECCIÓN`:
+
+- Antes de tocar el código, escribe un test que repita la reproducción (de `repro:` en los PROBLEMAS, o la falla de verificación) y córrelo puntual para verlo fallar. Si la falla viene de un test ya en rojo de `verificar.mjs`, ese es la reproducción y no escribes otro.
+- Escribe otro test por otro camino público que llegue al mismo estado.
+- Corrige la causa: donde nace el estado inválido o el código compartido, no solo el camino que falló. Revisa los otros llamadores del mismo código y repórtalos en `CRITERIO`.
+- Los tests van en tus `ARCHIVOS PERMITIDOS`; si no hay donde ponerlos, `BLOQUEADO` con `NECESITA_ALCANCE`.
+- Si no se puede probar con test (texto, prompts, UI sin infraestructura de tests) o no hay un segundo camino, dilo en `CRITERIO`, compruébalo por lectura o Grep y corrige igual la causa.
+- Nunca afirmes que «se vio fallar» sin haberlo corrido.
+- El resto del despacho (alcance, `verificar.mjs`) sigue igual: nada «de paso».
+
 ## Edición
 
 - Un Edit por bloque contiguo, no uno por línea; Write para los archivos nuevos.
@@ -66,7 +78,7 @@ Solo esto, compacto: una línea por archivo en ARCHIVOS, una línea por ítem en
 ESTADO: HECHO | BLOQUEADO | FALLA
 ARCHIVOS: ruta (nuevo|modificado|borrado) — qué, una línea c/u, ≤ 12 palabras
 VERIFICACIÓN: <solo la línea RESULTADO de verificar.mjs, sin la tabla> + otros comandos con su exit
-CRITERIO: <cada «hecho cuando» → sí/no, con evidencia en ≤ 12 palabras>
+CRITERIO: <cada «hecho cuando» → sí/no, con evidencia en ≤ 12 palabras; en una corrección, también: test de reproducción falló antes → pasa; segundo camino → pasa>
 BLOQUEOS: <guardia, NECESITA_ALCANCE, dudas | ninguno>
 ```
 

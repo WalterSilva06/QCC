@@ -11,7 +11,7 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 
 ## Roles y modelos
 
-`/impl` es un solo flujo, con un solo modo: los pasos, agentes, plantillas y ciclos están en `flujos/herramientas/pasos.md`. Opus solo corre en la revisión final.
+`/impl` es un solo flujo, con un solo modo: los pasos, agentes, plantillas y ciclos están en `qcc-implementador/herramientas/pasos.md`. Opus solo corre en la revisión final.
 
 | Rol | Modelo y esfuerzo |
 |---|---|
@@ -19,7 +19,7 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 | Explorador | Haiku high, uno por defecto; hasta 5 en paralelo con áreas independientes y grandes |
 | Planificador | Sonnet high siempre; clasifica y planifica |
 | Ejecutor | Sonnet high; medium en una subtarea `Crítica: no`. Hasta 3 en paralelo dentro de un lote (ver «Lotes de ejecución») |
-| Revisión final | Corre siempre, en Opus high con cualquier Clasificación. Revisa el cambio completo, cada «hecho cuando» y las uniones entre subtareas |
+| Revisión final | Corre siempre, en Opus high con cualquier Clasificación. Revisa el cambio completo contra el pedido literal, el plan y el CLAUDE.md, cada «hecho cuando» y las uniones entre subtareas |
 
 - **Esfuerzo según el riesgo:** del 13 al 16 oct de 2026, los 2 rechazos reales de la revisión final fueron en planes CRÍTICO, y en 74 revisiones por subtarea ningún ejecutor fue rechazado. Por eso lo que no tiene criterios baja de modelo o de esfuerzo. Hay pocos flujos «sin criterios» medidos: el historial de `costos.mjs` dirá si la calidad se sostiene.
 
@@ -48,6 +48,8 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 - **Imágenes:** las plantillas de despacho llevan `IMÁGENES: <ruta absoluta del .png> — <qué muestra> | ninguna` (en la del ejecutor, solo si la subtarea es visual), para que los agentes vean lo que el usuario adjuntó.
 - **Preguntas sobre el modelo de datos:** si el pedido define entidades, cantidades o dónde vive un dato, el planificador pregunta por ese modelo, con las alternativas reales.
 - **Contexto de la revisión final:** en sus ciclos, `REVISIÓN ANTERIOR` lleva solo sus PROBLEMAS y CRITERIOS de la vuelta previa, nunca el reporte del ejecutor.
+- **Pedido literal en la revisión final:** el despacho lleva `PEDIDO:` y el revisor rechaza un plan que afloja el pedido o una regla del CLAUDE.md.
+- **Correcciones a la causa:** la Corrección pide un test que repite la reproducción del revisor (se ve fallar antes) más otro camino público al mismo estado, y corregir la causa. Una falla de `verificar.mjs` ya trae su test en rojo.
 - **Autochequeo del ejecutor:** antes de reportar repasa una lista corta propia más la sección «Revisor: rechaza también por» de las reglas del proyecto.
 
 El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes (el planificador marca «Plan», paso 2), del header «Plan» de las preguntas de aprobación (que lleva a Aprobación; el paso «Revisión del plan» ya no se usa), de las opciones de `estado.mjs` (`--cancelar` cuenta como otro) y de la línea «CIERRE ·» del cierre. La revisión final cuenta siempre en «Verificación final». La verificación inicial ya no pasa por Bash del orquestador, así que no marca nada. El `verificar.mjs` de cada subtarea cuenta en «Ejecución»; el `estado.mjs --cambios … --paso 6` previo a la revisión final marca «Verificación final». `--guardar`, `--estado`, `--cancelar` y `--reglas` no mueven el panel por sí solos. El orden por subtarea (`--base` → `ejecutor` → `--cambios` → `verificar.mjs`) es parte de lo que lee el panel, pero el orquestador también fija el paso explícito con `--paso <n>` en cada `estado.mjs` y la heurística queda de respaldo. Las llamadas juntas siguen siendo una señal cada una. Si cambia alguno de esos nombres, opciones o textos, o ese orden, hay que actualizar `qcc-panel/hooks/flujo.ts`.
