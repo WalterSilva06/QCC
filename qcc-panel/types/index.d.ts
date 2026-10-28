@@ -243,6 +243,12 @@ export type AgenteVisto = {
   herramientas: number
   /** El `tool_use_id` del `Agent` que lo lanzó, para cerrarlo si su resultado vuelve sin `agentId`. Falta si no vino. */
   llamada?: string
+  /** Tokens de salida que lleva gastados. Falta si aún no respondió o si se anotó antes de la recarga. */
+  salida?: number
+  /** Tokens totales (entrada + salida + caché leída + caché escrita) que lleva gastados. Falta si aún no respondió o si se anotó antes de la recarga. */
+  total?: number
+  /** Modelo y esfuerzo del último que se le vio (`Sonnet high`). Falta si aún no respondió o si se anotó antes de la recarga. */
+  modelo?: string
 }
 
 /** Un archivo editado (`Edit`, `Write` o `NotebookEdit`) en la sesión. */

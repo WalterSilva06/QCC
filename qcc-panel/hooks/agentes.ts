@@ -1,7 +1,7 @@
 // Pestaña «Agentes»: los subagentes vistos en la sesión (con sus herramientas) y los archivos que se editaron. Puro: sin `$`, para poder probarlo solo.
 
 import type { AgenteVisto, ArchivoTocado } from '../types'
-import { duracion } from './formato'
+import { duracion, tokens } from './formato'
 import { rolDeAgente } from './flujo'
 
 /** Cuántos agentes se guardan: al pasarse se caen primero los terminados más viejos. */
@@ -10,8 +10,23 @@ export const TOPE_AGENTES = 40
 /** Cuántos archivos distintos se guardan: se cae el que se tocó hace más. */
 export const TOPE_ARCHIVOS = 10
 
-/** Una línea de agente de la pestaña: glifo y color de su estado, rol, descripción y la cola con el tiempo y las herramientas. */
-export type LineaAgente = { glifo: '▸' | '✓' | '✗'; color: 'warning' | 'success' | 'error'; rol: string; descripcion: string; cola: string }
+/** Una línea de agente de la pestaña: glifo y color de su estado, rol, descripción, la cola con el tiempo y las herramientas, y el detalle con los tokens y el modelo ('' si no hay). */
+export type LineaAgente = {
+  glifo: '▸' | '✓' | '✗'
+  color: 'warning' | 'success' | 'error'
+  rol: string
+  descripcion: string
+  cola: string
+  detalle: string
+}
+
+/** El uso de una respuesta, como lo cuenta Claude Code. */
+type UsoAgente = {
+  input_tokens?: unknown
+  output_tokens?: unknown
+  cache_read_input_tokens?: unknown
+  cache_creation_input_tokens?: unknown
+}
 
 /** Una línea de archivo de la pestaña: su ruta (recortada por delante si no cabe) y la cola con las ediciones y el último agente. */
 export type LineaArchivo = { ruta: string; cola: string }
@@ -66,6 +81,42 @@ export function anotarHerramienta(lista: readonly AgenteVisto[] | undefined, id:
   return actual.map(a => (a.id === id ? { ...a, herramientas: a.herramientas + 1 } : a))
 }
 
+/** Una cantidad de tokens: lo que no es un número finito ≥ 0 vale 0. */
+function cantidad(x: unknown): number {
+  return typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : 0
+}
+
+/**
+ * Suma al agente `id` los tokens de una respuesta (`salida` y `total`, con la caché) y guarda el último `modelo` visto. Un agente desconocido
+ * (o un `id` que no es texto) deja la lista como estaba: no lo crea. Sin tokens y sin modelo tampoco cambia nada. Nunca muta `lista`.
+ */
+export function anotarGasto(
+  lista: readonly AgenteVisto[] | undefined,
+  id: unknown,
+  uso: UsoAgente | null | undefined,
+  modelo: unknown,
+): AgenteVisto[] {
+  const actual = lista ?? []
+
+  if (typeof id !== 'string' || !actual.some(a => a.id === id)) return [...actual]
+
+  const salida = cantidad(uso?.output_tokens)
+  const total = cantidad(uso?.input_tokens) + salida + cantidad(uso?.cache_read_input_tokens) + cantidad(uso?.cache_creation_input_tokens)
+  const nombre = texto(modelo)
+
+  if (total <= 0 && nombre === '') return [...actual]
+
+  return actual.map(a =>
+    a.id === id
+      ? {
+          ...a,
+          ...(total > 0 ? { salida: (a.salida ?? 0) + salida, total: (a.total ?? 0) + total } : {}),
+          ...(nombre !== '' ? { modelo: nombre } : {}),
+        }
+      : a,
+  )
+}
+
 /**
  * Cierra un agente en curso: por su `id` y, si no hay o no está, por la `llamada` (el `tool_use_id` del `Agent` que lo lanzó). `bien` decide
  * `listo` o `fallo`; `t` es su hora de fin. Un agente desconocido o que ya terminó deja la lista como estaba. Nunca muta `lista`.
@@ -111,9 +162,22 @@ function rutaCorta(ruta: string, max: number): string {
   return max <= 1 ? '…' : `…${ruta.slice(ruta.length - (max - 1))}`
 }
 
+/** La línea de detalle de un agente: salida y total (la salida se omite si es 0) y su modelo. '' si no hay cifras ni modelo. */
+function detalleDe(a: AgenteVisto): string {
+  const total = cantidad(a.total)
+  const salida = cantidad(a.salida)
+  const modelo = texto(a.modelo)
+  const cifras = total > 0 ? [...(salida > 0 ? [`sal ${tokens(salida)}`] : []), `total ${tokens(total)}`].join(' · ') : ''
+
+  if (cifras === '' && modelo === '') return ''
+
+  return `  ${[cifras, modelo].filter(x => x !== '').join(' · ')}`
+}
+
 /**
  * Lo que dibuja la pestaña, en la hora `t` y con `ancho` columnas: el resumen («3 agentes · 1 corriendo · 12 herramientas»), una línea por
  * agente y una por archivo, la más reciente primero. El tiempo de un agente en curso corre hasta `t`; el de uno terminado queda fijo.
+ * Cada agente trae su `detalle` («  sal 2k · total 100k · Sonnet high»), con lo que se sepa de sus tokens y su modelo; '' si no se sabe nada.
  */
 export function resumenAgentes(
   agentes: readonly AgenteVisto[] | undefined,
@@ -138,6 +202,7 @@ export function resumenAgentes(
       rol: rolDeAgente(a.tipo) || 'agente',
       descripcion: a.descripcion,
       cola: ` ${duracion((a.fin ?? t) - a.desde)} · ${a.herramientas} herr.`,
+      detalle: detalleDe(a),
     })),
     archivos: [...(archivos ?? [])].reverse().map(a => {
       const cola = ` ×${a.veces} · ${a.agente}`

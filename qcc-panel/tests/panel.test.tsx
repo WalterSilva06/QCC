@@ -2,7 +2,7 @@ import type { On, SessionContextBreakdown, SessionMeasureInput } from 'claude-co
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { anotarAgente, anotarArchivo, anotarHerramienta, cerrarAgente, resumenAgentes, TOPE_AGENTES, TOPE_ARCHIVOS } from '../hooks/agentes'
+import { anotarAgente, anotarArchivo, anotarGasto, anotarHerramienta, cerrarAgente, resumenAgentes, TOPE_AGENTES, TOPE_ARCHIVOS } from '../hooks/agentes'
 import { anotarCache, decidirAvisoContexto, restante, tasaAciertos, TTL_CACHE_MS } from '../hooks/cache'
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
@@ -8066,9 +8066,9 @@ describe('agentes (puro)', () => {
     expect(resumenAgentes(agentes, archivos, 12_000, 30)).toEqual({
       resumen: '3 agentes · 1 corriendo · 12 herramientas',
       agentes: [
-        { glifo: '✗', color: 'error', rol: 'Explore', descripcion: 'Buscar', cola: ' 0 s · 5 herr.' },
-        { glifo: '▸', color: 'warning', rol: 'agente', descripcion: '', cola: ' 10 s · 0 herr.' },
-        { glifo: '✓', color: 'success', rol: 'ejecutor', descripcion: 'Editar API', cola: ' 1 min 5 s · 7 herr.' },
+        { glifo: '✗', color: 'error', rol: 'Explore', descripcion: 'Buscar', cola: ' 0 s · 5 herr.', detalle: '' },
+        { glifo: '▸', color: 'warning', rol: 'agente', descripcion: '', cola: ' 10 s · 0 herr.', detalle: '' },
+        { glifo: '✓', color: 'success', rol: 'ejecutor', descripcion: 'Editar API', cola: ' 1 min 5 s · 7 herr.', detalle: '' },
       ],
       archivos: [
         { ruta: '…/al/archivo.ts', cola: ' ×1 · principal' },
@@ -8078,6 +8078,49 @@ describe('agentes (puro)', () => {
 
     expect(resumenAgentes([agentes[1] as AgenteVisto], [], 12_000, 30).resumen).toBe('1 agente · 1 corriendo · 0 herramientas')
     expect(resumenAgentes(undefined, undefined, 12_000, 30)).toEqual({ resumen: '0 agentes · 0 corriendo · 0 herramientas', agentes: [], archivos: [] })
+  })
+
+  test('anotarGasto: suma salida y total en dos peticiones y se queda con el último modelo', () => {
+    const base = congelar(anotarAgente(anotarAgente(undefined, nuevo('a1', 1)), nuevo('a2', 2)))
+    const uno = anotarGasto(
+      base,
+      'a1',
+      { input_tokens: 10, output_tokens: 1_000, cache_read_input_tokens: 80_000, cache_creation_input_tokens: 5_000 },
+      'Sonnet medium',
+    )
+    const dos = anotarGasto(congelar(uno), 'a1', { input_tokens: 5, output_tokens: 1_000, cache_read_input_tokens: 12_985 }, 'Sonnet high')
+
+    expect(uno[0]).toMatchObject({ id: 'a1', salida: 1_000, total: 86_010, modelo: 'Sonnet medium' })
+    expect(dos[0]).toMatchObject({ id: 'a1', salida: 2_000, total: 100_000, modelo: 'Sonnet high' })
+    // El otro agente queda intacto, sin campos nuevos.
+    expect(dos[1]).toEqual(base[1])
+    // Solo modelo: no escribe tokens; solo tokens: conserva el modelo anterior.
+    expect(anotarGasto(base, 'a2', null, ' Opus high ')[1]).toEqual({ ...base[1], modelo: 'Opus high' })
+    expect(anotarGasto(dos, 'a1', { output_tokens: 1 }, '')[0]).toMatchObject({ salida: 2_001, total: 100_001, modelo: 'Sonnet high' })
+  })
+
+  test('anotarGasto: id desconocido o que no es texto, uso null o modelo vacío no crean nada ni mutan la entrada', () => {
+    const base = congelar(anotarAgente(anotarAgente(undefined, nuevo('a1', 1)), nuevo('a2', 2)))
+    const uso = { input_tokens: 1, output_tokens: 1 }
+
+    for (const id of ['zzz', '', undefined, null, 4, {}]) expect(anotarGasto(base, id, uso, 'Sonnet high')).toEqual(base)
+    expect(anotarGasto(base, 'a1', null, '')).toEqual(base)
+    expect(anotarGasto(base, 'a1', undefined, undefined)).toEqual(base)
+    // Cifras inválidas cuentan 0.
+    expect(anotarGasto(base, 'a1', { input_tokens: -5, output_tokens: Number.NaN, cache_read_input_tokens: '9' }, '  ')).toEqual(base)
+    expect(anotarGasto(undefined, 'a1', uso, 'Sonnet high')).toEqual([])
+    expect(anotarGasto(base, 'a1', uso, 'Sonnet high')).not.toBe(base)
+  })
+
+  test('resumenAgentes: detalle con tokens y modelo, solo con modelo, vacío sin datos o con la forma vieja', () => {
+    const viejo: AgenteVisto = { id: 'a0', tipo: '', descripcion: '', desde: 0, estado: 'listo', fin: 1, herramientas: 0 }
+    const completo: AgenteVisto = { ...viejo, id: 'a1', salida: 2_000, total: 100_000, modelo: 'Sonnet high' }
+    const soloModelo: AgenteVisto = { ...viejo, id: 'a2', modelo: 'Sonnet high' }
+    const sinSalida: AgenteVisto = { ...viejo, id: 'a3', salida: 0, total: 950 }
+    const detalles = resumenAgentes([viejo, completo, soloModelo, sinSalida], [], 12_000, 30).agentes.map(a => a.detalle)
+
+    // Del más reciente al más viejo.
+    expect(detalles).toEqual(['  total 950', '  Sonnet high', '  sal 2k · total 100k · Sonnet high', ''])
   })
 })
 
@@ -8339,6 +8382,51 @@ describe('agentes en el panel', () => {
     // Un agente nuevo tras /clear empieza de cero, sin archivos.
     await spawn($, 'Algo', 'impl:qcc-ejecutor', 'tu-2')
     expect(await deAgentes(ui)).toEqual(['1 agente · 1 corriendo · 0 herramientas', '▸ ', 'ejecutor', ' 0 s · 0 herr.', '  Algo'])
+    await ui.unmount()
+  })
+
+  test('un turn.step con agentId suma salida y total al agente y muestra su modelo·esfuerzo bajo la descripción', async ($, on) => {
+    const m = motor(on)
+    motorResponde(on, 'claude-sonnet-5-5')
+    m.agentIds.set('Editar API', 'ag-1')
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await spawn($, 'Editar API', 'impl:qcc-ejecutor', 'tu-1')
+    await ui.press({ key: 'pestana-agentes' })
+
+    // Sin respuestas todavía: no hay tercera línea.
+    expect(await deAgentes(ui)).toEqual(['1 agente · 1 corriendo · 0 herramientas', '▸ ', 'ejecutor', ' 0 s · 0 herr.', '  Editar API'])
+
+    await paso($, 'claude-sonnet-5-5', 'high', 'ag-1')
+    expect(await deAgentes(ui)).toEqual([
+      '1 agente · 1 corriendo · 0 herramientas',
+      '▸ ',
+      'ejecutor',
+      ' 0 s · 0 herr.',
+      '  Editar API',
+      '  sal 2k · total 100k · Sonnet 5.5 high',
+    ])
+
+    await paso($, 'claude-sonnet-5-5', 'high', 'ag-1')
+    expect((await deAgentes(ui)).slice(4)).toEqual(['  Editar API', '  sal 4k · total 200k · Sonnet 5.5 high'])
+    await ui.unmount()
+  })
+
+  test('un turn.step de un agentId desconocido o sin agentId no crea agentes ni cambia las líneas', async ($, on) => {
+    const m = motor(on)
+    motorResponde(on, 'claude-sonnet-5-5')
+    m.agentIds.set('Editar API', 'ag-1')
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await spawn($, 'Editar API', 'impl:qcc-ejecutor', 'tu-1')
+    await ui.press({ key: 'pestana-agentes' })
+    const antes = await deAgentes(ui)
+
+    // Un agente que nadie lanzó no se crea.
+    await paso($, 'claude-sonnet-5-5', 'high', 'ag-desconocido')
+    // El hilo principal no es un agente.
+    await paso($, 'claude-sonnet-5-5', 'high')
+    expect(await deAgentes(ui)).toEqual(antes)
     await ui.unmount()
   })
 })

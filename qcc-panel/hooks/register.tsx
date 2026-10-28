@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
 
 import type { Actividad, Esfuerzo, Flujo, Medida, Pestana, Semana } from '../types'
-import { anotarAgente, anotarArchivo, anotarHerramienta, cerrarAgente, resumenAgentes } from './agentes'
+import { anotarAgente, anotarArchivo, anotarGasto, anotarHerramienta, cerrarAgente, resumenAgentes } from './agentes'
 import { anotarCache, decidirAvisoContexto, restante, tasaAciertos, TTL_CACHE_MS } from './cache'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
@@ -460,6 +460,25 @@ async function contarHerramienta($: EngineInterface, agentId: string | null | un
 }
 
 /**
+ * Suma al subagente la respuesta que acaba de dar (salida, total con caché y su modelo·esfuerzo); un agente desconocido no cambia nada.
+ * El nombre se calcula dentro para que un error lo atrape el try. Nunca rechaza: no puede frenar una petición.
+ */
+async function registrarGastoAgente(
+  $: EngineInterface,
+  agentId: string,
+  uso: TurnStepResult['usage'],
+  modelo: string,
+  esfuerzo: string | number | undefined,
+) {
+  try {
+    const nombre = modelo === '' ? '' : nombreOrquestador(modelo, esfuerzo)
+    await update($, agentes, antes => anotarGasto(antes ?? [], agentId, uso, nombre))
+  } catch {
+    // Sin la cuenta, la línea del agente queda sin cifras.
+  }
+}
+
+/**
  * Lo que anota una herramienta al volver: un `Agent` cierra a su subagente (`listo` si volvió bien, `fallo` si falló), y un `Edit`, `Write` o
  * `NotebookEdit` que salió bien anota su archivo con el rol de quien lo tocó. `resultado` es lo que devolvió `next` (sin él si falló).
  * Nunca rechaza: no puede cambiar el resultado ni el error de la herramienta.
@@ -838,6 +857,8 @@ export const register: Register = on => {
     }
 
     if (r.usage !== null) {
+      // Lo que gastó el subagente en esta respuesta, para su línea de detalle en «Agentes».
+      if (agentId !== undefined) await registrarGastoAgente($, agentId, r.usage, r.usage.model || e.model, e.effort)
       // El gasto cuenta hilo principal y subagentes; va antes de anotarUso para que `turn.complete` no cierre el flujo entre medio.
       const uso = r.usage
       await marcarFlujo($, f => sumarGastoDeExplorador(sumarGasto(f, uso), e.agentId, uso))
@@ -1344,6 +1365,11 @@ export const register: Register = on => {
             {a.descripcion !== '' && (
               <Text dimColor wrap="truncate-end">
                 {`  ${a.descripcion}`}
+              </Text>
+            )}
+            {a.detalle !== '' && (
+              <Text dimColor wrap="truncate-end">
+                {a.detalle}
               </Text>
             )}
           </Box>
