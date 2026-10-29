@@ -11,10 +11,12 @@ El nombre viejo `.claude/implementador.json` sigue valiendo de respaldo.
   // Pasos de verificación, en orden. Corren con CI=1 desde la raíz del repo.
   // Sin esta clave se detectan; con [] el proyecto queda «SIN PASOS».
   // timeoutSeg (opcional): tope en segundos del paso, 600 por defecto; al vencer se corta y sale ROJO.
+  // rutas (opcional): globs de git (p. ej. "web/**"); el paso corre solo si alguna cambió entre HEAD y el árbol
+  // inicial de la corrida (versionados y nuevos no ignorados). Si no, sale SALTADO (cuenta como ok). Sin git, sin HEAD o ante un error, corre.
   "verificar": [
     { "nombre": "typecheck", "cmd": "pnpm run typecheck" },
     { "nombre": "build", "cmd": "pnpm run build", "timeoutSeg": 300 },
-    { "nombre": "test", "cmd": "pnpm run test" }
+    { "nombre": "test", "cmd": "pnpm run test", "rutas": ["web/**"] }
   ],
   "guardia": {
     // Archivos o carpetas (con / final) o globs que ningún subagente escribe, con el motivo.

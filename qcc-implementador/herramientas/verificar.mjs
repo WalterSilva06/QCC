@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Escalera de verificación de los flujos /impl, para cualquier proyecto.
 //
-// Los pasos salen de `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, `.claude/implementador.json`) (`"verificar": [{ "nombre", "cmd", "timeoutSeg"? }]`,
-// en orden). Sin esa clave se detectan:
+// Los pasos salen de `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, `.claude/implementador.json`) (`"verificar": [{ "nombre", "cmd", "timeoutSeg"?, "rutas"? }]`,
+// en orden). `rutas` (globs de git, p. ej. `qcc-panel/**`): el paso corre solo si alguna cambió entre HEAD y el
+// árbol inicial de la corrida (versionados y nuevos no ignorados); si no, sale `SALTADO` (cuenta como ok). Sin git,
+// sin HEAD o ante un error de git, corre. Sin esa clave se detectan:
 //   - JS/TS: scripts de package.json, en este orden: typecheck (o type-check / check-types /
 //     tsc), lint, build, test; con el gestor del lockfile.
 //   - Rust: cargo check --all-targets → cargo test.   Go: go build ./... → go test ./...
@@ -20,8 +22,8 @@
 // tomar a mitad de la corrida, no se guarda ninguna clave de esa corrida.
 //
 // Salidas: si la corrida (VERDE o ROJO) cambió archivos, anota en `<registro>-verificar-salidas.json`
-// `{ t, ruta, blob, paso, generado }` por archivo (blob 0…0 si lo borró; `generado` si solo pasos de build lo
-// cambiaron), sin lo de más de 24 h y con un tope de 500. `salidasDe(raiz)` lo lee.
+// `{ t, inicio, ruta, blob, paso, generado }` por archivo (`inicio`: comienzo del primer paso que lo cambió;
+// blob 0…0 si lo borró; `generado` si solo pasos de build lo cambiaron), sin lo de más de 24 h y con un tope de 500. `salidasDe(raiz)` lo lee.
 //
 // Marca de corrida: al empezar a correr anota `{ clave, pid, inicio }` junto al registro del proyecto
 // (`-verificar-curso.json`) y al terminar la completa con `{ fin, resultado, salida }`. Otra corrida con
@@ -67,10 +69,11 @@ export const esBuild = (paso) => {
 
 /**
  * Archivos que difieren entre dos árboles de `arbolDe`: `[{ ruta, blob }]` con el blob que quedó en `b`
- * (40 ceros si lo borró). Lanza si git falla o la salida no tiene la forma esperada.
+ * (40 ceros si lo borró). Con `rutas` (globs de git), solo las que casan. Lanza si git falla o la salida no tiene la forma esperada.
  */
-export function cambiosDe(raiz, a, b) {
-  const partes = execFileSync('git', ['diff-tree', '-r', '-z', '--no-renames', '--no-abbrev', a, b], {
+export function cambiosDe(raiz, a, b, rutas = []) {
+  const filtro = rutas.length ? ['--', ...rutas.map((r) => `:(glob)${r}`)] : []
+  const partes = execFileSync('git', ['diff-tree', '-r', '-z', '--no-renames', '--no-abbrev', a, b, ...filtro], {
     cwd: raiz, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
   }).split('\0')
   if (partes.at(-1) === '') partes.pop()
@@ -89,8 +92,8 @@ export function cambiosDe(raiz, a, b) {
 /** Archivo de la caché del proyecto, junto a su registro. */
 const cacheDe = (raiz) => registroDe(raiz).replace(/\.jsonl$/, '-verificar.json')
 
-/** Clave de una corrida: el árbol de trabajo y los pasos (nombre, comando y tope). */
-export const claveDe = (arbol, pasos) => crypto.createHash('sha1').update(JSON.stringify([arbol, pasos.map((p) => [p.nombre, p.cmd, p.timeoutSeg ?? null])])).digest('hex')
+/** Clave de una corrida: el árbol de trabajo y los pasos (nombre, comando y tope; y las rutas, solo en los pasos que las traen). */
+export const claveDe = (arbol, pasos) => crypto.createHash('sha1').update(JSON.stringify([arbol, pasos.map((p) => [p.nombre, p.cmd, p.timeoutSeg ?? null, ...(p.rutas ? [p.rutas] : [])])])).digest('hex')
 
 function leerCache(raiz) {
   try {
@@ -126,7 +129,7 @@ function guardarVerde(raiz, entrada) {
 /** Archivo de las salidas del proyecto, junto a su registro. */
 const salidasArchivo = (raiz) => registroDe(raiz).replace(/\.jsonl$/, '-verificar-salidas.json')
 
-/** Lo que cambiaron las corridas de las últimas 24 h, `[{ t, ruta, blob, paso, generado }]` (la más antigua primero). */
+/** Lo que cambiaron las corridas de las últimas 24 h, `[{ t, inicio, ruta, blob, paso, generado }]` (la más antigua primero). `inicio` es el comienzo del primer paso que cambió la ruta; `t`, el fin de la corrida. */
 export function salidasDe(raiz) {
   try {
     const lista = JSON.parse(fs.readFileSync(salidasArchivo(raiz), 'utf8'))
@@ -159,12 +162,12 @@ function seguimientoDe(raiz, arbol) {
     get final() {
       return final
     },
-    /** Toma el árbol tras `paso`. Lanza si no se puede: quien llama descarta el seguimiento entero. */
-    despuesDe(paso) {
+    /** Toma el árbol tras `paso`, que empezó en `inicio` (ISO). Lanza si no se puede: quien llama descarta el seguimiento entero. */
+    despuesDe(paso, inicio) {
       const despues = arbolDe(raiz)
       if (despues === final) return
       for (const { ruta } of cambiosDe(raiz, final, despues)) {
-        const a = archivos.get(ruta) ?? { pasos: [], build: true }
+        const a = archivos.get(ruta) ?? { pasos: [], build: true, inicio }
         if (!a.pasos.includes(paso.nombre)) a.pasos.push(paso.nombre)
         a.build &&= esBuild(paso)
         archivos.set(ruta, a)
@@ -288,6 +291,7 @@ export function pasosDe(raiz) {
         nombre: String(p.nombre ?? p.cmd),
         cmd: String(p.cmd),
         ...(Number(p.timeoutSeg) > 0 ? { timeoutSeg: Number(p.timeoutSeg) } : {}),
+        ...(Array.isArray(p.rutas) && p.rutas.length && p.rutas.every((r) => typeof r === 'string' && r) ? { rutas: [...p.rutas] } : {}),
       })),
     }
   }
@@ -320,6 +324,16 @@ export function pasosDe(raiz) {
     return { origen: 'pytest', pasos: [{ nombre: 'test', cmd: `${WIN ? 'python' : 'python3'} -m pytest -q` }] }
   }
   return { origen: 'ninguno', pasos: [] }
+}
+
+/** ¿Cambió algo en `rutas` entre HEAD y `arbol`? Sin árbol, sin HEAD o ante un error de git, sí (el paso corre). */
+function cambiaEnRutas(raiz, arbol, rutas) {
+  if (!arbol) return true
+  try {
+    return cambiosDe(raiz, 'HEAD', arbol, rutas).length > 0
+  } catch {
+    return true
+  }
 }
 
 /** Mata `pid` con todos sus descendientes: en Windows con `taskkill /T`; en el resto, su grupo de procesos. */
@@ -432,13 +446,18 @@ async function main() {
   const resultados = []
   let seg = clave ? seguimientoDe(RAIZ, arbol) : null
   for (const paso of pasos) {
+    if (paso.rutas && !cambiaEnRutas(RAIZ, arbol, paso.rutas)) {
+      resultados.push({ ...paso, ok: true, saltado: true })
+      continue
+    }
     const t0 = Date.now()
+    const inicioPaso = new Date(t0).toISOString()
     const tope = paso.timeoutSeg ?? TIMEOUT_SEG
     const r = await correr(paso.cmd, tope)
     resultados.push({ ...paso, ok: r.codigo === 0 && !r.vencido, codigo: r.codigo, vencido: r.vencido, tope, segundos: (Date.now() - t0) / 1000, salida: r.salida })
     if (seg) {
       try {
-        seg.despuesDe(paso)
+        seg.despuesDe(paso, inicioPaso)
       } catch {
         // Sin el árbol de este paso no se sabe qué cambió: ni claves nuevas ni registro de salidas.
         seg = null
@@ -447,6 +466,7 @@ async function main() {
   }
 
   const tabla = resultados.map((r) => {
+    if (r.saltado) return `${r.nombre.padEnd(10)} SALTADO ${''.padStart(7)}  sin cambios en ${r.rutas.join(', ')} respecto de HEAD`
     const tiempo = `${r.segundos.toFixed(1).replace('.', ',')} s`.padStart(7)
     const extra = r.resumen ? r.resumen(r.salida) : ''
     return `${r.nombre.padEnd(10)} ${r.ok ? 'OK   ' : 'FALLÓ'} ${tiempo}${extra ? `   ${extra}` : ''}`
@@ -461,7 +481,7 @@ async function main() {
         const t = new Date().toISOString()
         anotarSalidas(RAIZ, cambiados.map(({ ruta, blob }) => {
           const a = seg.archivos.get(ruta)
-          return { t, ruta, blob, paso: a ? a.pasos.join(', ') : '', generado: Boolean(a?.build) }
+          return { t, inicio: a?.inicio ?? t, ruta, blob, paso: a ? a.pasos.join(', ') : '', generado: Boolean(a?.build) }
         }))
       }
     } catch {

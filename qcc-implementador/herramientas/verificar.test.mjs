@@ -4,6 +4,7 @@
 import { PRUEBAS, repo, temporales, VERIFICAR, escribirCmd, limpiar } from './pruebas-comun.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
@@ -198,6 +199,73 @@ test('verificar: anota en salidas lo que cambió la corrida', () => {
   assert.equal(salidasDe(raiz).length, previas + 1)
   correr('--sin-cache')
   assert.equal(salidasDe(raiz).length, previas + 1)
+})
+
+/** Repo de prueba con panel/a.txt y src/a.txt versionados y estos pasos; `correr()` devuelve la salida de verificar.mjs. */
+function repoDeRutas(pasos) {
+  const raiz = repo('rutas', { '.claude/implementador.json': { verificar: pasos }, 'panel/a.txt': 'a', 'src/a.txt': 'a' })
+  temporales.push(raiz)
+  const correr = (...args) => spawnSync(process.execPath, [VERIFICAR, ...args], { cwd: raiz, encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: raiz } }).stdout
+  return { raiz, correr }
+}
+
+test('verificar: un paso con rutas se salta sin cambios en ellas y lo dice', () => {
+  const { raiz, correr } = repoDeRutas([{ nombre: 'panel', cmd: escribirCmd('marca.txt', 'x'), rutas: ['panel/**'] }])
+  // Un cambio fuera de las rutas no despierta el paso.
+  fs.writeFileSync(path.join(raiz, 'src/a.txt'), 'cambiado')
+  const salida = correr()
+  assert.match(salida, /^panel +SALTADO .*sin cambios en panel\/\*\* respecto de HEAD$/m)
+  assert.equal(fs.existsSync(path.join(raiz, 'marca.txt')), false)
+  assert.equal(salida.trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
+  assert.doesNotMatch(salida, /FALLÓ/)
+})
+
+test('verificar: un paso con rutas corre si cambió algo en ellas', () => {
+  // Un archivo nuevo no ignorado cuenta.
+  const nuevo = repoDeRutas([{ nombre: 'panel', cmd: escribirCmd('marca.txt', 'x'), rutas: ['panel/**'] }])
+  fs.writeFileSync(path.join(nuevo.raiz, 'panel/b.txt'), 'b')
+  const a = nuevo.correr()
+  assert.match(a, /^panel +OK/m)
+  assert.equal(fs.existsSync(path.join(nuevo.raiz, 'marca.txt')), true)
+  assert.equal(a.trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
+  // Y uno versionado modificado.
+  const editado = repoDeRutas([{ nombre: 'panel', cmd: escribirCmd('marca.txt', 'x'), rutas: ['src/x.txt', 'panel/**'] }])
+  fs.writeFileSync(path.join(editado.raiz, 'panel/a.txt'), 'editado')
+  assert.match(editado.correr(), /^panel +OK/m)
+  assert.equal(fs.existsSync(path.join(editado.raiz, 'marca.txt')), true)
+})
+
+test('verificar: un paso sin rutas corre siempre', () => {
+  const { raiz, correr } = repoDeRutas([
+    { nombre: 'siempre', cmd: escribirCmd('marca.txt', 'x') },
+    { nombre: 'panel', cmd: 'node -e "process.exit(1)"', rutas: ['panel/**'] },
+  ])
+  const salida = correr()
+  assert.match(salida, /^siempre +OK/m)
+  assert.match(salida, /^panel +SALTADO/m)
+  assert.equal(fs.existsSync(path.join(raiz, 'marca.txt')), true)
+  assert.equal(salida.trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
+})
+
+test('verificar: la clave de la caché incluye las rutas', () => {
+  const sin = [{ nombre: 'a', cmd: 'x', timeoutSeg: 5 }, { nombre: 'b', cmd: 'y' }]
+  const hash = (v) => crypto.createHash('sha1').update(JSON.stringify(v)).digest('hex')
+  // Sin rutas, la misma clave de siempre.
+  assert.equal(claveDe('arbol', sin), hash(['arbol', [['a', 'x', 5], ['b', 'y', null]]]))
+  const con = [{ ...sin[0], rutas: ['panel/**'] }, sin[1]]
+  assert.notEqual(claveDe('arbol', con), claveDe('arbol', sin))
+  assert.notEqual(claveDe('arbol', con), claveDe('arbol', [{ ...sin[0], rutas: ['otra/**'] }, sin[1]]))
+})
+
+test('verificar: pasosDe copia rutas solo si es un array no vacío de textos', () => {
+  const de = (rutas) => {
+    const raiz = repo('pasosrutas', { '.claude/implementador.json': { verificar: [{ nombre: 'a', cmd: 'x', ...(rutas === undefined ? {} : { rutas }) }] } })
+    temporales.push(raiz)
+    return pasosDe(raiz).pasos[0]
+  }
+  assert.deepEqual(de(['panel/**']), { nombre: 'a', cmd: 'x', rutas: ['panel/**'] })
+  assert.deepEqual(de(undefined), { nombre: 'a', cmd: 'x' })
+  for (const mala of [[], 'panel/**', [1], ['ok', ''], null]) assert.deepEqual(de(mala), { nombre: 'a', cmd: 'x' })
 })
 
 /** Corre verificar.mjs en `raiz` sin bloquear: `{ salida, codigo }` al terminar. */
