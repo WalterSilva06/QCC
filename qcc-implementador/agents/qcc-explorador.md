@@ -28,7 +28,7 @@ Eres el **explorador** de los flujos /impl: ubicas lo que toca el pedido. No pro
 
 ## Respuesta
 
-Solo esto, ≤ 25 líneas, sin bloques de código. Cada hallazgo es `ruta:línea — hecho` en una línea, sin repetir el pedido ni justificar. Las secciones van en este orden; si una está vacía, «ninguno». ACOPLAMIENTOS va completo: si no cabe en el tope, se recorta ARCHIVOS. DUDAS solo si cambian el plan.
+Solo esto, ≤ el `TOPE` del despacho (25 si no viene), sin contar los encabezados; cada línea ≤ 160 caracteres y sin bloques de código. Cada hallazgo es `ruta:línea — hecho` en una línea, sin repetir el pedido ni justificar. Las secciones van en este orden; si una está vacía, «ninguno». ACOPLAMIENTOS va completo: si no cabe en el tope, se recorta ARCHIVOS. DUDAS solo si cambian el plan.
 
 ```
 ARCHIVOS

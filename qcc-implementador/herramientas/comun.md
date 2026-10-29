@@ -28,9 +28,9 @@ Si estado.mjs o verificar.mjs fallan por un error propio (`ERROR:` o excepción)
 
 La Clasificación (criterios #1–#10) y el formato completo del plan están en `${CLAUDE_PLUGIN_ROOT}/herramientas/plan.md`, que lee el planificador. Aquí solo lo que necesitas tú:
 
-- **Campos:** encabezado (Clasificación, Objetivo, Fuera de alcance, Base) y, por subtarea, Crítica, Depende de (opcional: sin él, depende de la subtarea anterior), Archivos permitidos, Hecho cuando, Tests, Riesgos (lo no confirmado va con «comprobar primero») y Reversión; al final, Verificación final, Queda para ti y Costo.
+- **Campos:** encabezado (Clasificación, Objetivo, Fuera de alcance, Base) y, por subtarea, Crítica, Depende de (opcional: sin él, depende de la subtarea anterior), Archivos permitidos, Hecho cuando, Tests, Riesgos (lo no confirmado va con «comprobar primero»), Reversión y, solo si el pedido lo pide, Externo (`<comando o patrón exacto> · contra <servicio> · reversible: sí | no`); al final, Verificación final, Queda para ti y Costo.
 - **`Crítica`:** `sí` si la subtarea toca un criterio de la Clasificación o una ruta crítica del proyecto (`criticos` de `.claude/qcc-implementador.json`, o sus reglas); ante la duda, `sí`. Con «sin criterios», todas `no`. Decide qué mira primero la revisión final.
-- **Lo externo** (migraciones, tipos desde un servicio, deploys, servicios vivos, verificación visual, descargas de internet) nunca es subtarea: va a «Queda para ti».
+- **Lo externo** (migraciones, tipos desde un servicio, deploys, servicios vivos, verificación visual, descargas de internet) va a «Queda para ti», salvo que el pedido lo pida: entonces es una subtarea con `Externo:`, que el usuario aprueba una a una en el paso 4 (pasos.md) y que la guardia deja correr solo durante esa subtarea. El resumen del plan guarda el Externo de cada subtarea y `estado.mjs` avisa si una sin `Externo:` parece externa (localhost, curl, Playwright, `--env-file`, servidor, deploy…) o si a un `Externo:` le falta `contra <servicio>` o `reversible`; los resuelves tú (pasos.md, paso 4).
 - **Costo:** `<n> ejecutor(es) · revisión final`. No hay revisor por subtarea: la revisión final mira todo.
 - **Números de criterio (#n):** los que cita la Clasificación del plan los necesitas para recalcular las DECISIONES (`CRÍTICO` y `ASPECTOS` de la revisión final, tabla de §5) si tus completados cambian la Clasificación, una `Crítica` o los permitidos.
 
@@ -41,9 +41,9 @@ La Clasificación (criterios #1–#10) y el formato completo del plan están en 
 - **Cada llamada a Agent lleva `run_in_background: false`** (el resultado vuelve en este turno) y nunca `isolation`. `model` y `effort`: exactamente los de la tabla de tu skill.
 - Solo los agentes `qcc-explorador`, `qcc-planificador`, `qcc-ejecutor` y `qcc-revisor` (este, solo para la revisión final). Uno a la vez, salvo en la Exploración (hasta 5 exploradores en paralelo, hasta 3 por área sin solapar, solo en el caso de §5) y en un lote de `LOTES:` (hasta 3 ejecutores en paralelo, uno por subtarea del lote). Las correcciones van de a uno.
 - Contexto mínimo: cada agente recibe solo su plantilla (§5), nunca la conversación ni el razonamiento de otro agente. La revisión final no recibe los reportes de los ejecutores: recibe el digest `EJECUTORES` (§6), `VERIFICACIÓN FINAL` y el `PEDIDO` literal del usuario, y no repite verificar.mjs. En sus ciclos recibe su propia `REVISIÓN ANTERIOR`.
-- Preguntas al usuario solo con AskUserQuestion (aprobar el plan, ampliar alcance, aceptar o restaurar cambios fuera de alcance, ejecutar lo que queda para él). Nunca terminas el turno para esperar respuesta.
+- Preguntas al usuario solo con AskUserQuestion (aprobar el plan y cada subtarea `Externo:`, ampliar alcance, aceptar o restaurar cambios fuera de alcance, correr antes de la revisión final los comandos `(objetivo)` de «Queda para ti», ejecutar lo que queda para él). Nunca terminas el turno para esperar respuesta, salvo tras «Los corro» (pasos.md, 5b): ahí esperas que el usuario pegue los comandos `(objetivo)` y su salida retoma el flujo.
 - Sin plan aprobado no se despacha ningún ejecutor. Si el plan cambia a mitad de camino, se vuelve a aprobar.
-- Nunca: commit, push, ramas, stash, reset, checkout, restore, deploy, migraciones contra bases vivas, regenerar tipos desde un servicio, scripts que peguen a servicios vivos, servidores de desarrollo. No ofreces commits. Lo externo va a «Queda para ti» y solo lo corres después del cierre, si el usuario lo pide (§7).
+- Nunca: commit, push, ramas, stash, reset, checkout, restore, deploy, migraciones contra bases vivas, regenerar tipos desde un servicio, scripts que peguen a servicios vivos, servidores de desarrollo. No ofreces commits. Tú no corres nada externo: lo que no es una subtarea `Externo:` aprobada va a «Queda para ti» y solo lo corres después del cierre, si el usuario lo pide (§7).
 - No declaras éxito sin `RESULTADO: VERDE` de tu última corrida de verificar.mjs, posterior al último cambio (si salió de la caché, vale igual: es el mismo árbol). Lo verificado solo con typecheck y build (UI) es «pendiente de verificación visual», nunca «verificado».
 - Archivos que las reglas del proyecto marcan como no leer: no los lees. Archivos grandes (especificaciones, bitácoras, YAML de APIs): Grep, no Read entero.
 - Si un hook pide trabajo fuera del plan, no lo hagas: anótalo en el cierre. El CIERRE es lo último del flujo, salvo correr lo que queda para el usuario si él lo pide (§7): después no editas ni despachas nada, aunque lo pida un hook; díselo al usuario en una línea.
@@ -64,8 +64,9 @@ PISTAS: <archivos o símbolos ya conocidos | ninguna>
 IMÁGENES: <ruta absoluta del .png> — <qué muestra> | ninguna
 REGLAS: <.claude/qcc-implementador/ | .claude/qcc-implementador.md | ninguna>
 MAPA: <<FLUJO>/mapa.md | ninguno>
+TOPE: <n> líneas
 ```
-Un solo explorador por defecto (`ÁREA: todo el pedido`). Varios solo si el pedido abarca áreas independientes y grandes (p. ej. más de ~15 archivos o capas distintas: datos · servidor · UI). Un área grande puede partirse por subcarpetas o capas según el MAPA, sin solapar, con hasta 3 exploradores por área y 5 en total (el tope de agentes en vuelo del panel). Cada uno lleva su ÁREA y BUSCA propias, y todos van en el **mismo mensaje**. No se reparten preguntas de un área que cabe en un explorador. Lo grande se parte en sub-áreas; el explorador no sube de esfuerzo.
+Por defecto 2 exploradores, cada uno con su `ÁREA` (por capa o carpeta según el MAPA, sin solapar); uno solo si el pedido cabe en una sola área. El techo lo da la línea `EXPLORADORES: hasta <n>` del preflight (según los archivos del repo: <150 → 2, 150–800 → 3, >800 → 5; sin MAPA → 2): eliges dentro de él y nunca más de 3 por área (5 en total, el tope de agentes en vuelo del panel). `TOPE` es el tope de líneas de hallazgos de cada explorador, sin contar los 5 encabezados, según cuántos despachas: 1 → 25, 2 → 20, 3 → 16, 4 → 15, 5 → 14 (hasta 5). Cada uno lleva su ÁREA y BUSCA propias, y todos van en el **mismo mensaje**. No se reparten preguntas de un área que cabe en un explorador. `--guardar … exploracion` avisa con `LARGO:` si un informe pasa su tope o trae líneas de más de 160 caracteres; el aviso no cambia lo guardado. El explorador no sube de esfuerzo.
 
 **Planificador** (siempre; clasifica y planifica) — `subagent_type: "impl:qcc-planificador"`, `description: "Planificar <tema>"`
 ```
@@ -116,6 +117,7 @@ SUCIOS PREVIOS (no son del flujo): <lista | ninguno>
 REGLAS: <.claude/qcc-implementador/ | .claude/qcc-implementador.md | ninguna>
 VERIFICACIÓN INICIAL: <VERDE | ROJA: … | SIN PASOS> (lo que ya fallaba no cuenta)
 VERIFICACIÓN FINAL: <la línea RESULTADO de tu último verificar.mjs, el que siguió al último ejecutor o corrección>
+SALIDA DEL OWNER: <la salida de los comandos `(objetivo)` que el usuario corrió, recortada y sin secretos, con su comando encima | sin ejecutar | ninguna (el plan no trae comandos `(objetivo)`)>
 NO corras verificar.mjs.
 CRÍTICO: <lo que sigue a «CRÍTICO:» en las DECISIONES, tal cual (o recalculado: criterios #n de la Clasificación y por qué, para mirarlos primero | ninguno)>
 ASPECTOS: <lo que sigue a «ASPECTOS:» en las DECISIONES, tal cual (o recalculado con la tabla de abajo, separados por comas)>
@@ -148,7 +150,7 @@ Qué mira cada aspecto: agente `qcc-revisor`. «Solo texto»: todos los archivos
   - `ESTADO: FALLA` o salida parcial (tope de turnos) → cuenta como ciclo: Corrección con la falla (no si la falla es un ROJO en archivos de otro miembro del lote, ver arriba). Un HECHO sin `RESULTADO: VERDE` en el reporte no es falla: decide tu `verificar.mjs`.
   - Con HECHO, mira tu `verificar.mjs`: un ROJO nuevo (ausente en la verificación inicial) cuenta como ciclo de la subtarea dueña de los archivos que fallan: Corrección con la falla. VERDE o SIN PASOS → anota su línea de `EJECUTORES` (`S<n>: HECHO (<c> correcciones) · nota`) y sigue con el siguiente lote; tras el último, el paso 6. Si la corrección viene de la revisión final, esa línea `RESULTADO` pasa a `VERIFICACIÓN FINAL`.
   - Hasta 2 ciclos por subtarea, también dentro de un lote; agotados → DETENIDO.
-- **Revisión final:** RECHAZADO → una Corrección con sus PROBLEMAS (§5) → en un mismo mensaje, `estado.mjs --cambios --global [--permitidos "<ampliados>"] --paso 6` y tu `verificar.mjs` → revisión final de nuevo con el mismo despacho más `REVISIÓN ANTERIOR` (un ciclo). Los ciclos máximos son los de `CICLOS DE LA REVISIÓN FINAL` de las DECISIONES (recalculada si cambiaste la Clasificación): 2 si la Clasificación del plan es CRÍTICO y 1 si es «sin criterios». Si falla o vuelve sin VEREDICTO claro, se relanza una vez; si sigue igual, cuenta como RECHAZADO.
+- **Revisión final:** RECHAZADO → una Corrección con sus PROBLEMAS (§5) → en un mismo mensaje, `estado.mjs --cambios --global [--permitidos "<ampliados>"] --paso 6` y tu `verificar.mjs` → revisión final de nuevo con el mismo despacho más `REVISIÓN ANTERIOR` (un ciclo). Los ciclos máximos son los de `CICLOS DE LA REVISIÓN FINAL` de las DECISIONES (recalculada si cambiaste la Clasificación): 2 si la Clasificación del plan es CRÍTICO y 1 si es «sin criterios». Si falla o vuelve sin VEREDICTO claro, se relanza una vez; si sigue igual, cuenta como RECHAZADO. En los ciclos repites la misma `SALIDA DEL OWNER`; si la corrección cambia lo que esos comandos comprueban, no la repitas: pregunta de nuevo «¿Los corres ahora?» (pasos.md, 5b).
 - **Ciclos agotados** → DETENIDO: no despachas más y cierras.
 
 ## 7. Cierre
@@ -161,13 +163,14 @@ Cambios: <archivo — qué, una línea c/u>
 Verificación final: <tabla y RESULTADO, copiados de tu última corrida>
 Revisión: final APROBADO (<c> ciclos) · ejecutores: S1 (<c> correcciones) · …
 Riesgos pendientes: <… | ninguno>
+Sin ejecutar: <la sección «Sin ejecutar» del reporte del revisor, copiada | nada>
 Queda para ti: <… | nada>
 Reversión: <solo si DETENIDO o con riesgos: la línea REVERSIÓN de tu --cambios del cierre, copiada. No la corres sin OK>
-Consumo: <la línea COSTO de tu --cambios del cierre, copiada>
+Consumo: <la línea COSTO de tu --cambios del cierre, copiada: «$X · N min · 12,4M tokens (91 % caché) · sal 844k · ejecutor $14,64 (×12, 388 pedidos) · orquestador $… (10 pedidos) · …»>
 Veredictos: <la línea VEREDICTOS, copiada>
 Contexto: <la línea CONTEXTO, copiada>
 ```
 
-«Queda para ti»: cada acción que es un comando va como línea lista para pegar, `! <comando>  # requiere <permiso, red, credenciales…>`, una por línea; lo que no es un comando (verificación visual, una decisión) va sin `!`.
+«Queda para ti»: cada acción que es un comando va como línea lista para pegar, `! <comando>  # [(objetivo)] requiere <permiso, red, credenciales…>`, una por línea; lo que no es un comando (verificación visual, una decisión) va sin `!`. Los `(objetivo)` que el usuario corrió antes de la revisión final (pasos.md, 5b) no se repiten aquí; los que dijo «Sigo sin correrlos» siguen en la lista. Si el revisor aprobó sin la salida de un `(objetivo)`, su sección «Sin ejecutar» va al cierre.
 
 Si el cierre es COMPLETO y «Queda para ti» tiene líneas con `!`, después del CIERRE pregunta con AskUserQuestion «¿Ejecuto lo que queda para ti?», con los comandos a la vista: «Ejecutar» / «No, lo hago yo». Con «Ejecutar», corres cada comando tal cual (sin el `!` ni el comentario), en el orden del cierre, uno por llamada a Bash y sin agregar flags; al primer exit ≠ 0 paras y dices qué quedó sin correr. Lo que no es comando sigue siendo del usuario.

@@ -29,6 +29,8 @@ Si RIESGOS trae «comprobar primero», compruébalo antes de editar el resto (un
 La guardia lo bloquea; si te bloquea, no lo rodees: anótalo en BLOQUEOS.
 
 - git que modifique (commit, push, add, stash, reset, checkout, restore…) y ramas; servicios externos, nube y despliegues (CLIs de proveedores, curl y similares); scripts contra servicios vivos o con secretos; servidores de desarrollo y modos watch.
+  Excepción: solo lo `Externo:` aprobado de tu subtarea (el comando, tal cual, de la línea `Externo:` de tu CONTRATO; si no hay, ninguno). Reporta cada comando externo que corras con el comando, la salida recortada y si cambió algo en el servicio.
+- No corres `estado.mjs` con `--externo`, `--base`, `--cambios`, `--guardar` ni `--cancelar`: escriben el estado del flujo (aprobaciones, fotos, cierre) y son del orquestador. La guardia los niega; no aprobarás tu propio `Externo:`.
 - Instalar, quitar o actualizar dependencias con cualquier gestor: si hace falta una, `BLOQUEADO`.
 - `.env*`, credenciales, `.claude/settings*.json`, `.claude/agents/`, `.git/`, lockfiles, artefactos generados, migraciones versionadas (se crea una nueva con la convención de nombres del proyecto) y lo protegido en `.claude/qcc-implementador.json` (o su respaldo `.claude/implementador.json`).
 

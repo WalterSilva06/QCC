@@ -32,11 +32,12 @@ S1 · <objetivo de la subtarea>
 - Tests: <existentes que lo cubren | nuevos (ruta)> · sin tests: <cómo se verifica y qué queda manual>
 - Riesgos: <qué puede romper> → <mitigación>; lo no confirmado, primero y con «comprobar primero: <comando o lectura>»
 - Reversión: <nuevos a borrar · modificados a restaurar desde la base de S1>
+- Externo: <comando o patrón exacto> · contra <servicio> · reversible: sí | no   (opcional; solo si el pedido pide correr algo externo)
 
 S2 · …
 
 Verificación final: verificar.mjs + revisión final (siempre)
-Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>; lo que es un comando, como `! <comando>  # requiere <permiso, red…>`
+Queda para ti: <migraciones a aplicar, regenerar tipos, deploys, verificación visual, … | nada>; lo que es un comando, como `! <comando>  # [(objetivo)] requiere <permiso, red…>`
 Costo: <n> ejecutor(es) · revisión final
 ```
 
@@ -50,4 +51,5 @@ Costo: <n> ejecutor(es) · revisión final
 - Sin tests: la lógica de negocio los escribe primero, con la infraestructura de tests del proyecto. Lo que no tiene infraestructura de tests (típicamente la UI) se verifica con typecheck y build.
 - Una dependencia nueva va nombrada en el plan: la instala el orquestador antes del `--base --sub` de la subtarea que la usa, y esa subtarea lleva en sus permitidos el manifiesto y el lockfile (los cambia el orquestador, no el ejecutor; así el alcance no los marca fuera).
 - Borrar carpetas o archivos en bloque (borrado recursivo) no es subtarea: la guardia lo niega al ejecutor. Va a «Queda para ti» con el comando exacto.
-- Lo externo (aplicar migraciones, regenerar tipos, deploys, servicios vivos, verificación visual) nunca es subtarea: va a «Queda para ti». También descargar de internet (fotos, fuentes, datos): los subagentes no tienen red, así que va a «Queda para ti» con las URL y la ruta donde dejar cada archivo, y la subtarea que lo usa lo da por presente.
+- En «Queda para ti», los comandos de los que depende el objetivo del plan (sin su resultado no se puede dar el objetivo por cumplido: una migración que el objetivo exige aplicada, un build contra un servicio) llevan `(objetivo)` al inicio del comentario: `! <comando>  # (objetivo) requiere <…>`. Antes de la revisión final el orquestador ofrece al usuario correrlos, para que la revisión contraste el resultado. Los demás comandos no llevan la marca. No marques `(objetivo)` lo que es comodidad, limpieza o verificación visual.
+- `Externo` es opcional: solo lo lleva una subtarea cuyo comando externo el pedido pide correr de forma expresa (el usuario lo aprueba antes de ejecutar). Pon el comando o patrón exacto, el servicio y si es reversible; sin `reversible`, cuenta como no, y cada subtarea `reversible: no` se aprueba en su propia pregunta. En el comando, `*` vale para cualquier argumento (cruza palabras) y un comando que coincide queda eximido de las revisiones de destino de `cp` y `mv` y del `rm -r`: usa `*` solo donde cualquier valor sea aceptable. Lo externo que el pedido no pide (aplicar migraciones, regenerar tipos, deploys, servicios vivos, verificación visual) sigue yendo a «Queda para ti». También descargar de internet (fotos, fuentes, datos): los subagentes no tienen red, así que va a «Queda para ti» con las URL y la ruta donde dejar cada archivo, y la subtarea que lo usa lo da por presente.
