@@ -74,7 +74,7 @@ Los dos instaladores aceptan `--revisar` (muestra qué cambiaría), `--traer`, `
 ```
 claude plugin validate qcc-panel
 claude plugin test qcc-panel
-node --test flujos/herramientas/guardia.test.mjs
+node --test qcc-implementador/herramientas/guardia.test.mjs qcc-implementador/herramientas/estado.test.mjs qcc-implementador/herramientas/costos.test.mjs qcc-implementador/herramientas/verificar.test.mjs
 node --test flujos/herramientas/qcc-commit/solo-git.test.mjs
 node --test flujos-odd/herramientas/odd.test.mjs
 ```
