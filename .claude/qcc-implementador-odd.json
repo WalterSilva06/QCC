@@ -2,7 +2,7 @@
   "verificar": [
     { "nombre": "validate", "cmd": "claude plugin validate qcc-panel" },
     { "nombre": "test", "cmd": "claude plugin test qcc-panel" },
-    { "nombre": "test flujos", "cmd": "node --test qcc-implementador/herramientas/guardia.test.mjs qcc-implementador/herramientas/estado.test.mjs qcc-implementador/herramientas/costos.test.mjs qcc-implementador/herramientas/verificar.test.mjs" },
+    { "nombre": "test flujos", "cmd": "node --test \"qcc-implementador/herramientas/*.test.mjs\"" },
     { "nombre": "test qcc-commit", "cmd": "node --test qcc-commit/herramientas/solo-git.test.mjs" },
     { "nombre": "test odd", "cmd": "node --test qcc-implementador-odd/herramientas/odd.test.mjs" }
   ],
