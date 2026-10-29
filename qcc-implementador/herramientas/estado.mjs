@@ -1159,13 +1159,21 @@ function reversion(base, restaurar, borrar, aMano) {
 /**
  * Lo que dejó `verificar.mjs` y sigue igual en `ahora`: `Map` de ruta (en minúsculas en Windows) a `{ paso, generado }`.
  * Cuenta una salida de la misma ruta y el mismo blob, anotada desde `desde` (si hay). Un cambio a mano posterior
- * tiene otro blob y no entra. Si no se puede comparar, queda vacío (todo lo de fuera sigue siendo FUERA).
+ * tiene otro blob y no entra. Tampoco entra una salida cuya ventana `[inicio ?? t, t]` se cruza con la de una fase en paralelo
+ * (`paralelos`, abierta hasta `hasta` o hasta ahora): otro agente pudo editar el archivo mientras corría verificar, así que
+ * cae en el camino normal y sale FUERA. Si no se puede comparar, queda vacío (todo lo de fuera sigue siendo FUERA).
  */
-function salidasVigentes(base, ahora, desde, clave) {
+function salidasVigentes(base, ahora, desde, clave, paralelos = []) {
   const vigentes = new Map()
   try {
     const inicio = desde ? Date.parse(desde) : Number.NaN
-    const salidas = salidasDe(RAIZ).filter((s) => !(inicio > Date.parse(s.t)))
+    const fases = paralelos.map((p) => [Date.parse(p.desde), p.hasta === undefined ? Date.now() : Date.parse(p.hasta)])
+    const cruzaFase = (s) => {
+      const fin = Date.parse(s.t)
+      const comienzo = Number.isFinite(Date.parse(s.inicio)) ? Date.parse(s.inicio) : fin
+      return fases.some(([d, h]) => comienzo <= h && fin >= d)
+    }
+    const salidas = salidasDe(RAIZ).filter((s) => !(inicio > Date.parse(s.t)) && !cruzaFase(s))
     if (!salidas.length) return vigentes
     const blobs = new Map(cambiosDe(RAIZ, base, ahora).map((c) => [clave(c.ruta), c.blob]))
     for (const s of salidas) {
@@ -1192,14 +1200,14 @@ function lineasDeSalidas(salidas) {
  * Qué cambió desde `base` y qué cae fuera de `permitidos`. Con permitidos, nada fuera y sin cerrar, va en una línea
  * `CAMBIOS` agrupada por carpeta (más lo que solo está en el registro, uno por uno); si no, con muchos archivos
  * dentro del alcance van agrupados por carpeta, y lo de fuera y lo que solo está en el registro, uno por uno. Lo que
- * dejó `verificar.mjs` fuera de los permitidos no es FUERA.
+ * dejó `verificar.mjs` fuera de los permitidos no es FUERA, salvo que corriera con agentes en paralelo (`paralelos`).
  * En el cierre (`paso` 7) agrega `REVERSIÓN`.
  */
-function cambios(base, desde, permitidos, paso, tokens, resultado) {
+function cambios(base, desde, permitidos, paso, tokens, resultado, paralelos = []) {
   const ahora = foto(permitidos)
   const mapa = new Map()
   const clave = (r) => (WIN ? r.toLowerCase() : r)
-  const vigentes = salidasVigentes(base, ahora, desde, clave)
+  const vigentes = salidasVigentes(base, ahora, desde, clave, paralelos)
   for (const linea of git(['diff', '--name-status', '--no-renames', base, ahora]).split('\n')) {
     const m = /^([A-Z])\d*\t(.+)$/.exec(linea.trim())
     if (m) mapa.set(clave(m[2]), { estado: m[1], ruta: m[2], soloRegistro: false })
@@ -1545,9 +1553,49 @@ function fotoDeLote(numeros) {
   for (const n of previas) console.log(`AVISO: S${n} ya tenía foto; se conserva la primera (la de antes de su ejecutor)`)
   const vigente = primera ? { base: primera.base, desde: primera.desde } : { base: foto(), desde: new Date().toISOString() }
   const nuevas = numeros.filter((n) => !bases[String(n)])
-  anotarEstado({ ...(nuevas.length ? { bases: { ...bases, ...Object.fromEntries(nuevas.map((n) => [String(n), { ...vigente, lote: numeros }])) } } : {}), en_curso: numeros })
+  anotarEstado({
+    ...(nuevas.length ? { bases: { ...bases, ...Object.fromEntries(nuevas.map((n) => [String(n), { ...vigente, lote: numeros }])) } } : {}),
+    en_curso: numeros,
+    paralelos: [...paralelosDe(leerEstado()), { tipo: 'lote', n: numeros.length, desde: new Date().toISOString() }].slice(-TOPE_PARALELOS),
+  })
   console.log(`BASE=${vigente.base} DESDE=${vigente.desde}`)
   console.log(`LOTE=${numeros.map((n) => `S${n}`).join('+')}`)
+}
+
+const TOPE_PARALELOS = 20
+
+/**
+ * Las fases con agentes en paralelo del estado (`paralelos`): `[{ tipo: 'lote'|'tanda', n, desde, hasta? }]`, sin las entradas rotas.
+ * Una fase sin `hasta` sigue abierta. Un flujo viejo no tiene el campo: lista vacía.
+ */
+function paralelosDe(estado) {
+  const crudas = Array.isArray(estado.paralelos) ? estado.paralelos : []
+  return crudas.filter((p) => p && (p.tipo === 'lote' || p.tipo === 'tanda') && Number.isFinite(Date.parse(p.desde)) && (p.hasta === undefined || Number.isFinite(Date.parse(p.hasta))))
+}
+
+/** Cierra (`hasta` = ahora) las fases en paralelo abiertas: `--cambios --sub|--global` mide lo que hicieron los agentes. */
+function cerrarParalelos() {
+  const lista = paralelosDe(leerEstado())
+  if (!lista.some((p) => p.hasta === undefined)) return
+  const hasta = new Date().toISOString()
+  anotarEstado({ paralelos: lista.map((p) => (p.hasta === undefined ? { ...p, hasta } : p)) })
+}
+
+/**
+ * `--tanda <n>`: abre la fase en paralelo de una tanda de `n` ejecutores de correcciones (sin fotos por subtarea, así que no pasa por
+ * `--base --sub`) e imprime `TANDA=<n> DESDE=<iso>`. Con `n` = 1 solo avisa: un ejecutor solo no corre en paralelo. Falla sin un flujo abierto.
+ */
+function abrirTanda(n) {
+  if (n === null) throw new Error('--tanda necesita cuántos ejecutores tiene la tanda (un entero ≥ 1)')
+  const e = leerEstado()
+  if (!e.base_global || e.cierre) throw new Error('el flujo no está abierto: no hay dónde anotar la tanda (corre el preflight)')
+  if (n < 2) {
+    console.log(`AVISO: una tanda de ${n} no corre en paralelo; no se anota nada`)
+    return
+  }
+  const desde = new Date().toISOString()
+  anotarEstado({ paralelos: [...paralelosDe(e), { tipo: 'tanda', n, desde }].slice(-TOPE_PARALELOS) })
+  console.log(`TANDA=${n} DESDE=${desde}`)
 }
 
 /**
@@ -1652,10 +1700,10 @@ function subDe(texto) {
 
 /**
  * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar }`. Las opciones
- * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --estado > --cancelar > --guardar > --externo > --base > --cambios > --diff > preflight.
+ * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --estado > --cancelar > --guardar > --externo > --tanda > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
  * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar` (`agente` es el texto crudo: varios ids van separados por coma, sin espacios).
- * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta). `--externo <n> aprobado` es el modo `externo` y agrega `externo` (el entero ≥ 1; null si no vale) y `accion` (la palabra que sigue, `''` si falta).`--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
+ * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta). `--externo <n> aprobado` es el modo `externo` y agrega `externo` (el entero ≥ 1; null si no vale) y `accion` (la palabra que sigue, `''` si falta). `--tanda <n>` es el modo `tanda` y agrega `tanda` (el entero ≥ 1; null si no vale). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
  * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
 export function opcionesDe(args) {
@@ -1674,6 +1722,7 @@ export function opcionesDe(args) {
   else if (opciones.includes('--cancelar')) modo = 'cancelar'
   else if (opciones.includes('--guardar')) modo = 'guardar'
   else if (opciones.includes('--externo')) modo = 'externo'
+  else if (opciones.includes('--tanda')) modo = 'tanda'
   else if (opciones.includes('--base')) modo = 'base'
   else if (opciones.includes('--cambios')) {
     modo = 'cambios'
@@ -1709,6 +1758,7 @@ export function opcionesDe(args) {
     ...(conSub ? { sub: subDe(valor('--sub')) } : {}),
     ...(conGlobal ? { global: true } : {}),
     ...(modo === 'guia' ? { guia: valor('--guia') ?? '' } : {}),
+    ...(modo === 'tanda' ? { tanda: /^[1-9]\d*$/.test(valor('--tanda') ?? '') ? Number(valor('--tanda')) : null } : {}),
     ...(modo === 'externo' ? { externo: /^[1-9]\d*$/.test(valor('--externo') ?? '') ? Number(valor('--externo')) : null, accion: /^--/.test(valor('--externo', 2) ?? '--') ? '' : valor('--externo', 2) } : {}),
   }
 }
@@ -1738,7 +1788,7 @@ export function anotarFlujo(archivo, fila) {
 }
 
 function main() {
-  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia, externo, accion } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia, externo, accion, tanda } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   // Ni las reglas ni el estado necesitan git: las reglas se inyectan antes del preflight.
   if (modo === 'reglas') {
@@ -1774,6 +1824,15 @@ function main() {
     }
     return
   }
+  if (modo === 'tanda') {
+    try {
+      abrirTanda(tanda)
+    } catch (e) {
+      console.log(`ERROR: ${e.message}`)
+      process.exitCode = 2
+    }
+    return
+  }
   try {
     if (git(['rev-parse', '--is-inside-work-tree'], { opcional: true })?.trim() !== 'true') {
       throw new Error(`${RAIZ} no es un repositorio git: los flujos necesitan git (el usuario puede hacer git init)`)
@@ -1785,12 +1844,19 @@ function main() {
       anotarEstado({ fotos: [...(Array.isArray(fotos) ? fotos : []), nueva] })
       console.log(`BASE=${nueva.base} DESDE=${nueva.desde}`)
     } else if (modo === 'cambios') {
-      const del = sub !== undefined || global ? contextoDelFlujo({ base, desde, permitidos, sub, global }) : { base, desde, permitidos }
+      const delFlujo = sub !== undefined || global
+      const del = delFlujo ? contextoDelFlujo({ base, desde, permitidos, sub, global }) : { base, desde, permitidos }
       exigirBase(del.base)
-      if (sub !== undefined || global) anotarEstado({ en_curso: undefined })
+      // Las fases en paralelo se leen antes de cerrarlas: este mismo comando las mide.
+      const paralelos = delFlujo ? paralelosDe(leerEstado()) : []
+      if (delFlujo) anotarEstado({ en_curso: undefined })
       if (tokens !== undefined && paso !== 7) console.log('AVISO: --tokens solo vale en el cierre (--cambios … --paso 7); se ignora')
       if (resultado !== undefined && paso !== 7) console.log('AVISO: --resultado solo vale en el cierre (--cambios … --paso 7); se ignora')
-      cambios(del.base, del.desde, del.permitidos, paso, tokens, resultado)
+      try {
+        cambios(del.base, del.desde, del.permitidos, paso, tokens, resultado, paralelos)
+      } finally {
+        if (delFlujo) cerrarParalelos()
+      }
     } else if (modo === 'diff') diff(exigirBase(base), permitidos, rutas)
     else preflight(forzar)
   } catch (e) {

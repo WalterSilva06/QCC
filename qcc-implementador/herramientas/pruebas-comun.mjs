@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { registroDe } from './guardia.mjs'
+import { registroDe, flujoDe } from './guardia.mjs'
 
 // Registros, carpetas de flujo, caché y flujos.jsonl de las pruebas van a un temporal: corridas desde la carpeta
 // del plugin, las pruebas no tocan el historial real de ~/.claude/flujos/registros.
@@ -83,6 +83,40 @@ export function borrarRegistro(raiz) {
   const registro = registroDe(raiz)
   fs.rmSync(registro, { force: true })
   fs.rmSync(registro.replace(/\.jsonl$/, '.1.jsonl'), { force: true })
+}
+
+/** `CLAUDE_CONFIG_DIR` falso con un transcript por agente: `{ id: texto final }`. */
+export function transcripts(agentes) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
+  temporales.push(dir)
+  for (const [id, texto] of Object.entries(agentes)) {
+    const sub = path.join(dir, 'projects', 'otro-proyecto', 'sesion-1', 'subagents')
+    fs.mkdirSync(sub, { recursive: true })
+    const filas = [
+      { type: 'user', message: { role: 'user', content: 'PEDIDO: x' } },
+      { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'leyendo' }, { type: 'tool_use', id: 't1', name: 'Read', input: {} }] } },
+      { type: 'assistant', message: { id: 'm2', content: [{ type: 'thinking', thinking: '' }] } },
+      { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: texto }] } },
+    ]
+    fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), filas.map((f) => JSON.stringify(f)).join('\n') + '\n')
+  }
+  return dir
+}
+
+/** Una subtarea de plan con `extra` (líneas `- Campo: …\n`) antes de «Hecho cuando» y ese texto como «Hecho cuando». */
+export const subtareaDePlan = (n, permitidos, { extra = '', hecho = 'x' } = {}) =>
+  `S${n} · Tarea ${n}\n- Crítica: no\n- Archivos permitidos: ${permitidos}\n${extra}- Hecho cuando: ${hecho}\n- Tests: t\n- Riesgos: r\n- Reversión: v`
+
+/** Un repo con el flujo abierto (preflight) y ese plan guardado; devuelve `{ raiz, entorno, salida, estadoJson }`. */
+export function repoConPlanGuardado(nombre, subtareas, ajuste) {
+  const plan = `PLAN · Externo\nClasificación: sin criterios\nObjetivo: probar\n\n${subtareas.join('\n\n')}`
+  const entorno = { CLAUDE_CONFIG_DIR: transcripts({ plano: plan, ...(ajuste ? { ajuste } : {}) }) }
+  const raiz = repo(nombre, { 'src/a.ts': 'a\n', 'src/b.ts': 'b\n', 'src/c.ts': 'c\n' })
+  temporales.push(raiz)
+  estadoEn(raiz, ['--paso', '0'], entorno)
+  const salida = estadoEn(raiz, ['--guardar', 'plano', 'plan'], entorno).salida
+  const estadoJson = () => JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8'))
+  return { raiz, entorno, salida, estadoJson }
 }
 
 /** Borra los repos de `extra`, los `temporales` y la carpeta PRUEBAS (cada archivo de test lo llama en su `test.after`). */
