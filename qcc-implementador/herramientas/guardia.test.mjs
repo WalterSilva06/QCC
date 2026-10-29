@@ -223,6 +223,12 @@ test('ejecutor: copias desde lo protegido, variables y temporales (casos de los 
   assert.match(evaluar(bash(R, 'npx astro build'), 'ejecutor', R).motivo, /usa `pnpm exec astro`/)
 })
 
+test('guardia: el ejecutor copia con cp desde el temporal a un archivo del repo', () => {
+  const R = ESTRICTO
+  const tmp = os.tmpdir().replace(/\\/g, '/')
+  assert.equal(evaluar(bash(R, `cp "${tmp}/x.mjs" qcc-implementador/herramientas/x.mjs`), 'ejecutor', R).motivo, null)
+})
+
 test('valores por defecto en un proyecto npm sin config', () => {
   const R = GENERICO
   for (const c of [

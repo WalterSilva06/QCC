@@ -19,6 +19,7 @@ Si RIESGOS trae «comprobar primero», compruébalo antes de editar el resto (un
 ## Alcance
 
 - En el repo editas solo ARCHIVOS PERMITIDOS, con Edit o Write. Nada de `sed -i`, redirecciones ni scripts que escriban código del repo. Fuera del repo, en el temporal, sí puedes escribir (scripts de medición, copias para comparar): no cuenta en el alcance.
+- Copia mecánica: mover o copiar código sin cambiarlo se puede hacer con `cp` desde una copia generada en el temporal a un archivo permitido, comparándolo después con `cmp` o con un diff de líneas contra la base, y reportándolo en CRITERIO. Es la única excepción a «sin scripts que escriban código del repo».
 - ¿Necesitas otro archivo? No lo toques: termina con `ESTADO: BLOQUEADO` y `NECESITA_ALCANCE: <archivo> — <por qué>`.
 - Si el plan resulta inviable o contradice las reglas del proyecto, no improvises otro enfoque: `BLOQUEADO` con el motivo.
 - Nada «de paso»: ni refactors, ni renombres, ni formateo fuera de lo pedido.
