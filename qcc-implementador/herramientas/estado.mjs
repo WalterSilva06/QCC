@@ -418,6 +418,49 @@ export function dependeDe(valor, n, existentes) {
   return { aviso: `S${n} · Depende de: «${valor}» no es «ninguna» ni subtareas anteriores del plan; se trata como ausente (depende de la anterior)` }
 }
 
+/**
+ * Campo opcional «Externo» de la subtarea `n` (`<comando o patrón exacto> · contra <servicio> · reversible: sí | no`) →
+ * `{ externo: { comando, servicio?, reversible }, aviso? }`; sin campo (null, vacío o «ninguno») da `{}`. Sin `reversible`
+ * cuenta como `false` (no reversible) y trae `aviso`; sin `contra <servicio>`, también.
+ */
+export function externoDe(valor, n) {
+  if (valor === null || /^(ninguno|ninguna|nada)\.?$/i.test(valor.trim())) return {}
+  const [crudo = '', ...resto] = valor.split(/\s+·\s+/).map((p) => p.trim())
+  // El plan escribe los comandos entre comillas invertidas: un par que envuelve todo el comando se quita.
+  const comando = (/^(`+)([^`]+)\1$/.exec(crudo)?.[2] ?? crudo).trim()
+  if (!comando) return {}
+  const servicio = resto.map((p) => /^contra\s+(.+)$/i.exec(p)?.[1]).find(Boolean)
+  const reversible = resto.map((p) => /^reversible\s*:\s*(sí|si|no)(?![\p{L}\d])/iu.exec(p)?.[1]).find(Boolean)
+  const faltan = [...(servicio ? [] : ['«contra <servicio>»']), ...(reversible ? [] : ['«reversible: sí | no» (cuenta como no)'])]
+  return {
+    externo: { comando, ...(servicio ? { servicio } : {}), reversible: reversible ? /^s/i.test(reversible) : false },
+    ...(faltan.length ? { aviso: `S${n} · Externo: le falta ${faltan.join(' y ')}` } : {}),
+  }
+}
+
+/** Texto de un campo con sus líneas de continuación (las más sangradas que su línea); '' si no está. */
+function bloqueDe(lineas, nombre) {
+  const re = new RegExp(`^(\\s*)(?:[-*]\\s+)?(?:\\*\\*)?${nombre}(?:\\*\\*)?\\s*:`, 'i')
+  const k = lineas.findIndex((l) => re.test(l))
+  if (k < 0) return ''
+  const sangria = re.exec(lineas[k])[1].length
+  const bloque = [lineas[k]]
+  for (const l of lineas.slice(k + 1)) {
+    if (l.trim() && l.length - l.trimStart().length <= sangria) break
+    bloque.push(l)
+  }
+  return bloque.join('\n')
+}
+
+const RE_PARECE_EXTERNA = /\blocalhost\b|\bcurl\b|playwright|--env-file|\bservidor\b|\bdeploy\b|--linked/i
+const RE_GET_POST = /\b(?:GET|POST)\s+a\b/
+
+/** Lo que de «Hecho cuando», «Tests» y «Riesgos» sugiere un servicio vivo o la red (localhost, curl, Playwright, GET/POST a, --env-file, servidor, deploy, --linked); null si nada. */
+export function parecenExternas(lineas) {
+  const texto = ['Hecho cuando', 'Tests', 'Riesgos'].map((c) => bloqueDe(lineas, c)).join('\n')
+  return RE_PARECE_EXTERNA.exec(texto)?.[0] ?? RE_GET_POST.exec(texto)?.[0] ?? null
+}
+
 const RE_GLOB = /[*?[{]/
 
 /** Carpeta del tramo literal de un glob, antes de su primer carácter de glob: `src/a/*.ts` → `src/a/`. */
@@ -561,6 +604,10 @@ function resumirPlan(texto, destino) {
     const critica = campoDe(s.lineas, 'Crítica')
     const { depende, aviso } = dependeDe(campoDe(s.lineas, 'Depende de'), s.n, subtareas.map((x) => x.n))
     if (aviso) avisos.push(aviso)
+    const { externo, aviso: avisoExterno } = externoDe(campoDe(s.lineas, 'Externo'), s.n)
+    if (avisoExterno) avisos.push(avisoExterno)
+    const parece = externo ? null : parecenExternas(s.lineas)
+    if (parece) avisos.push(`S${s.n} parece externa y no está marcada (menciona «${parece}»): márcala con «Externo:» si el pedido la pide, o déjala en «Queda para ti»`)
     const fijos = new Set()
     for (const ruta of permitidos) {
       const { fijos: f, condicionales } = criticosDe(ruta, criticos)
@@ -573,9 +620,9 @@ function resumirPlan(texto, destino) {
     if (fijos.size && critica !== null && /^no\b/i.test(critica)) {
       avisos.push(`S${s.n} · Crítica: no, pero sus rutas críticas piden #${[...fijos].sort((a, b) => a - b).join(', #')}: debe ser sí`)
     }
-    resumen.push({ n: s.n, objetivo: s.objetivo, critica, permitidos, ...(depende ? { depende } : {}) })
+    resumen.push({ n: s.n, objetivo: s.objetivo, critica, permitidos, ...(depende ? { depende } : {}), ...(externo ? { externo } : {}) })
     paraDecidir.push({ n: s.n, critica, permitidos, fijos: [...fijos] })
-    console.log(`S${s.n} · ${s.objetivo} · Crítica: ${critica ?? '(falta)'} · permitidos: ${permitidos.join(', ') || '(faltan)'} → ${archivo}`)
+    console.log(`S${s.n} · ${s.objetivo} · Crítica: ${critica ?? '(falta)'} · permitidos: ${permitidos.join(', ') || '(faltan)'}${externo ? ` · Externo: ${externo.comando} (reversible: ${externo.reversible ? 'sí' : 'no'})` : ''} → ${archivo}`)
   }
   const pedidos = [...porCriterio.keys()].sort((a, b) => a - b)
   if (!criticos.length) console.log(`RUTAS CRÍTICAS: el proyecto no declara «criticos» en ${configDe(RAIZ).nombre}`)
@@ -592,7 +639,12 @@ function resumirPlan(texto, destino) {
   const decisiones = decisionesDelPlan({ clasificacion, subtareas: paraDecidir, pedidos: pedidos.map((n) => ({ n, ruta: porCriterio.get(n) })) })
   console.log('DECISIONES (con los AVISOS resueltos a lo más estricto):')
   for (const l of lineasDeDecisiones(decisiones)) console.log(l)
-  anotarEstado({ plan: destino, subtareas: resumen, decisiones, ...(clasificacion !== null ? { clasificacion } : {}), ...(titulo ? { titulo: sinMarcas(titulo) } : {}) })
+  // Un re-plan que cambia el Externo de una subtarea aprobada la deja sin aprobar: se aprueba de nuevo con --externo.
+  const previas = leerEstado().externos
+  const externos = previas && typeof previas === 'object' && !Array.isArray(previas)
+    ? Object.fromEntries(Object.entries(previas).filter(([n, a]) => resumen.find((s) => String(s.n) === n)?.externo?.comando === a?.comando))
+    : undefined
+  anotarEstado({ plan: destino, subtareas: resumen, decisiones, ...(externos ? { externos } : {}), ...(clasificacion !== null ? { clasificacion } : {}), ...(titulo ? { titulo: sinMarcas(titulo) } : {}) })
 }
 
 /** Rutas de archivo que cita un informe (`ruta:línea`, absolutas o relativas), relativas al repo cuando caen dentro. */
@@ -625,6 +677,33 @@ function criticasDeExploracion(texto) {
 const SECCIONES_EXPLORACION = ['ARCHIVOS', 'TESTS', 'ACOPLAMIENTOS', 'DATOS', 'DUDAS']
 const RE_ENCABEZADO = /^\s*(?:#{1,6}\s*)?(?:\*\*)?(ARCHIVOS|TESTS|ACOPLAMIENTOS|DATOS|DUDAS)(?:\*\*)?\s*:?\s*$/
 const RE_NINGUNO = /^\s*(?:[-*]\s*)?ninguno\.?\s*$/i
+
+/** Tope de líneas de hallazgos por explorador según cuántos van en paralelo (1–5); el informe suma ~25 en total. */
+const TOPE_POR_EXPLORADORES = { 1: 25, 2: 20, 3: 16, 4: 15, 5: 14 }
+const MAX_LINEA_EXPLORACION = 160
+
+/** Cuántos exploradores como máximo según los archivos del repo (MAPA): <150 → 2, 150–800 → 3, >800 → 5; sin dato, 2. */
+export function techoDeExploradores(archivos) {
+  if (!Number.isFinite(archivos)) return 2
+  return archivos > 800 ? 5 : archivos >= 150 ? 3 : 2
+}
+
+/** Tope de líneas de hallazgos de cada explorador cuando van `n` (fuera de 1–5 se acota). */
+export function topeDeLineas(n) {
+  return TOPE_POR_EXPLORADORES[Math.min(5, Math.max(1, Math.trunc(Number(n)) || 1))]
+}
+
+/** Líneas `LARGO:` de los informes `[{ id, texto }]` que pasan de `tope` hallazgos (líneas no vacías sin los 5 encabezados) o traen líneas de más de 160 caracteres. */
+export function avisosDeLargo(informes, tope) {
+  const avisos = []
+  for (const { id, texto } of informes) {
+    const lineas = String(texto ?? '').split('\n').map((l) => l.trimEnd()).filter((l) => l.trim() && !RE_ENCABEZADO.test(l) && !RE_NINGUNO.test(l))
+    if (lineas.length > tope) avisos.push(`LARGO: agente ${id} con ${lineas.length} hallazgos (tope ${tope})`)
+    const anchas = lineas.filter((l) => l.length > MAX_LINEA_EXPLORACION).length
+    if (anchas) avisos.push(`LARGO: agente ${id} con ${anchas} líneas de más de ${MAX_LINEA_EXPLORACION} caracteres`)
+  }
+  return avisos
+}
 
 /** Clave para no repetir un hallazgo: su primer `ruta:línea`, o el texto antes de « — », o la línea entera. */
 function claveDeHallazgo(linea) {
@@ -708,6 +787,7 @@ function guardarInforme(id, tipo, ajuste) {
     for (const { id: agente, faltan } of incompletos) {
       console.log(`INCOMPLETO: agente ${agente} sin ${faltan.join(', ')}: relanza solo esa parte`)
     }
+    for (const aviso of avisosDeLargo(informes, topeDeLineas(pedidos.length))) console.log(aviso)
     console.log(`RUTAS CRÍTICAS EN LA EXPLORACIÓN: ${criticasDeExploracion(texto)}`)
     return
   }
@@ -731,7 +811,9 @@ function mostrarEstado() {
   if (e.plan) console.log(`PLAN: ${e.plan}`)
   for (const s of Array.isArray(e.subtareas) ? e.subtareas : []) {
     console.log(`  S${s.n} · ${s.objetivo} · permitidos: ${(s.permitidos ?? []).join(', ')} → ${path.join(FLUJO, `S${s.n}.md`)}`)
+    if (s.externo?.comando) console.log(`    Externo: ${s.externo.comando} (reversible: ${s.externo.reversible ? 'sí' : 'no'})${e.externos?.[String(s.n)]?.aprobado ? ` · aprobado ${e.externos[String(s.n)].aprobado}` : ' · sin aprobar'}`)
   }
+  if (Array.isArray(e.en_curso) && e.en_curso.length) console.log(`EN CURSO: ${e.en_curso.map((n) => `S${n}`).join('+')}`)
   const d = e.decisiones
   if (d && typeof d === 'object' && [d.ciclos, d.critico, d.aspectos].every((l) => typeof l === 'string')) {
     console.log('DECISIONES (con los AVISOS resueltos a lo más estricto):')
@@ -893,6 +975,7 @@ function preflight(forzar) {
   const { pasos, origen } = pasosDe(RAIZ)
   let flujo = FLUJO
   let mapa = 'MAPA: ninguno (la carpeta del flujo no se preparó)'
+  let archivos = null
   let preparada = false
   const abierto = forzar ? null : flujoAbierto()
   if (abierto) {
@@ -904,7 +987,9 @@ function preflight(forzar) {
   } else {
     try {
       nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [] })
-      mapa = escribirMapa()
+      const escrito = escribirMapa()
+      mapa = escrito.linea
+      archivos = escrito.total
       preparada = true
     } catch (e) {
       flujo = `(no se pudo preparar: ${e.message}; despacha copiando el plan)`
@@ -921,6 +1006,7 @@ function preflight(forzar) {
   console.log(`BASE_GLOBAL=${base} DESDE_GLOBAL=${desde}`)
   console.log(`FLUJO: ${flujo}`)
   console.log(mapa)
+  console.log(lineaExploradores(archivos))
   console.log(`REGLAS DEL PROYECTO: ${reglas?.ruta ?? 'ninguna (no hay .claude/qcc-implementador/ ni .claude/qcc-implementador.md; rigen CLAUDE.md y las reglas comunes)'}`)
   for (const linea of lineasDelProyecto(RAIZ)) console.log(linea)
   console.log(`CONFIG: ${config.archivo ? config.nombre : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
@@ -1022,16 +1108,22 @@ export function mapaDelRepo(rutas, tope = TOPE_MAPA) {
   return lineas
 }
 
-/** Escribe `<FLUJO>/mapa.md` con los archivos del repo (versionados y nuevos, sin ignorados) y devuelve la línea `MAPA:` del preflight. */
+/** Escribe `<FLUJO>/mapa.md` con los archivos del repo (versionados y nuevos, sin ignorados) y devuelve la línea `MAPA:` del preflight y el total de archivos (null si no hay mapa). */
 function escribirMapa() {
   try {
     const rutas = [...new Set(git(['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0').filter(Boolean))].sort()
     const archivo = path.join(FLUJO, 'mapa.md')
     fs.writeFileSync(archivo, mapaDelRepo(rutas).join('\n') + '\n')
-    return `MAPA: ${archivo} (${rutas.length} archivos)`
+    return { linea: `MAPA: ${archivo} (${rutas.length} archivos)`, total: rutas.length }
   } catch (e) {
-    return `MAPA: ninguno (${String(e.message).split('\n')[0]})`
+    return { linea: `MAPA: ninguno (${String(e.message).split('\n')[0]})`, total: null }
   }
+}
+
+/** Línea `EXPLORADORES:` del preflight: el techo según los archivos del mapa (`null` si no hay mapa). */
+function lineaExploradores(archivos) {
+  const techo = techoDeExploradores(archivos)
+  return `EXPLORADORES: hasta ${techo} (${archivos === null ? 'sin MAPA' : `repo de ${archivos} archivos`})`
 }
 
 /** Comillas simples de bash para una ruta. */
@@ -1416,6 +1508,8 @@ function cancelar() {
 /**
  * `--base --sub <n>`: guarda la foto de la subtarea `n` en `bases` del estado del flujo e imprime `BASE=… DESDE=…`.
  * Si ya había una, conserva la primera (un reintento no esconde lo que el ejecutor ya editó).
+ * También anota en `en_curso` (lista de números) la subtarea o el lote que corre ahora: la guardia deja pasar el comando externo
+ * aprobado (`externos`) solo de esas. `--cambios --sub` y `--cambios --global` la borran.
  */
 function fotoDeSubtarea(n) {
   if (n === null) throw new Error('--sub necesita el número de la subtarea (un entero ≥ 1)')
@@ -1424,7 +1518,7 @@ function fotoDeSubtarea(n) {
   const previa = bases[String(n)]
   if (previa) console.log(`AVISO: S${n} ya tenía foto; se conserva la primera (la de antes de su ejecutor)`)
   const vigente = previa ?? { base: foto(), desde: new Date().toISOString() }
-  if (!previa) anotarEstado({ bases: { ...bases, [String(n)]: vigente } })
+  anotarEstado({ ...(previa ? {} : { bases: { ...bases, [String(n)]: vigente } }), en_curso: [n] })
   console.log(`BASE=${vigente.base} DESDE=${vigente.desde}`)
 }
 
@@ -1451,9 +1545,27 @@ function fotoDeLote(numeros) {
   for (const n of previas) console.log(`AVISO: S${n} ya tenía foto; se conserva la primera (la de antes de su ejecutor)`)
   const vigente = primera ? { base: primera.base, desde: primera.desde } : { base: foto(), desde: new Date().toISOString() }
   const nuevas = numeros.filter((n) => !bases[String(n)])
-  if (nuevas.length) anotarEstado({ bases: { ...bases, ...Object.fromEntries(nuevas.map((n) => [String(n), { ...vigente, lote: numeros }])) } })
+  anotarEstado({ ...(nuevas.length ? { bases: { ...bases, ...Object.fromEntries(nuevas.map((n) => [String(n), { ...vigente, lote: numeros }])) } } : {}), en_curso: numeros })
   console.log(`BASE=${vigente.base} DESDE=${vigente.desde}`)
   console.log(`LOTE=${numeros.map((n) => `S${n}`).join('+')}`)
+}
+
+/**
+ * `--externo <n> aprobado`: anota en `externos` del estado el Externo de la subtarea `n` con la hora de la aprobación del usuario
+ * (`{ "<n>": { comando, servicio?, reversible, aprobado } }`) e imprime `EXTERNO: S<n> aprobado`. La guardia deja pasar ese
+ * comando solo mientras `n` esté en `en_curso`. Falla si el flujo no está abierto, si `n` no está en el plan o no tiene Externo.
+ */
+function aprobarExterno(n, accion) {
+  if (n === null) throw new Error('--externo necesita el número de la subtarea (un entero ≥ 1) y «aprobado»: --externo <n> aprobado')
+  if (accion !== 'aprobado') throw new Error(`--externo ${n}: solo vale «aprobado» (vino «${accion}»)`)
+  const e = leerEstado()
+  if (!e.base_global || e.cierre) throw new Error('el flujo no está abierto: no hay dónde anotar la aprobación (corre el preflight)')
+  const s = (Array.isArray(e.subtareas) ? e.subtareas : []).find((x) => Number(x?.n) === n)
+  if (!s) throw new Error(`S${n} no está en el plan guardado`)
+  if (!s.externo || typeof s.externo.comando !== 'string' || !s.externo.comando) throw new Error(`S${n} no tiene «Externo:» en el plan: no hay nada que aprobar`)
+  const previas = e.externos && typeof e.externos === 'object' && !Array.isArray(e.externos) ? e.externos : {}
+  anotarEstado({ externos: { ...previas, [String(n)]: { ...s.externo, aprobado: new Date().toISOString() } } })
+  console.log(`EXTERNO: S${n} aprobado`)
 }
 
 /**
@@ -1540,10 +1652,10 @@ function subDe(texto) {
 
 /**
  * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar }`. Las opciones
- * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --estado > --cancelar > --guardar > --base > --cambios > --diff > preflight.
+ * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --estado > --cancelar > --guardar > --externo > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
  * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar` (`agente` es el texto crudo: varios ids van separados por coma, sin espacios).
- * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
+ * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta). `--externo <n> aprobado` es el modo `externo` y agrega `externo` (el entero ≥ 1; null si no vale) y `accion` (la palabra que sigue, `''` si falta).`--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
  * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
 export function opcionesDe(args) {
@@ -1561,6 +1673,7 @@ export function opcionesDe(args) {
   else if (opciones.includes('--estado')) modo = 'estado'
   else if (opciones.includes('--cancelar')) modo = 'cancelar'
   else if (opciones.includes('--guardar')) modo = 'guardar'
+  else if (opciones.includes('--externo')) modo = 'externo'
   else if (opciones.includes('--base')) modo = 'base'
   else if (opciones.includes('--cambios')) {
     modo = 'cambios'
@@ -1596,6 +1709,7 @@ export function opcionesDe(args) {
     ...(conSub ? { sub: subDe(valor('--sub')) } : {}),
     ...(conGlobal ? { global: true } : {}),
     ...(modo === 'guia' ? { guia: valor('--guia') ?? '' } : {}),
+    ...(modo === 'externo' ? { externo: /^[1-9]\d*$/.test(valor('--externo') ?? '') ? Number(valor('--externo')) : null, accion: /^--/.test(valor('--externo', 2) ?? '--') ? '' : valor('--externo', 2) } : {}),
   }
 }
 
@@ -1624,7 +1738,7 @@ export function anotarFlujo(archivo, fila) {
 }
 
 function main() {
-  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia, externo, accion } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   // Ni las reglas ni el estado necesitan git: las reglas se inyectan antes del preflight.
   if (modo === 'reglas') {
@@ -1651,6 +1765,15 @@ function main() {
     }
     return
   }
+  if (modo === 'externo') {
+    try {
+      aprobarExterno(externo, accion)
+    } catch (e) {
+      console.log(`ERROR: ${e.message}`)
+      process.exitCode = 2
+    }
+    return
+  }
   try {
     if (git(['rev-parse', '--is-inside-work-tree'], { opcional: true })?.trim() !== 'true') {
       throw new Error(`${RAIZ} no es un repositorio git: los flujos necesitan git (el usuario puede hacer git init)`)
@@ -1664,6 +1787,7 @@ function main() {
     } else if (modo === 'cambios') {
       const del = sub !== undefined || global ? contextoDelFlujo({ base, desde, permitidos, sub, global }) : { base, desde, permitidos }
       exigirBase(del.base)
+      if (sub !== undefined || global) anotarEstado({ en_curso: undefined })
       if (tokens !== undefined && paso !== 7) console.log('AVISO: --tokens solo vale en el cierre (--cambios … --paso 7); se ignora')
       if (resultado !== undefined && paso !== 7) console.log('AVISO: --resultado solo vale en el cierre (--cambios … --paso 7); se ignora')
       cambios(del.base, del.desde, del.permitidos, paso, tokens, resultado)

@@ -391,14 +391,32 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
   }
 }
 
-/** «$0,98 · 9,6 min · orquestador $0,39 (10 pedidos) · final $0,26 · …», con los roles de mayor a menor costo. */
+/** Cifra de tokens abreviada: «950», «844k», «12,4M». */
+const abreviar = (n) => (n < 1000 ? String(n) : n < 999_500 ? `${Math.round(n / 1000)}k` : `${decimal(n / 1e6)}M`)
+
+/**
+ * «12,4M tokens (91 % caché) · sal 844k» con los tokens de todos los roles, o '' si no hay (los flujos viejos no los
+ * anotaban). La caché es lo leído sobre todo el prompt (entrada + leídos + escritos); `sal` es la salida, que ya
+ * incluye el thinking (el costo cobra `output_tokens` y el thinking es parte de ellos).
+ */
+function tokensDeCosto(roles) {
+  const t = { entrada: 0, leidos: 0, escritos: 0, salida: 0 }
+  for (const r of Object.values(roles)) for (const k of Object.keys(t)) t[k] += r.tokens?.[k] ?? 0
+  const prompt = t.entrada + t.leidos + t.escritos
+  const total = prompt + t.salida
+  if (!total) return ''
+  return `${abreviar(total)} tokens${prompt ? ` (${Math.round((t.leidos / prompt) * 100)} % caché)` : ''} · sal ${abreviar(t.salida)}`
+}
+
+/** «$0,98 · 9,6 min · 12,4M tokens (91 % caché) · sal 844k · ejecutor $0,60 (×2, 20 pedidos) · orquestador $0,39 (10 pedidos) · …», con los roles de mayor a menor costo. */
 export function resumenDeCosto(c) {
   const partes = Object.entries(c.roles)
     .filter(([, r]) => r.pedidos > 0)
     .sort((a, b) => b[1].usd - a[1].usd)
-    .map(([rol, r]) => `${rol} ${dolares(r.usd)}${rol === 'orquestador' ? ` (${r.pedidos} pedidos)` : r.agentes > 1 ? ` (×${r.agentes})` : ''}`)
+    .map(([rol, r]) => `${rol} ${dolares(r.usd)} (${r.agentes > 1 ? `×${r.agentes}, ` : ''}${r.pedidos} ${r.pedidos === 1 ? 'pedido' : 'pedidos'})`)
+  const tokens = tokensDeCosto(c.roles)
   const sinPrecio = Object.values(c.roles).reduce((s, r) => s + r.sinPrecio, 0)
-  return `${dolares(c.usd)} · ${decimal(c.minutos)} min${partes.length ? ` · ${partes.join(' · ')}` : ' · sin pedidos'}${sinPrecio ? ` · ${sinPrecio} pedido(s) de un modelo sin precio` : ''}`
+  return `${dolares(c.usd)} · ${decimal(c.minutos)} min${tokens ? ` · ${tokens}` : ''}${partes.length ? ` · ${partes.join(' · ')}` : ' · sin pedidos'}${sinPrecio ? ` · ${sinPrecio} pedido(s) de un modelo sin precio` : ''}`
 }
 
 /** «ejecutor HECHO, HECHO · final RECHAZADO, APROBADO», o «ninguno». */

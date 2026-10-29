@@ -771,7 +771,27 @@ function motivoArchivoScript(args, ctx) {
   return null
 }
 
+/** Opciones de `estado.mjs` que escriben el estado del flujo: son del orquestador, no de un ejecutor. */
+const ESTADO_ESCRIBE = /^--(externo|base|cambios|guardar|cancelar)(=|$)/
+
+/** Motivo si `args` (de `node`) corre `estado.mjs` con una opción que escribe estado; `null` si no. */
+function motivoEstadoEscribe(args) {
+  let k = 0
+  for (; k < args.length; k++) {
+    if (NODE_CODIGO.has(args[k])) return null
+    if (NODE_OPC_CON_VALOR.has(args[k])) k++
+    else if (!args[k].startsWith('-')) break
+  }
+  if (k >= args.length || args[k].split(/[\\/]/).pop().toLowerCase() !== 'estado.mjs') return null
+  const opcion = args.slice(k + 1).find((a) => ESTADO_ESCRIBE.test(a))
+  return opcion ? `estado.mjs ${opcion.split('=')[0]} escribe el estado del flujo (aprobaciones, fotos, cierre): solo el orquestador` : null
+}
+
 function evaluarNode(args, ctx) {
+  if (ctx.rol === 'ejecutor') {
+    const m = motivoEstadoEscribe(args)
+    if (m) return m
+  }
   if (args.some((a) => a.startsWith('--env-file'))) return 'node --env-file carga secretos y suele pegar a servicios vivos: queda para el usuario'
   if (args.some((a) => a === '--watch' || a.startsWith('--watch-path'))) return 'node --watch no termina'
   return motivoArchivoScript(args, ctx)
@@ -962,6 +982,13 @@ function evaluarSimple(simple, ctx) {
     return null
   }
 
+  // Externo aprobado: solo el ejecutor, solo el comando aprobado de una subtarea en curso. Antes ya se negaron los
+  // `.env`, los secretos del proyecto y las redirecciones fuera de alcance; los shells (`bash -c`…) volvieron arriba.
+  if (ctx.rol === 'ejecutor' && ctx.externos?.length && !palabras.some((w) => w.includes('\u0000'))) {
+    const texto = palabras.join(' ').replace(/\s+/g, ' ')
+    if (ctx.externos.some((re) => re.test(texto))) return null
+  }
+
   if (prog === 'npx' && args.some((a) => a === '--no-install' || a === '--no')) {
     const j = args.findIndex((a) => !a.startsWith('-'))
     return j >= 0 ? evaluarBinario(nombreProg(args[j]), args.slice(j + 1), ctx) : null
@@ -1011,7 +1038,43 @@ function evaluarSimple(simple, ctx) {
   return null
 }
 
-/** Motivo para negar el comando completo, o null. `ctx`: { rol, raiz, cwd, powershell }. */
+/**
+ * Comandos `Externo:` aprobados de las subtareas en curso del flujo del proyecto (`externos` y `en_curso` de `estado.json`,
+ * que escribe `estado.mjs`). Un comando vale solo mientras su subtarea esté en `en_curso` y traiga `aprobado`. Un lote puede
+ * tener varias en curso: la guardia no liga el agente a una subtarea. Ante cualquier error, `[]` (la guardia sigue negando).
+ */
+export function externosAprobados(raiz) {
+  try {
+    const estado = leerJson(path.join(flujoDe(raiz), 'estado.json'))
+    if (!estado || !Array.isArray(estado.en_curso) || !estado.externos || typeof estado.externos !== 'object') return []
+    const comandos = []
+    for (const n of estado.en_curso) {
+      const e = Object.hasOwn(estado.externos, String(n)) ? estado.externos[String(n)] : null
+      if (e && typeof e.aprobado === 'string' && e.aprobado && typeof e.comando === 'string' && e.comando.trim()) comandos.push(e.comando)
+    }
+    return comandos
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Un `Externo:` aprobado → RegExp sobre las palabras de un comando simple (unidas por un espacio): texto exacto con espacios
+ * normalizados y `*` como comodín. `null` si no es un comando simple (varios comandos, redirecciones, sustituciones) o si el
+ * programa lleva comodín.
+ */
+export function regexDeExterno(comando) {
+  // El plan escribe los comandos entre comillas invertidas: un par que envuelve todo el comando se quita.
+  const envuelto = /^(`+)([^`]+)\1$/.exec(String(comando).trim())
+  const simples = analizar(envuelto ? envuelto[2] : String(comando))
+  if (simples.length !== 1 || simples[0].redirs.length) return null
+  const ws = simples[0].palabras
+  if (!ws.length || ws[0].includes('*') || ws.some((w) => w.includes('\u0000'))) return null
+  const texto = ws.join(' ').replace(/\s+/g, ' ')
+  return new RegExp(`^${[...texto].map((c) => (c === '*' ? '[^\\u0000]*' : c.replace(/[.+^${}()|[\]\\?]/g, '\\$&'))).join('')}$`)
+}
+
+/** Motivo para negar el comando completo, o null. `ctx`: { rol, raiz, cwd, powershell, externos }. */
 export function evaluarCadena(cmd, ctx) {
   for (const simple of analizar(cmd, { powershell: ctx.powershell })) {
     const m = evaluarSimple(simple, ctx)
@@ -1030,7 +1093,8 @@ export function evaluar(evento, rol, raiz = RAIZ) {
   const cwd = typeof evento?.cwd === 'string' && evento.cwd ? path.resolve(rutaNativa(evento.cwd)) : raiz
   if (herramienta === 'Bash' || herramienta === 'PowerShell') {
     const comando = String(entrada.command ?? '')
-    const motivo = evaluarCadena(comando, { rol, raiz, cwd, powershell: herramienta === 'PowerShell' })
+    const externos = rol === 'ejecutor' ? externosAprobados(raiz).map(regexDeExterno).filter(Boolean) : []
+    const motivo = evaluarCadena(comando, { rol, raiz, cwd, powershell: herramienta === 'PowerShell', externos })
     return { motivo, objetivo: comando.replace(/\s*\r?\n\s*/g, ' ⏎ ').slice(0, 300) }
   }
   if (['Edit', 'Write', 'NotebookEdit', 'MultiEdit'].includes(herramienta)) {
