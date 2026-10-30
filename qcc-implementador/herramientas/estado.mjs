@@ -394,11 +394,30 @@ export function partesDelPlan(texto) {
   return { cabecera, subtareas, pie }
 }
 
-/** Rutas de «Archivos permitidos», sin comillas, marcas ni explicaciones. */
+/** Parte el texto en los «;» fuera de paréntesis (`a.mjs; b.mjs (x; y)` → dos partes). */
+function partirPorPuntoYComa(texto) {
+  const partes = ['']
+  let profundidad = 0
+  for (const c of texto) {
+    if (c === '(') profundidad++
+    else if (c === ')') profundidad = Math.max(0, profundidad - 1)
+    if (c === ';' && profundidad === 0) partes.push('')
+    else partes[partes.length - 1] += c
+  }
+  return partes
+}
+
+/** Rutas de «Archivos permitidos», sin comillas, marcas ni explicaciones; parte por «,» y por «;» fuera de paréntesis. */
 export function permitidosDe(valor) {
-  return listaPermitidos(String(valor ?? '').replace(/`/g, ''))
+  return partirPorPuntoYComa(String(valor ?? '').replace(/`/g, ''))
+    .flatMap((parte) => listaPermitidos(parte))
     .map((p) => p.replace(/\s+[—–]\s+.*$/, '').trim())
     .filter((p) => p && !/^(ninguno|nada)$/i.test(p))
+}
+
+/** ¿Una ruta permitida tiene pinta de frase y no de ruta? Con espacios o terminada en «.». */
+export function noPareceRuta(p) {
+  return /\s/.test(p) || p.endsWith('.')
 }
 
 /**
@@ -452,7 +471,26 @@ function bloqueDe(lineas, nombre) {
   return bloque.join('\n')
 }
 
-const RE_PARECE_EXTERNA = /\blocalhost\b|\bcurl\b|--env-file|\bservidor\b|\bdeploy\b|--linked/i
+/**
+ * «Archivos permitidos» de la subtarea `n` con sus líneas de continuación (viñetas `-` o `*` incluidas), unidas con coma →
+ * `{ permitidos, avisos }`. Sin el campo da `permitidos` vacío y sin avisos (la falta ya la avisa resumirPlan). Avisa si el campo
+ * no trae ninguna ruta y por cada ruta que no parece una (`noPareceRuta`).
+ */
+export function permitidosDeSubtarea(lineas, n) {
+  const bloque = bloqueDe(lineas, 'Archivos permitidos')
+  if (!bloque) return { permitidos: [], avisos: [] }
+  const texto = bloque.split('\n')
+    .map((l, i) => (i === 0 ? l.replace(/^\s*(?:[-*]\s+)?(?:\*\*)?Archivos permitidos(?:\*\*)?\s*:(?:\*\*)?/i, '') : l.replace(/^\s*[-*]\s+/, '')).trim())
+    .filter(Boolean)
+    .join(', ')
+  const permitidos = permitidosDe(texto)
+  const avisos = permitidos.length
+    ? permitidos.filter(noPareceRuta).map((p) => `S${n} · permitido «${p}» no parece una ruta`)
+    : [`S${n} · Archivos permitidos: no se leyó ninguna ruta`]
+  return { permitidos, avisos }
+}
+
+const RE_PARECE_EXTERNA =/\blocalhost\b|\bcurl\b|--env-file|\bservidor\b|\bdeploy\b|--linked/i
 const RE_GET_POST = /\b(?:GET|POST)\s+a\b/
 
 /** Lo que de «Hecho cuando», «Tests» y «Riesgos» sugiere un servicio vivo o la red (localhost, curl, GET/POST a, --env-file, servidor, deploy, --linked); null si nada. */
@@ -482,27 +520,39 @@ const pisa = (p, q) => {
 
 const sePisan = (a, b) => a.some((p) => b.some((q) => pisa(p, q)))
 
+/** Tope de subtareas que editan el mismo árbol a la vez en un lote. */
+const TOPE_LOTE = 4
+
+/** ¿Hace de barrera? Sin permitidos, o con alguno que no parece una ruta: se pisa con todas. */
+const esBarrera = (permitidos) => permitidos.length === 0 || permitidos.some(noPareceRuta)
+
 /**
- * Lotes de ejecución del plan, en orden: `[[1], [2, 3], [4]]`. `subtareas`: `{ n, permitidos, depende }` (`depende` ausente = depende
- * de la anterior). Una subtarea entra al lote en curso solo si no depende de ninguna de sus miembros, sus permitidos no se pisan con
- * los de ninguna (un archivo dentro de una carpeta o de un glob de la otra cuenta como pisarse), tiene permitidos y el lote tiene
- * menos de 3; si no, abre otro lote.
+ * Lotes de ejecución del plan, por ondas, en orden de lote y dentro de cada uno por n: `[[1, 3], [2], [4]]`. `subtareas`:
+ * `{ n, permitidos, depende }` (`depende` ausente = depende de la anterior). Cada subtarea va al primer lote con menos de
+ * `TOPE_LOTE` miembros que quede después de los lotes de sus dependencias y de los de toda subtarea anterior con la que se pisa
+ * (un archivo dentro de una carpeta o de un glob de la otra cuenta como pisarse). Sin permitidos, o con uno que no parece
+ * una ruta, se pisa con todas y hace de barrera.
  */
 export function lotesDe(subtareas) {
   const lotes = []
-  let actual = []
+  const loteDeN = new Map()
+  const previas = []
   subtareas.forEach((s, i) => {
     const permitidos = Array.isArray(s.permitidos) ? s.permitidos : []
+    const barrera = esBarrera(permitidos)
     const depende = Array.isArray(s.depende) ? s.depende : i > 0 ? [subtareas[i - 1].n] : []
-    const cabe = actual.length > 0 && actual.length < 3 && permitidos.length > 0
-      && actual.every((m) => m.permitidos.length > 0 && !depende.includes(m.n) && !sePisan(m.permitidos, permitidos))
-    if (!cabe) {
-      actual = []
-      lotes.push(actual)
-    }
-    actual.push({ n: s.n, permitidos })
+    const despuesDe = [
+      ...depende.map((n) => loteDeN.get(n)),
+      ...previas.filter((p) => barrera || p.barrera || sePisan(p.permitidos, permitidos)).map((p) => p.lote),
+    ].filter((k) => k !== undefined)
+    let lote = Math.max(-1, ...despuesDe) + 1
+    while (lotes[lote]?.length >= TOPE_LOTE) lote++
+    if (!lotes[lote]) lotes[lote] = []
+    lotes[lote].push(s.n)
+    loteDeN.set(s.n, lote)
+    previas.push({ permitidos, barrera, lote })
   })
-  return lotes.map((l) => l.map((m) => m.n))
+  return lotes.map((l) => [...l].sort((a, b) => a - b))
 }
 
 /** Criterios que `criticos` (de `.claude/qcc-implementador.json`) pide para `ruta`: los fijos y los que dependen de una condición. */
@@ -600,7 +650,8 @@ function resumirPlan(texto, destino) {
     const archivo = path.join(FLUJO, `S${s.n}.md`)
     fs.writeFileSync(archivo, [...encabezado, '', ...s.lineas].join('\n').trim() + '\n')
     for (const c of CAMPOS_SUBTAREA) if (campoDe(s.lineas, c) === null) avisos.push(`S${s.n} · falta «${c}»`)
-    const permitidos = permitidosDe(campoDe(s.lineas, 'Archivos permitidos'))
+    const { permitidos, avisos: avisosPermitidos } = permitidosDeSubtarea(s.lineas, s.n)
+    avisos.push(...avisosPermitidos)
     const critica = campoDe(s.lineas, 'Crítica')
     const { depende, aviso } = dependeDe(campoDe(s.lineas, 'Depende de'), s.n, subtareas.map((x) => x.n))
     if (aviso) avisos.push(aviso)
@@ -1317,12 +1368,14 @@ function numstat(desdeFoto, hastaFoto, permitidos = []) {
 
 /**
  * Lo que cambió cada subtarea: la diferencia entre su foto (`--base --sub`) y la de la siguiente; la última, contra el árbol
- * de ahora. Las de un lote (`--base --sub 1,2`) comparten foto: su siguiente es la del próximo n fuera del lote y cada miembro
- * cuenta solo lo que cae en sus propios permitidos. `{ "<n>": { archivos, mas, menos } }`; una subtarea cuya diferencia falla queda fuera.
+ * de ahora. Las fotos van en orden de `desde` (a igual `desde`, por n). Las de un lote (`--base --sub 1,2`) comparten foto: su
+ * siguiente es la próxima foto en el tiempo fuera del lote y cada miembro cuenta solo lo que cae en sus propios permitidos.
+ * `{ "<n>": { archivos, mas, menos } }`; una subtarea cuya diferencia falla queda fuera.
  */
 function cambiosPorSubtarea(estado) {
   const bases = basesDe(estado)
-  const numeros = Object.keys(bases).map(Number).sort((a, b) => a - b)
+  const tiempo = (n) => Date.parse(bases[String(n)].desde)
+  const numeros = Object.keys(bases).map(Number).sort((a, b) => (tiempo(a) - tiempo(b)) || a - b)
   const plan = Array.isArray(estado.subtareas) ? estado.subtareas : []
   const porSubtarea = {}
   let ahora = null

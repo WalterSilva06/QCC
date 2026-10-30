@@ -31,7 +31,7 @@ Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases n
 |---|---|
 | `impl:qcc-explorador` (Haiku, high) | ninguno |
 | `impl:qcc-planificador` (Opus, medium) | ninguno |
-| `impl:qcc-ejecutor` (Sonnet, high) | ninguno; `effort: "medium"` en una subtarea `Crítica: no` y sus correcciones (las correcciones de la revisión final, sin override). Los de un mismo lote de `LOTES:` van juntos en un mensaje, cada uno con su propio effort; los de una tanda de correcciones de la revisión final también van juntos en un mensaje y sin override |
+| `impl:qcc-ejecutor` (Sonnet, high) | ninguno; `effort: "medium"` en una subtarea `Crítica: no` y sus correcciones (las correcciones de la revisión final, sin override). Los de un mismo lote de `LOTES:` van juntos en un mensaje, cada uno con su propio effort; las correcciones en paralelo de varios miembros de un lote también van juntas en un mensaje, cada una con el effort de su subtarea; los de una tanda de correcciones de la revisión final también van juntos en un mensaje y sin override |
 | `impl:qcc-revisor`: revisión final y sus ciclos (Opus, high) | ninguno, también con Clasificación «sin criterios» |
 
 ## Reglas comunes

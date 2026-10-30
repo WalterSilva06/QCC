@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { flujoDe, regexDeExterno } from './guardia.mjs'
-import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, techoDeExploradores, topeDeLineas, avisosDeLargo, externoDe, parecenExternas } from './estado.mjs'
+import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, techoDeExploradores, topeDeLineas, avisosDeLargo, externoDe, parecenExternas, permitidosDeSubtarea, noPareceRuta } from './estado.mjs'
 
 const PLAN = `PREGUNTAS: ¿algo?
 PLAN · Prueba
@@ -164,9 +164,14 @@ test('estado: lotesDe junta subtareas independientes cuyos permitidos no se pisa
     ['serial: ausente depende de la anterior', [s(1, a), s(2, ['b.ts']), s(3, ['c.ts'])], [[1], [2], [3]]],
     ['null cuenta como ausente', [s(1, a), s(2, ['b.ts'], null)], [[1], [2]]],
     ['independientes', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], [])], [[1, 2, 3]]],
-    ['tope de 3', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], []), s(4, ['d.ts'], [])], [[1, 2, 3], [4]]],
+    ['tope de 4', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], []), s(4, ['d.ts'], [])], [[1, 2, 3, 4]]],
     ['depende de un miembro del lote', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], [1])], [[1, 2], [3]]],
-    ['el lote siguiente puede seguir sumando', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], [1]), s(4, ['d.ts'], [])], [[1, 2], [3, 4]]],
+    ['el lote siguiente puede seguir sumando', [s(1, a), s(2, ['b.ts'], []), s(3, ['c.ts'], [1]), s(4, ['d.ts'], [])], [[1, 2, 4], [3]]],
+    ['ondas', [s(1, a), s(2, ['b.ts']), s(3, ['c.ts'], [])], [[1, 3], [2]]],
+    ['una que se pisa con una anterior no se adelanta', [s(1, a), s(2, ['b.ts']), s(3, ['b.ts'], [])], [[1], [2], [3]]],
+    ['barrera con permitido dudoso', [s(1, a), s(2, ['b.mjs y sus tests'], []), s(3, ['c.ts'], [])], [[1], [2], [3]]],
+    ['tope de 4 con 5 independientes', [1, 2, 3, 4, 5].map((n) => s(n, [`f${n}.ts`], [])), [[1, 2, 3, 4], [5]]],
+    ['depende de una de un lote posterior', [s(1, a), s(2, ['b.ts']), s(3, ['c.ts'], []), s(4, ['d.ts'], [2])], [[1, 3], [2], [4]]],
     ['carpeta pisa archivo', [s(1, ['src/']), s(2, ['src/a.ts'], [])], [[1], [2]]],
     ['archivo pisa carpeta', [s(1, ['src/a.ts']), s(2, ['src/'], [])], [[1], [2]]],
     ['glob pisa archivo', [s(1, ['docs/*.md']), s(2, ['docs/x.md'], [])], [[1], [2]]],
@@ -220,7 +225,52 @@ test('estado: --guardar plan lee «Depende de» y calcula los lotes', () => {
   assert.deepEqual(depende(3), [])
 })
 
-const EXTERNO_SEMILLA = '- Externo: node scripts/seed.mjs · contra la base de pruebas · reversible: sí\n'
+test('plan: permitidosDeSubtarea lee viñetas, continuaciones, «;» y avisa las rutas dudosas', () => {
+  const de = (texto) => permitidosDeSubtarea(texto.split('\n'), 1)
+  // (a) viñetas
+  assert.deepEqual(de('- Archivos permitidos:\n  - `a.mjs`\n  - b.test.mjs (nuevo)'), { permitidos: ['a.mjs', 'b.test.mjs'], avisos: [] })
+  assert.deepEqual(de('- Archivos permitidos:\n  * a.mjs\n  * b.mjs'), { permitidos: ['a.mjs', 'b.mjs'], avisos: [] })
+  // (b) continuación de una lista con coma, y con la 1.ª línea ya con valor
+  assert.deepEqual(de('- Archivos permitidos: a.mjs,\n  b.mjs').permitidos, ['a.mjs', 'b.mjs'])
+  assert.deepEqual(de('- Archivos permitidos: a.mjs\n  b.mjs').permitidos, ['a.mjs', 'b.mjs'])
+  // (c) «;» fuera de paréntesis parte; dentro no
+  assert.deepEqual(de('- Archivos permitidos: a.mjs; b.mjs (generado; build)'), { permitidos: ['a.mjs', 'b.mjs'], avisos: [] })
+  assert.deepEqual(permitidosDe('a.mjs; b.mjs, c.mjs'), ['a.mjs', 'b.mjs', 'c.mjs'])
+  // (d) frase
+  assert.deepEqual(de('- Archivos permitidos: a.mjs y sus tests'), { permitidos: ['a.mjs y sus tests'], avisos: ['S1 · permitido «a.mjs y sus tests» no parece una ruta'] })
+  // (e) termina en punto
+  assert.deepEqual(de('- Archivos permitidos: a.md.'), { permitidos: ['a.md.'], avisos: ['S1 · permitido «a.md.» no parece una ruta'] })
+  // (f) el campo siguiente corta el bloque
+  assert.deepEqual(de('- Archivos permitidos: a.mjs\n- Hecho cuando:\n  - b.mjs existe'), { permitidos: ['a.mjs'], avisos: [] })
+  // (g) campo vacío; rutas a la misma sangría que el campo no se leen; sin campo no avisa (ya sale «falta»)
+  assert.deepEqual(de('- Archivos permitidos:\n- Hecho cuando: x'), { permitidos: [], avisos: ['S1 · Archivos permitidos: no se leyó ninguna ruta'] })
+  assert.deepEqual(de('- Archivos permitidos:\n- a.mjs').avisos, ['S1 · Archivos permitidos: no se leyó ninguna ruta'])
+  assert.deepEqual(de('- Hecho cuando: x'), { permitidos: [], avisos: [] })
+  // (h) negritas y explicación
+  assert.deepEqual(de('- **Archivos permitidos:** `a.mjs` (modo nuevo), README.md — índice'), { permitidos: ['a.mjs', 'README.md'], avisos: [] })
+  // Un glob con «**» conserva sus asteriscos.
+  assert.deepEqual(de('- Archivos permitidos: src/**/*.ts').permitidos, ['src/**/*.ts'])
+  assert.equal(noPareceRuta('a b'), true)
+  assert.equal(noPareceRuta('a.md.'), true)
+  assert.equal(noPareceRuta('src/a.md'), false)
+})
+
+test('plan: --guardar plan avisa los permitidos sin ruta o que no parecen una', () => {
+  const { salida, estadoJson } = repoConPlanGuardado('permitidos-avisos', [
+    subtareaDePlan(1, '\n  - src/a.ts y sus tests\n  - src/b.ts.\n  - `src/c.ts` (nuevo)'),
+    subtareaDePlan(2, ''),
+    subtareaDePlan(3, 'src/d.ts; src/e.ts'),
+  ])
+  assert.match(salida, /^ {2}- S1 · permitido «src\/a\.ts y sus tests» no parece una ruta$/m)
+  assert.match(salida, /^ {2}- S1 · permitido «src\/b\.ts\.» no parece una ruta$/m)
+  assert.doesNotMatch(salida, /S1 · permitido «src\/c\.ts/)
+  assert.match(salida, /^ {2}- S2 · Archivos permitidos: no se leyó ninguna ruta$/m)
+  assert.doesNotMatch(salida, /S2 · falta «Archivos permitidos»/)
+  assert.doesNotMatch(salida, /S3 · permitido/)
+  assert.deepEqual(estadoJson().subtareas.map((s) => s.permitidos), [['src/a.ts y sus tests', 'src/b.ts.', 'src/c.ts'], [], ['src/d.ts', 'src/e.ts']])
+})
+
+const EXTERNO_SEMILLA ='- Externo: node scripts/seed.mjs · contra la base de pruebas · reversible: sí\n'
 
 test('plan: Externo se guarda en el resumen de la subtarea', () => {
   const { salida, estadoJson } = repoConPlanGuardado('externo-resumen', [

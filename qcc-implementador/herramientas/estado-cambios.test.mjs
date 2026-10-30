@@ -276,6 +276,65 @@ test('cierre: atribuye archivos y líneas por subtarea también dentro de un lot
   ])
 })
 
+/** Repo con a.ts, b.ts y c.ts, el flujo abierto y tres subtareas (una por archivo) en el estado. */
+function repoConTresSubtareas() {
+  const raiz = repo('ondas', { 'src/a.ts': 'a\n', 'src/b.ts': 'b\n', 'src/c.ts': 'c\n' })
+  temporales.push(raiz)
+  estadoEn(raiz, ['--paso', '0'])
+  const archivo = path.join(flujoDe(raiz), 'estado.json')
+  const estado = JSON.parse(fs.readFileSync(archivo, 'utf8'))
+  estado.subtareas = ['a', 'b', 'c'].map((x, i) => ({ n: i + 1, objetivo: x, critica: 'no', permitidos: [`src/${x}.ts`] }))
+  fs.writeFileSync(archivo, JSON.stringify(estado))
+  return { raiz, estadoJson: () => JSON.parse(fs.readFileSync(archivo, 'utf8')) }
+}
+
+test('cierre: con ondas, la siguiente foto en el tiempo cierra a cada subtarea, no el próximo n', () => {
+  const { raiz } = repoConTresSubtareas()
+  // Onda 1: S1+S3 a la vez.
+  assert.match(estadoEn(raiz, ['--base', '--sub', '1,3']).salida, /^LOTE=S1\+S3$/m)
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a1\na2\n')
+  fs.writeFileSync(path.join(raiz, 'src/c.ts'), 'c1\nc2\nc3\n')
+  const lote = estadoEn(raiz, ['--cambios', '--sub', '1,3', '--paso', '6']).salida
+  assert.match(lote, /^FOTO S1\+S3: /m)
+  assert.match(lote, /ALCANCE: OK\s*$/)
+  // Onda 2: S2, con su foto posterior a la del lote aunque su n sea menor que el de S3.
+  assert.match(estadoEn(raiz, ['--base', '--sub', '2']).salida, /^BASE=\w+ DESDE=/m)
+  fs.writeFileSync(path.join(raiz, 'src/b.ts'), 'b1\n')
+  assert.match(estadoEn(raiz, ['--cambios', '--sub', '2', '--paso', '6']).salida, /ALCANCE: OK\s*$/)
+
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  estadoEn(raiz, ['--cambios', sha, '--paso', '7', '--resultado', 'COMPLETO'])
+  assert.deepEqual(filasDeFlujos(raiz).at(-1).subtareas, [
+    { n: 1, critica: false, archivos: 1, mas: 2, menos: 1 },
+    { n: 2, critica: false, archivos: 1, mas: 1, menos: 1 },
+    { n: 3, critica: false, archivos: 1, mas: 3, menos: 1 },
+  ])
+})
+
+test('estado: repetir el lote con menos miembros conserva la foto y abre otra fase en paralelo', () => {
+  const { raiz, estadoJson } = repoConTresSubtareas()
+  const f = /^BASE=(\w+) DESDE=(\S+)$/m.exec(estadoEn(raiz, ['--base', '--sub', '1,2,3']).salida)
+  assert.ok(f)
+  assert.equal(estadoJson().paralelos.length, 1)
+
+  const otra = estadoEn(raiz, ['--base', '--sub', '1,3']).salida
+  assert.match(otra, /^AVISO: S1 ya tenía foto; se conserva la primera \(la de antes de su ejecutor\)$/m)
+  assert.match(otra, /^AVISO: S3 ya tenía foto; se conserva la primera \(la de antes de su ejecutor\)$/m)
+  assert.doesNotMatch(otra, /AVISO: S2/)
+  assert.match(otra, new RegExp(`^BASE=${f[1]} DESDE=${f[2]}$`, 'm'))
+  const abierto = estadoJson()
+  assert.deepEqual(abierto.en_curso, [1, 3])
+  assert.equal(abierto.paralelos.length, 2)
+  assert.ok(abierto.paralelos.every((p) => p.tipo === 'lote' && p.hasta === undefined))
+  assert.deepEqual(Object.values(abierto.bases).map((b) => [b.base, b.desde]), [[f[1], f[2]], [f[1], f[2]], [f[1], f[2]]])
+
+  // Medir el lote entero cierra las dos fases y borra la subtarea en curso.
+  assert.equal(estadoEn(raiz, ['--cambios', '--sub', '1,2,3']).codigo, 0)
+  const cerrado = estadoJson()
+  assert.equal(cerrado.en_curso, undefined)
+  assert.ok(cerrado.paralelos.every((p) => typeof p.hasta === 'string'))
+})
+
 test('estado: --cambios agrupa muchos archivos por carpeta y el cierre da la reversión exacta', () => {
   assert.deepEqual(agruparPorCarpeta(['a/b/c/1', 'a/b/d/2', 'x/3'], 2), [
     { carpeta: 'a/b/', rutas: ['a/b/c/1', 'a/b/d/2'] },
