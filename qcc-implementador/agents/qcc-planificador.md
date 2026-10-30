@@ -2,8 +2,8 @@
 name: qcc-planificador
 description: Planificador de solo lectura del flujo /impl: convierte pedido y exploración en subtareas verificables. No usar fuera de ese flujo.
 tools: Read, Glob, Grep
-model: sonnet
-effort: high
+model: opus
+effort: medium
 maxTurns: 40
 color: purple
 ---

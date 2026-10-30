@@ -17,7 +17,7 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 |---|---|
 | Orquestador | Sonnet high (frontmatter de la skill `impl`) |
 | Explorador | Haiku high, 2 por defecto, con techo según los archivos del repo (<150 → 2, 150–800 → 3, >800 → 5; línea `EXPLORADORES:` del preflight); un área grande se parte en sub-áreas (hasta 3 por área, 5 en total) |
-| Planificador | Sonnet high siempre; clasifica y planifica |
+| Planificador | Opus medium siempre; clasifica y planifica |
 | Ejecutor | Sonnet high; medium en una subtarea `Crítica: no`. Hasta 3 en paralelo dentro de un lote (ver «Lotes de ejecución») |
 | Revisión final | Corre siempre, en Opus high con cualquier Clasificación. Revisa el cambio completo contra el pedido literal, el plan y el CLAUDE.md, cada «hecho cuando» y las uniones entre subtareas |
 
