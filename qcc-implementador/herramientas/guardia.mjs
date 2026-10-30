@@ -930,10 +930,46 @@ function anotarVariables({ palabras, redirs }, ctx) {
   }
 }
 
+const PLAYWRIGHT_BINARIOS = new Set(['playwright', 'playwright-cli', '@playwright/test', '@playwright/cli'])
+
+/** Opciones de `npx`/`exec`/`dlx` que no cambian qué paquete se ejecuta. Cualquier otra (`-p`, `--package`, `-c`, `--call`…) anula la regla. */
+const PLAYWRIGHT_OPCIONES = new Set(['-y', '--yes', '--no', '--no-install', '--', '--bun'])
+
+/**
+ * El primer argumento que no es opción, sin su `@versión` final, es un binario o paquete de Playwright (comparación exacta).
+ * Antes del binario solo valen las opciones de PLAYWRIGHT_OPCIONES, y la versión no puede llevar `:` (`@npm:otro`, `@github:…`).
+ */
+function primeroEsPlaywright(args) {
+  for (const a of args) {
+    if (a.startsWith('-')) {
+      if (!PLAYWRIGHT_OPCIONES.has(a)) return false
+      continue
+    }
+    return PLAYWRIGHT_BINARIOS.has(a.toLowerCase().replace(/(?<=.)@[^@/:]*$/, ''))
+  }
+  return false
+}
+
+/** Variables que cambian el paquete o el registro con que npx, `exec` o `dlx` bajan el binario. */
+const CONFIG_PAQUETES = /^(\$env:)?(npm_config_|pnpm_config_|bun_config_|yarn_)/i
+
+/**
+ * `playwright …`, `npx|pnpx|bunx playwright …` o `<gestor> exec|dlx|x playwright …` (también `@playwright/test` y `@playwright/cli`).
+ * npm queda fuera: está prohibido, solo se usa pnpm. Del gestor no se admite ninguna opción antes del subcomando (`--package`, `--registry`…).
+ */
+function esPlaywright(prog, args) {
+  if (prog === 'playwright' || prog === 'playwright-cli') return true
+  if (['npx', 'pnpx', 'bunx'].includes(prog)) return primeroEsPlaywright(args)
+  if (prog === 'npm' || !GESTORES.has(prog) || !['exec', 'dlx', 'x'].includes(args[0])) return false
+  return primeroEsPlaywright(args.slice(1))
+}
+
 function evaluarSimple(simple, ctx) {
   const palabras = simple.palabras.map((w) => expandir(w, ctx))
   const redirs = simple.redirs.map((r) => ({ ...r, objetivo: expandir(r.objetivo, ctx) }))
   const config = configDe(ctx.raiz)
+  // Una variable npm_config_* (en el comando, tras `env`, `export`, `$env:`…) vale para el resto del comando: Playwright deja de ser libre.
+  if (palabras.some((w) => CONFIG_PAQUETES.test(w))) ctx.configPaquetes = true
   for (const r of redirs) {
     if (SECRETO.test(r.objetivo)) return 'toca un .env (secretos)'
     if (!['>', '>>', '>|', '&>', '&>>'].includes(r.op)) {
@@ -988,6 +1024,10 @@ function evaluarSimple(simple, ctx) {
     const texto = palabras.join(' ').replace(/\s+/g, ' ')
     if (ctx.externos.some((re) => re.test(texto))) return null
   }
+
+  // Playwright y playwright-cli: libres para el ejecutor, con cualquier subcomando. Va después de los `.env`, los secretos y
+  // las redirecciones fuera de alcance (que ya se negaron) y antes de la regla de `npx`. Los servidores directos siguen negados.
+  if (ctx.rol === 'ejecutor' && !ctx.configPaquetes && esPlaywright(prog, args)) return null
 
   if (prog === 'npx' && args.some((a) => a === '--no-install' || a === '--no')) {
     const j = args.findIndex((a) => !a.startsWith('-'))

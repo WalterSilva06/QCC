@@ -261,6 +261,8 @@ test('plan: AVISO si una subtarea sin Externo parece externa', () => {
   for (const [texto, palabra] of [['localhost', 'localhost'], ['curl', 'curl'], ['--env-file', '--env-file'], ['deploy', 'deploy'], ['GET a /salud', 'GET a']]) {
     assert.equal(parecenExternas([`- Tests: prueba con ${texto}`]), palabra, texto)
   }
+  assert.equal(parecenExternas(['- Tests: corre playwright test e2e/flujo.spec.ts']), null)
+  assert.equal(parecenExternas(['- Hecho cuando: playwright-cli snapshot muestra el botón']), null)
   assert.equal(parecenExternas(['- Archivos permitidos: curl.ts', '- Reversión: borrar el servidor']), null)
   assert.equal(parecenExternas(['- Riesgos: r', '  - sub: deploy', '- Reversión: v']), 'deploy')
 })
