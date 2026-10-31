@@ -527,7 +527,7 @@ test('rolDeAgente: el rol sale del agent_type del plugin; la sesión principal y
     assert.equal(rolDeAgente(`impl:qcc-${rol}`), rol)
     assert.equal(rolDeAgente(`qcc-${rol}`), rol, 'el nombre sin plugin también')
   }
-  for (const otro of [undefined, null, '', 42, 'general-purpose', 'impl:qcc-generador', 'commit:qcc-generador-commit', 'odd:qcc-odd-ejecutor', 'qcc-odd-ejecutor', 'otro:qcc-ejecutor', 'impl:ejecutor', 'impl:qcc-ejecutor2', 'qcc-implementador:qcc-ejecutor']) {
+  for (const otro of [undefined, null, '', 42, 'general-purpose', 'impl:qcc-generador', 'commit:qcc-generador-commit', 'otro:qcc-otro-ejecutor', 'qcc-otro-ejecutor', 'otro:qcc-ejecutor', 'impl:ejecutor', 'impl:qcc-ejecutor2', 'qcc-implementador:qcc-ejecutor']) {
     assert.equal(rolDeAgente(otro), null, String(otro))
   }
 })
@@ -589,8 +589,8 @@ test('guardia como hook: niega y anota por el agent_type; la sesión principal y
     assert.equal(filasDe(raiz).at(-1).rol, 'revisor')
 
     const antes = filasDe(raiz).length
-    // La sesión principal (sin agent_type) y otros agentes, incluidos los del odd, nunca se niegan ni se anotan.
-    for (const agent_type of [undefined, 'odd:qcc-odd-ejecutor', 'commit:qcc-generador-commit', 'general-purpose']) {
+    // La sesión principal (sin agent_type) y otros agentes, incluidos los de otros plugins, nunca se niegan ni se anotan.
+    for (const agent_type of [undefined, 'otro:qcc-otro-ejecutor', 'commit:qcc-generador-commit', 'general-purpose']) {
       const r = hook(raiz, 'ejecutor', { ...push, agent_type })
       assert.equal(r.stdout, '', String(agent_type))
       assert.equal(r.status, 0)

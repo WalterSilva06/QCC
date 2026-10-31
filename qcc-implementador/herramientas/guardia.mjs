@@ -1156,7 +1156,7 @@ const ROLES = new Set([...ROLES_LECTURA, 'ejecutor', 'revisor'])
 /**
  * El rol del agente que hizo la llamada, según el `agent_type` del evento: `impl:qcc-ejecutor` → `ejecutor`.
  * Acepta también el nombre sin plugin (`qcc-ejecutor`, de una copia en `~/.claude/agents`). `null` si no es un agente de
- * este flujo: la sesión principal (sin `agent_type`), el odd (`qcc-odd-*`), uno de otro plugin o uno del usuario.
+ * este flujo: la sesión principal (sin `agent_type`), uno de otro plugin o uno del usuario.
  */
 export function rolDeAgente(agentType) {
   if (typeof agentType !== 'string') return null
