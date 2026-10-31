@@ -439,6 +439,13 @@ test('estado: fusionarExploraciones une secciones sin repetir ruta:línea (pura)
   assert.match(texto, /ACOPLAMIENTOS\n- ninguno\n/)
   assert.match(texto, /DUDAS\n- ninguno$/)
   assert.deepEqual(incompletos, [{ id: 'b', faltan: ['DUDAS'] }])
+
+  // La misma línea en otra sección, con otro destino o dos veces en un mismo informe no es repetición.
+  const tres = 'ARCHIVOS\n- x.ts:1 — define f\n- x.ts:1 — exporta f\n\nACOPLAMIENTOS\n- x.ts:1 → y.ts:9 — llama'
+  const cuatro = 'ARCHIVOS\n- x.ts:1 — repetido\n\nACOPLAMIENTOS\n- x.ts:1 — rompe si cambia\n- x.ts:1 → z.ts:3 — importa\n- x.ts:1 → y.ts:9 — repetido'
+  const otra = fusionarExploraciones([{ id: 'a', texto: tres }, { id: 'b', texto: cuatro }]).texto
+  for (const hecho of ['define f', 'exporta f', 'llama', 'rompe si cambia', 'importa']) assert.match(otra, new RegExp(hecho))
+  assert.doesNotMatch(otra, /repetido/)
 })
 
 test('estado: fusionarExploraciones ignora la prosa tras la última sección', () => {

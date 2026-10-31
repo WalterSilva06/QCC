@@ -783,21 +783,22 @@ export function avisosDeLargo(informes, tope) {
   return avisos
 }
 
-/** Clave para no repetir un hallazgo: su primer `ruta:línea`, o el texto antes de « — », o la línea entera. */
-function claveDeHallazgo(linea) {
-  const ruta = RE_RUTA_LINEA.exec(linea)
-  if (ruta) return `ruta:${ruta[0]}`
-  return `texto:${linea.split(' — ')[0].replace(/^\s*[-*]\s*/, '').trim()}`
+/** Clave para no repetir un hallazgo de `seccion`: todos sus `ruta:línea`, o el texto antes de « — », o la línea entera. */
+function claveDeHallazgo(seccion, linea) {
+  const rutas = linea.match(new RegExp(RE_RUTA_LINEA.source, 'g'))
+  if (rutas) return `${seccion} ruta:${rutas.join(' ')}`
+  return `${seccion} texto:${linea.split(' — ')[0].replace(/^\s*[-*]\s*/, '').trim()}`
 }
 
 /**
  * Une los informes de varios exploradores (`[{ id, texto }]`) en uno solo: las secciones ARCHIVOS, TESTS, ACOPLAMIENTOS,
- * DATOS y DUDAS, en ese orden, con los hallazgos en el orden de llegada y sin repetir `ruta:línea` (gana la primera aparición).
+ * DATOS y DUDAS, en ese orden, con los hallazgos en el orden de llegada. Un hallazgo se descarta solo si otro informe ya
+ * trajo, en la misma sección, los mismos `ruta:línea` (gana la primera aparición); los de un mismo informe quedan todos.
  * Devuelve `{ texto, incompletos }`; `incompletos` son los `{ id, faltan }` de los informes sin alguna sección.
  */
 export function fusionarExploraciones(informes) {
   const porSeccion = new Map(SECCIONES_EXPLORACION.map((s) => [s, []]))
-  const vistas = new Set()
+  const vistas = new Map()
   const incompletos = []
   for (const { id, texto } of informes) {
     const presentes = new Set()
@@ -810,9 +811,9 @@ export function fusionarExploraciones(informes) {
         continue
       }
       if (!actual || !linea.trim() || RE_NINGUNO.test(linea)) continue
-      const clave = claveDeHallazgo(linea)
-      if (vistas.has(clave)) continue
-      vistas.add(clave)
+      const clave = claveDeHallazgo(actual, linea)
+      if ((vistas.get(clave) ?? id) !== id) continue
+      vistas.set(clave, id)
       porSeccion.get(actual).push(linea.trimEnd())
     }
     const faltan = SECCIONES_EXPLORACION.filter((s) => !presentes.has(s))
