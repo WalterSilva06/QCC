@@ -258,11 +258,11 @@ export function repartir(medidas: readonly number[], ancho: number, separacion =
 }
 
 /**
- * Si lo leído antes de `flujos.jsonl` y `odd.jsonl` sirve todavía: solo con `v: 5` (una caché de una versión anterior no trae los tokens de
- * cada fila o trae `totales` de más, y sigue viva tras `/reload-plugins`) y con la misma suma de fechas de modificación.
+ * Si lo leído antes de `flujos.jsonl` sirve todavía: solo con `v: 6` (una caché de una versión anterior trae filas de otro registro, no trae los
+ * tokens de cada fila o trae `totales` de más, y sigue viva tras `/reload-plugins`) y con la misma fecha de modificación.
  */
 export function historialVigente(actual: Pick<Historial, 'v' | 'mtimeMs'> | null | undefined, mtimeMs: number): boolean {
-  return actual != null && actual.v === 5 && actual.mtimeMs === mtimeMs
+  return actual != null && actual.v === 6 && actual.mtimeMs === mtimeMs
 }
 
 /**

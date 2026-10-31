@@ -1,4 +1,4 @@
-// Historial de flujos: lee `~/.claude/flujos/registros/flujos.jsonl` y `~/.claude/flujos-odd/registros/odd.jsonl` y arma las líneas de la pestaña «Historial». Puro: sin `$`, para poder probarlo solo.
+// Historial de flujos: lee `~/.claude/flujos/registros/flujos.jsonl` y arma las líneas de la pestaña «Historial». Puro: sin `$`, para poder probarlo solo.
 
 import type { FilaHistorial } from '../types'
 import { tokens } from './formato'
@@ -21,11 +21,6 @@ export function rutaHistorial(home: string): string | null {
   return rutaRegistro(home, 'flujos', 'flujos.jsonl')
 }
 
-/** La ruta de `odd.jsonl`, el registro de `/odd`, con las mismas reglas que `rutaHistorial`. */
-export function rutaHistorialOdd(home: string): string | null {
-  return rutaRegistro(home, 'flujos-odd', 'odd.jsonl')
-}
-
 /** «CRÍTICO (#1, #5)» o «sin criterios», sin la explicación que sigue; con cualquier otro texto, sus primeros 30 caracteres (igual que costos.mjs). */
 export function clasificacionCorta(texto: unknown): string {
   const t = typeof texto === 'string' ? texto : texto == null ? '' : String(texto)
@@ -44,17 +39,14 @@ function numero(x: unknown): number | undefined {
 /**
  * Una fila del archivo reducida a `FilaHistorial`; `null` si no es una fila de flujo (no es objeto, trae `tipo` como las filas `defecto`,
  * o `t` no es texto). Los minutos salen de `tiempos.activo` (en segundos) en las filas v2 y de `costo.minutos` en las v1.
- * `flujo` es el registro de donde viene la fila. Una corrida de `odd.jsonl` no trae `clasificacion` ni `subtareas`: la clasificación es su
- * `tamano`, las líneas salen de `cambios` y el veredicto, de `costo.veredictos.revisor` (o de `revision` si no hay veredictos).
  */
-export function filaDeRegistro(r: unknown, flujo: FilaHistorial['flujo'] = 'normal'): FilaHistorial | null {
+export function filaDeRegistro(r: unknown): FilaHistorial | null {
   if (!esObjeto(r) || r.tipo !== undefined || typeof r.t !== 'string') return null
 
-  const deOdd = flujo === 'odd'
   const costo = esObjeto(r.costo) ? r.costo : {}
   const tiempos = esObjeto(r.tiempos) ? r.tiempos : {}
   const veredictos = esObjeto(costo.veredictos) ? costo.veredictos : {}
-  const lista = veredictos[deOdd ? 'revisor' : 'final']
+  const lista = veredictos.final
   const final = Array.isArray(lista) ? lista : []
   const resultado = typeof r.resultado === 'string' ? r.resultado : ''
   const cancelado = resultado.startsWith('CANCELADO')
@@ -62,13 +54,11 @@ export function filaDeRegistro(r: unknown, flujo: FilaHistorial['flujo'] = 'norm
   const subtareas = Array.isArray(r.subtareas) ? r.subtareas.length : numero(r.subtareas)
   const bloqueada = Array.isArray(r.subtareas) && r.subtareas.some(s => esObjeto(s) && s.estado === 'BLOQUEADO')
   const raiz = typeof r.raiz === 'string' ? r.raiz.split(/[\\/]/).filter(p => p !== '').pop() : undefined
-  const aprobada = final.length === 0 && deOdd && r.revision === 'APROBADO'
   const fila: FilaHistorial = {
     t: r.t,
     repo: raiz ?? '?',
-    flujo,
-    revision: cancelado || resultado.startsWith('DETENIDO') ? '✗' : final.length > 1 ? '↻' : final.length === 1 || aprobada ? '✓' : '·',
-    clasificacion: clasificacionCorta(deOdd ? r.tamano : r.clasificacion),
+    revision: cancelado || resultado.startsWith('DETENIDO') ? '✗' : final.length > 1 ? '↻' : final.length === 1 ? '✓' : '·',
+    clasificacion: clasificacionCorta(r.clasificacion),
     aviso: cancelado || bloqueada,
   }
   const usd = numero(costo.usd)
@@ -87,13 +77,12 @@ export function filaDeRegistro(r: unknown, flujo: FilaHistorial['flujo'] = 'norm
 
     return valores.length === 0 ? undefined : valores.reduce((a, b) => a + b, 0)
   }
-  const cambios = deOdd && esObjeto(r.cambios) ? r.cambios : {}
-  const mas = deOdd ? numero(cambios.mas) : suma('mas')
-  const menos = deOdd ? numero(cambios.menos) : suma('menos')
+  const mas = suma('mas')
+  const menos = suma('menos')
 
-  // Los tokens del flujo: `costo.tokens` en odd.jsonl y `uso.tokens` en flujos.jsonl.
+  // Los tokens del flujo: `uso.tokens` en flujos.jsonl.
   const uso = esObjeto(r.uso) ? r.uso : {}
-  const fuente = esObjeto(costo.tokens) ? costo.tokens : uso.tokens
+  const fuente = uso.tokens
   const total = tokensDe(fuente)
   const salida = esObjeto(fuente) ? numero(fuente.salida) : undefined
 
@@ -147,17 +136,17 @@ function rolesDe(roles: unknown): { rol: string; usd: number; tokens?: number }[
 }
 
 /**
- * Las últimas `cuantos` filas de flujo del texto de un registro (`flujos.jsonl`, o `odd.jsonl` con `flujo` `odd`), la más reciente primero.
+ * Las últimas `cuantos` filas de flujo del texto de `flujos.jsonl`, la más reciente primero.
  * Las líneas vacías o rotas y las filas que no son de flujo (`defecto`) se saltan.
  */
-export function leerHistorial(texto: string, cuantos = 5, flujo: FilaHistorial['flujo'] = 'normal'): FilaHistorial[] {
+export function leerHistorial(texto: string, cuantos = 5): FilaHistorial[] {
   const filas: FilaHistorial[] = []
 
   for (const linea of texto.split('\n')) {
     if (linea.trim() === '') continue
 
     try {
-      const fila = filaDeRegistro(JSON.parse(linea), flujo)
+      const fila = filaDeRegistro(JSON.parse(linea))
       if (fila) filas.push(fila)
     } catch {
       // línea rota: se salta
@@ -229,13 +218,13 @@ function recortar(caracteres: string[], sobra: number): string[] {
 }
 
 /**
- * La línea de identidad de un flujo: `dd/mm hh:mm <repo> <marca> <rev>` y, detrás, la clasificación si cabe entera. La marca es `n` (`/impl`)
- * u `odd` (`/odd`). Si no cabe en `ancho` (columnas, por caracteres) se prueba, en este orden, con fecha y repo (entero, o acortado a 2 caracteres
+ * La línea de identidad de un flujo: `dd/mm hh:mm <repo> <marca> <rev>` y, detrás, la clasificación si cabe entera. La marca es `n` (`/impl`).
+ * Si no cabe en `ancho` (columnas, por caracteres) se prueba, en este orden, con fecha y repo (entero, o acortado a 2 caracteres
  * más «…»), con fecha sin repo y sin fecha (con las mismas tres formas del repo). Si ni así cabe se pierde el glifo de revisión y, si aún no cabe,
  * la marca se corta a `ancho`.
  */
 export function lineaIdentidad(f: FilaHistorial, ancho: number): string {
-  const nombreMarca = f.flujo === 'odd' ? 'odd' : 'n'
+  const nombreMarca = 'n'
   const repo = Array.from(f.repo)
   const armar = (fecha: boolean, nombre: string[]): string => [fecha ? fechaLocal(f.t) : '', nombre.join(''), nombreMarca, f.revision].filter(p => p !== '').join(' ')
   const conClasificacion = (linea: string): string =>

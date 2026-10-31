@@ -37,7 +37,7 @@ import {
 } from '../hooks/flujo'
 import type { Nodo, Senal } from '../hooks/flujo'
 import { decidirFreno, UMBRAL_FRENO } from '../hooks/freno'
-import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaCifras, lineaIdentidad, lineasHistorial, promedioHistorial, rutaHistorial, rutaHistorialOdd, unirHistorial } from '../hooks/historial'
+import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaCifras, lineaIdentidad, lineasHistorial, promedioHistorial, rutaHistorial, unirHistorial } from '../hooks/historial'
 import { detectar, rutaSkill, vistaDe } from '../hooks/instalados'
 import { aDesglose, barra, barraPartida, barraTramos, cuotaUsado, desgloseTramos, duracion, etiquetasAlineadas, falta, historialVigente, lineaContexto, lineaLimite, marcador, ordenLeyenda, pct, pctParte, pestanaValida, relleno, repartir, resumenContexto, tokens, tono, tonoCompactacion, totalConSalida, tramos } from '../hooks/formato'
 import {
@@ -2111,11 +2111,11 @@ describe('flujo (puro)', () => {
     })
   })
 
-  test('iniciarFlujo acepta impl y rechaza los nombres viejos, odd e implementador', async () => {
+  test('iniciarFlujo acepta impl y rechaza los nombres viejos, otro plugin e implementador', async () => {
     expect(iniciarFlujo('impl', '')?.nombre).toBe('impl')
     expect(iniciarFlujo('/qcc:impl', '')?.nombre).toBe('impl')
     expect(iniciarFlujo('impl:impl', '')?.nombre).toBe('impl')
-    expect(iniciarFlujo('/odd:odd', '')).toBeNull()
+    expect(iniciarFlujo('/otro:otro', '')).toBeNull()
     expect(iniciarFlujo('qcc-implementador', '')).toBeNull()
     expect(iniciarFlujo('implementador', '')).toBeNull()
     expect(iniciarFlujo('/qcc:implementador', '')).toBeNull()
@@ -2141,8 +2141,7 @@ describe('flujo (puro)', () => {
       expect(senalDeHerramienta('Agent', { subagent_type: `impl:qcc-${rol}` }, undefined)).toEqual(agente(rol))
     }
 
-    // Los agentes de odd y de commit llevan su propio prefijo y no se confunden con los del flujo.
-    expect(rolDeAgente('odd:qcc-odd-explorador')).toBe('odd-explorador')
+    // Los agentes de commit llevan su propio prefijo y no se confunden con los del flujo.
     expect(rolDeAgente('commit:qcc-generador-commit')).toBe('generador-commit')
     expect(rolDeAgente('otro:qcc-explorador')).toBe('otro:qcc-explorador')
     expect(senalDeHerramienta('Agent', { subagent_type: 'otro:qcc-explorador' }, undefined)).not.toEqual(agente('explorador'))
@@ -4789,44 +4788,6 @@ describe('flujo en el panel', () => {
     expect(hora['claude-opus-5-5|high|sub']).toEqual(una)
   })
 
-  test('con /odd el hilo principal anota flujo|… hasta el fin del turno; un subagente y una skill ajena, no', async ($, on) => {
-    const { guardados } = preparar(on)
-    on('turn.step', async function* (_$, e) {
-      return {
-        turnId: e.turnId,
-        index: e.index,
-        answer: 'ok',
-        toolUses: [],
-        stopReason: 'end_turn' as const,
-        usage: { ...USO, model: e.model },
-      }
-    })
-    await $.session.measure(MEDIDA)
-    const una = [USO.input_tokens, USO.output_tokens, USO.cache_read_input_tokens, USO.cache_creation_input_tokens]
-    const hora = () => comoRegistro(guardados.get('uso:s1'))[String(inicioDeHora(AHORA))] ?? {}
-
-    // Skills que no son odd (ni vacía, ni prefijo parecido): ninguna marca.
-    await $.skill.prompt({ skill: '', text: '' })
-    await $.skill.prompt({ skill: 'odd2', text: '' })
-    await paso($, 'claude-opus-5-5', 'high')
-    expect(Object.keys(hora())).toEqual(['claude-opus-5-5|high'])
-
-    // Con prefijo `plugin:` y barra también vale; el subagente no lleva la marca.
-    await $.skill.prompt({ skill: '/mis:odd', text: '' })
-    await paso($, 'claude-opus-5-5', 'high')
-    await paso($, 'claude-opus-5-5', 'high', 'agente-1')
-    expect(hora()['flujo|claude-opus-5-5|high']).toEqual(una)
-    expect(hora()['claude-opus-5-5|high|sub']).toEqual(una)
-
-    // El fin de un turno de subagente no la borra; el del hilo principal sí.
-    await $.turn.complete(respuesta('ok', { agentId: 'agente-1' }))
-    await paso($, 'claude-opus-5-5', 'high')
-    expect(hora()['flujo|claude-opus-5-5|high']).toEqual(una.map(x => x * 2))
-    await $.turn.complete(respuesta('ok'))
-    await paso($, 'claude-opus-5-5', 'high')
-    expect(hora()['flujo|claude-opus-5-5|high']).toEqual(una.map(x => x * 2))
-    expect(hora()['claude-opus-5-5|high']).toEqual(una.map(x => x * 2))
-  })
 
   /** Un `turn.step` final que anota con qué modelo y esfuerzo llegó cada petición y responde con ese modelo. */
   function motorVisto(on: On) {
@@ -6361,8 +6322,8 @@ describe('historial', () => {
 
     expect(filas.map(f => f.repo)).toEqual(['repo5', 'repo4', 'repo3', 'repo2', 'repo1'])
     expect(leerHistorial(texto, 6).map(f => f.repo).at(-1)).toBe('proyecto')
-    expect(filaDeRegistro(v1)).toEqual({ t: T, repo: 'proyecto', flujo: 'normal', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
-    expect(filaDeRegistro(v2())).toEqual({ t: T, repo: 'claude-config', flujo: 'normal', usd: 0.98, minutos: 12, revision: '✓', clasificacion: 'CRÍTICO (#1, #5)', subtareas: 2, aviso: false })
+    expect(filaDeRegistro(v1)).toEqual({ t: T, repo: 'proyecto', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
+    expect(filaDeRegistro(v2())).toEqual({ t: T, repo: 'claude-config', usd: 0.98, minutos: 12, revision: '✓', clasificacion: 'CRÍTICO (#1, #5)', subtareas: 2, aviso: false })
     expect(filaDeRegistro(null)).toBeNull()
     expect(filaDeRegistro({ t: 5 })).toBeNull()
     expect(filaDeRegistro({ v: 2, tipo: 'defecto', t: T })).toBeNull()
@@ -6403,8 +6364,6 @@ describe('historial', () => {
 
     // Ancho de sobra: fecha, repo, marca, revisión y la clasificación entera.
     expect(lineaIdentidad(fila, 80)).toBe('18/10 09:30 QCC n ✓ CRÍTICO (#1, #5)')
-    expect(lineaIdentidad({ ...fila, flujo: 'odd' }, 80)).toBe('18/10 09:30 QCC odd ✓ CRÍTICO (#1, #5)')
-    expect(lineaIdentidad({ ...fila, flujo: 'normal' }, 80)).toBe(lineaIdentidad(fila, 80))
     expect(lineaIdentidad({ ...fila, t: 'nada' }, 80).startsWith('??/?? ??:?? ')).toBe(true)
     expect(lineaIdentidad({ ...fila, clasificacion: '' }, 80)).toBe('18/10 09:30 QCC n ✓')
     // La clasificación entra entera o no entra.
@@ -6415,14 +6374,13 @@ describe('historial', () => {
     expect(lineaIdentidad(larga, 18)).toBe('18/10 09:30 n ✓')
     // Sin sitio para la fecha, queda el repo (entero o acortado).
     expect(lineaIdentidad(fila, 14)).toBe('QCC n ✓')
-    expect(lineaIdentidad({ ...fila, flujo: 'odd' }, 14)).toBe('QCC odd ✓')
     expect(lineaIdentidad(larga, 14)).toBe('mi-reposi… n ✓')
-    // Ni la marca con el glifo cabe: se pierde el glifo y, si ni así cabe, la marca se corta.
-    expect(lineaIdentidad({ ...fila, flujo: 'odd' }, 4)).toBe('odd')
-    expect(lineaIdentidad({ ...fila, flujo: 'odd' }, 2)).toBe('od')
+    // Ni la marca con el glifo cabe: se pierde el repo y, si ni así cabe, la marca se corta.
+    expect(lineaIdentidad(fila, 4)).toBe('n ✓')
+    expect(lineaIdentidad(fila, 2)).toBe('n')
     expect(lineaIdentidad(fila, 0)).toBe('')
 
-    for (const ancho of [80, 60, 49, 40, 32, 28, 20, 10, 1, 0]) for (const f of [fila, larga, { ...fila, flujo: 'odd' as const }]) expect(largo(lineaIdentidad(f, ancho))).toBeLessThanOrEqual(ancho)
+    for (const ancho of [80, 60, 49, 40, 32, 28, 20, 10, 1, 0]) for (const f of [fila, larga]) expect(largo(lineaIdentidad(f, ancho))).toBeLessThanOrEqual(ancho)
   })
 
   test('lineaCifras: dólares, minutos, tokens y salida, y +mas −menos y ×subtareas mientras quepan', () => {
@@ -6475,81 +6433,36 @@ describe('historial', () => {
     expect(lineasHistorial({ ...f!, roles: [{ rol: 'raro', usd: 1 }], espera: undefined, mas: undefined, menos: 4 }, 80)[2]).toContain('+0 −4 · ×3')
   })
 
-  /** Una corrida de `odd.jsonl` como la anota `odd.mjs --cierre` (fila v1). */
-  const odd = (r: Record<string, unknown> = {}) => ({
-    v: 1,
-    t: T,
-    raiz: 'D:\\GitHub-Personal\\QCC',
-    base: 'abc',
-    titulo: 'Mejoras de odd',
-    resultado: 'COMPLETO',
-    tamano: 'grande',
-    riesgo: 'ítem 2 (guardia)',
-    revision: 'APROBADO',
-    cambios: { archivos: 13, mas: 846, menos: 56 },
-    costo: {
-      minutos: 36.2,
-      usd: 4.98,
-      roles: {
-        orquestador: { pedidos: 31, usd: 1.39, agentes: 0, tokens: { entrada: 64, leidos: 4_584_373, escritos: 144_298, salida: 36_033 } },
-        ejecutor: { pedidos: 78, usd: 2.12, agentes: 3, tokens: { entrada: 160, leidos: 4_502_191, escritos: 361_396, salida: 77_026 } },
-      },
-      veredictos: { ejecutor: ['HECHO'], revisor: ['APROBADO'] },
-    },
-    ...r,
-  })
-
-  test('filaDeRegistro: una corrida odd trae flujo odd, tamaño, cambios y los tokens de cada rol', () => {
-    const f = filaDeRegistro(odd(), 'odd')
-
-    expect(f).toEqual({
-      t: T,
-      repo: 'QCC',
-      flujo: 'odd',
-      usd: 4.98,
-      minutos: 36.2,
-      revision: '✓',
-      clasificacion: 'grande',
-      aviso: false,
-      titulo: 'Mejoras de odd',
-      roles: [
-        { rol: 'ejecutor', usd: 2.12, tokens: 4_940_773 },
-        { rol: 'orquestador', usd: 1.39, tokens: 4_764_768 },
-      ],
-      mas: 846,
-      menos: 56,
-    })
-    expect(filaDeRegistro(odd({ costo: { usd: 1, veredictos: { revisor: ['RECHAZADO', 'APROBADO'] } } }), 'odd')?.revision).toBe('↻')
-    expect(filaDeRegistro(odd({ costo: { usd: 1 } }), 'odd')?.revision).toBe('✓')
-    expect(filaDeRegistro(odd({ costo: { usd: 1 }, revision: 'omitida' }), 'odd')?.revision).toBe('·')
-    expect(filaDeRegistro(odd({ resultado: 'DETENIDO' }), 'odd')).toMatchObject({ revision: '✗' })
-    // Sin costo, roles, tokens o cambios: la fila vale igual y no inventa campos.
-    const pelada = filaDeRegistro({ v: 1, t: T }, 'odd')
-    expect(pelada).toEqual({ t: T, repo: '?', flujo: 'odd', revision: '·', clasificacion: '', aviso: false })
+  test('filaDeRegistro: sin costo, roles, tokens o cambios la fila vale igual y no inventa campos; los roles traen sus tokens', () => {
+    expect(filaDeRegistro({ v: 1, t: T })).toEqual({ t: T, repo: '?', revision: '·', clasificacion: '', aviso: false })
     // Tokens que no son números o rol sin tokens: el rol sigue, sin tokens.
-    const rara = filaDeRegistro(odd({ costo: { roles: { orquestador: { usd: 1, tokens: { entrada: 'x' } }, ejecutor: { usd: 2, tokens: 5 } } } }), 'odd')
+    const rara = filaDeRegistro(v2({ costo: { roles: { orquestador: { usd: 1, tokens: { entrada: 'x' } }, ejecutor: { usd: 2, tokens: 5 } } } }))
     expect(rara?.roles).toEqual([{ rol: 'ejecutor', usd: 2 }, { rol: 'orquestador', usd: 1 }])
-    // Una fila del historial normal también puede traer tokens por rol.
+    // Una fila del historial también puede traer tokens por rol.
     const normal = filaDeRegistro(v2({ costo: { roles: { orquestador: { usd: 0.3, tokens: { entrada: 1, leidos: 2, escritos: 3, salida: 4 } } } } }))
-    expect(normal?.flujo).toBe('normal')
     expect(normal?.roles).toEqual([{ rol: 'orquestador', usd: 0.3, tokens: 10 }])
   })
 
-  test('lineasHistorial: la marca de flujo va en la línea de identidad, igual para los dos flujos, y el título y las cifras en líneas propias', () => {
-    const f = filaDeRegistro(odd({ costo: { ...odd().costo, tokens: { entrada: 64, leidos: 2_400_000, escritos: 0, salida: 91_000 } } }), 'odd')!
-    const normal = { ...f, flujo: 'normal' as const }
+  test('lineasHistorial: la marca va en la línea de identidad, y el título y las cifras en líneas propias', () => {
+    const f = filaDeRegistro(
+      v2({
+        raiz: 'D:\\GitHub-Personal\\QCC',
+        titulo: 'Mejoras del panel',
+        clasificacion: 'grande',
+        costo: { usd: 4.98, veredictos: { final: ['APROBADO'] } },
+        tiempos: { activo: 2172 },
+        uso: { tokens: { entrada: 64, leidos: 2_400_000, escritos: 0, salida: 91_000 } },
+        subtareas: [{ n: 1, estado: 'HECHO', mas: 846, menos: 56 }],
+      }),
+    )!
 
     expect(lineasHistorial(f, 100)).toEqual([
-      '18/10 09:30 QCC odd ✓ grande',
-      'Mejoras de odd',
-      '$4,98 · 36m · 2,5M tok · sal 91k · +846 −56',
+      '18/10 09:30 QCC n ✓ grande',
+      'Mejoras del panel',
+      '$4,98 · 36m · 2,5M tok · sal 91k · +846 −56 · ×1',
     ])
-    expect(lineasHistorial(normal, 100)[0]).toBe('18/10 09:30 QCC n ✓ grande')
-    // Los dos flujos tienen el mismo formato: solo cambia la marca.
-    expect(lineasHistorial(normal, 100)[0].replace(' n ', ' odd ')).toBe(lineasHistorial(f, 100)[0])
-    expect(lineasHistorial(normal, 100).slice(1)).toEqual(lineasHistorial(f, 100).slice(1))
-    // Una fila sin `flujo` (caché de una versión anterior) se dibuja como normal. Sin título, `sin título`.
-    expect(lineasHistorial({ ...f, flujo: undefined, roles: undefined, mas: undefined, menos: undefined, titulo: undefined, clasificacion: '' }, 80)).toEqual([
+    // Sin título, `sin título`.
+    expect(lineasHistorial({ ...f, roles: undefined, mas: undefined, menos: undefined, subtareas: undefined, titulo: undefined, clasificacion: '' }, 80)).toEqual([
       '18/10 09:30 QCC n ✓',
       'sin título',
       '$4,98 · 36m · 2,5M tok · sal 91k',
@@ -6558,26 +6471,23 @@ describe('historial', () => {
 
   test('unirHistorial: mezcla las listas por fecha, la más reciente primero, y corta a `cuantos`', () => {
     const base = { repo: 'r', revision: '✓' as const, clasificacion: 'x', aviso: false }
-    const a = [{ ...base, t: '2026-10-20T10:00:00.000Z', flujo: 'normal' as const }, { ...base, t: '2026-10-18T10:00:00.000Z', flujo: 'normal' as const }]
-    const b = [{ ...base, t: '2026-10-19T10:00:00.000Z', flujo: 'odd' as const }, { ...base, t: 'rota', flujo: 'odd' as const }]
+    const a = [{ ...base, t: '2026-10-20T10:00:00.000Z' }, { ...base, t: '2026-10-18T10:00:00.000Z' }]
+    const b = [{ ...base, t: '2026-10-19T10:00:00.000Z' }, { ...base, t: 'rota' }]
 
     expect(unirHistorial([a, b], 10).map(f => f.t)).toEqual(['2026-10-20T10:00:00.000Z', '2026-10-19T10:00:00.000Z', '2026-10-18T10:00:00.000Z', 'rota'])
-    expect(unirHistorial([a, b], 2).map(f => f.flujo)).toEqual(['normal', 'odd'])
+    expect(unirHistorial([a, b], 2).map(f => f.t)).toEqual(['2026-10-20T10:00:00.000Z', '2026-10-19T10:00:00.000Z'])
     expect(unirHistorial([], 3)).toEqual([])
     expect(unirHistorial([a], 0)).toEqual([])
   })
 
-  test('leerHistorial con flujo odd marca las filas y salta las rotas', () => {
-    const texto = [JSON.stringify(odd()), '{ roto', '', JSON.stringify(odd({ raiz: 'D:\\x\\otro' }))].join('\n')
+  test('leerHistorial salta las líneas rotas y vacías', () => {
+    const texto = [JSON.stringify(v2()), '{ roto', '', JSON.stringify(v2({ raiz: 'D:\\x\\otro' }))].join('\n')
 
-    expect(leerHistorial(texto, 5, 'odd').map(f => [f.repo, f.flujo])).toEqual([['otro', 'odd'], ['QCC', 'odd']])
-    expect(leerHistorial(texto, 5).map(f => f.flujo)).toEqual(['normal', 'normal'])
+    expect(leerHistorial(texto, 5).map(f => f.repo)).toEqual(['otro', 'claude-config'])
   })
 
-  test('tokens por fila: odd los anota en costo.tokens y el flujo normal en uso.tokens', () => {
+  test('tokens por fila: el flujo los anota en uso.tokens', () => {
     const tok = (salida: number) => ({ entrada: 1, leidos: 100, escritos: 10, salida })
-    // Odd anota `costo.tokens`; el flujo normal (v2), `uso.tokens`.
-    expect(filaDeRegistro(odd({ costo: { usd: 1, minutos: 10, tokens: tok(9) } }), 'odd')).toMatchObject({ tokens: 120, salida: 9 })
     expect(filaDeRegistro(v2({ uso: { tokens: tok(5) } }))).toMatchObject({ tokens: 116, salida: 5 })
     expect(filaDeRegistro(v2())).not.toHaveProperty('tokens')
     expect(filaDeRegistro(v2())).not.toHaveProperty('salida')
@@ -6590,7 +6500,7 @@ describe('historial', () => {
   test('filaDeRegistro: una fila v1 no trae campos nuevos', () => {
     const v1 = { v: 1, t: T, raiz: '/home/x/proyecto', clasificacion: 'sin criterios', costo: { usd: 1.5, minutos: 20, roles: { ejecutor: { usd: 1 } } }, tiempos: { espera: 600 }, subtareas: 3 }
 
-    expect(filaDeRegistro({ ...v1, costo: { usd: 1.5, minutos: 20 }, tiempos: undefined })).toEqual({ t: T, repo: 'proyecto', flujo: 'normal', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
+    expect(filaDeRegistro({ ...v1, costo: { usd: 1.5, minutos: 20 }, tiempos: undefined })).toEqual({ t: T, repo: 'proyecto', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
     expect(filaDeRegistro(v1)).not.toHaveProperty('espera')
     expect(filaDeRegistro(v2())).not.toHaveProperty('titulo')
     expect(filaDeRegistro(v2())).not.toHaveProperty('roles')
@@ -6649,9 +6559,6 @@ describe('historial', () => {
     expect(rutaHistorial('/home/x/')).toBe('/home/x/.claude/flujos/registros/flujos.jsonl')
     expect(rutaHistorial('  ')).toBeNull()
     expect(rutaHistorial('')).toBeNull()
-    expect(rutaHistorialOdd('C:\\Users\\x')).toBe('C:\\Users\\x\\.claude\\flujos-odd\\registros\\odd.jsonl')
-    expect(rutaHistorialOdd('/home/x/')).toBe('/home/x/.claude/flujos-odd/registros/odd.jsonl')
-    expect(rutaHistorialOdd('  ')).toBeNull()
   })
 })
 
@@ -6682,8 +6589,8 @@ describe('historial en el panel', () => {
     tiempos: { activo: 600, espera: 120 },
     subtareas: [{ n: 1, estado: 'HECHO', mas: 30, menos: 4 }],
   })
-  /** La línea de identidad de un flujo: fecha y repo si caben, la marca (`n` u `odd`) y su revisión; ni el `promedio`, ni el título, ni las cifras la cumplen. */
-  const ES_FILA = /^(\d\d\/\d\d \d\d:\d\d )?(\S+ )?(n|odd) [✓↻✗·]/
+  /** La línea de identidad de un flujo: fecha y repo si caben, la marca (`n`) y su revisión; ni el `promedio`, ni el título, ni las cifras la cumplen. */
+  const ES_FILA = /^(\d\d\/\d\d \d\d:\d\d )?(\S+ )?n [✓↻✗·]/
   const respuesta = (answer: string) => ({ reason: 'answer' as const, answer, durationMs: 10, isAborted: false, turnId: 't' })
 
   /**
@@ -6700,10 +6607,8 @@ describe('historial en el panel', () => {
     on('skill.prompt', (_$, e) => ({ text: e.text }))
     on('turn.complete', (_$, e) => ({ text: e.answer }))
     const guardados = motorStore(on, inicial)
-    // `odd` es `odd.jsonl`: `null` si no existe. `llamadas.stat` y `llamadas.read` cuentan solo `flujos.jsonl`; `llamadas.odd`, el otro archivo.
-    const archivo = { texto: SEIS, mtimeMs: 1_000, ilegible: false, home: 'C:\\Users\\x', nodeFalla: false, nodeEspera: null as Promise<void> | null, odd: null as { texto: string; mtimeMs: number } | null }
-    const llamadas = { node: 0, stat: [] as string[], read: [] as string[], odd: [] as string[] }
-    const esOdd = (ruta: string) => ruta.endsWith('odd.jsonl')
+    const archivo = { texto: SEIS, mtimeMs: 1_000, ilegible: false, home: 'C:\\Users\\x', nodeFalla: false, nodeEspera: null as Promise<void> | null }
+    const llamadas = { node: 0, stat: [] as string[], read: [] as string[] }
     on('process.run', async () => {
       llamadas.node++
       if (archivo.nodeEspera !== null) await archivo.nodeEspera
@@ -6712,23 +6617,11 @@ describe('historial en el panel', () => {
       return { value: { exitCode: 0, stdout: `${archivo.home}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     })
     on('fs.stat', (_$, e) => {
-      if (esOdd(e.path)) {
-        llamadas.odd.push(`stat ${e.path}`)
-
-        return archivo.odd === null ? { deny: 'no existe' } : { value: { kind: 'file' as const, size: archivo.odd.texto.length, mtimeMs: archivo.odd.mtimeMs, isLink: false } }
-      }
-
       llamadas.stat.push(e.path)
 
       return { value: { kind: 'file' as const, size: archivo.texto.length, mtimeMs: archivo.mtimeMs, isLink: false } }
     })
     on('fs.read', (_$, e) => {
-      if (esOdd(e.path)) {
-        llamadas.odd.push(`read ${e.path}`)
-
-        return archivo.odd === null ? { deny: 'no existe' } : { value: archivo.odd.texto }
-      }
-
       llamadas.read.push(e.path)
 
       return archivo.ilegible ? { deny: 'ilegible' } : { value: archivo.texto }
@@ -6820,16 +6713,16 @@ describe('historial en el panel', () => {
   })
 
   test('historial: una caché de cualquier versión anterior se vuelve a leer', async ($, on) => {
-    // Una caché de una versión anterior (sin `v`, `v: 2` sin las filas de odd, `v: 3` sin los tokens de cada fila o `v: 4` con `totales`)
+    // Una caché de una versión anterior (sin `v`, `v: 3` sin los tokens de cada fila, `v: 4` con `totales` o `v: 5` con filas de otro registro)
     // no sirve aunque el mtimeMs coincida; sobrevive a /reload-plugins, así que solo vale la forma actual.
     expect(historialVigente({ mtimeMs: 1_000 }, 1_000)).toBe(false)
-    for (const v of [0, 1, 2, 3, 4, 6, '5']) expect(historialVigente({ mtimeMs: 1_000, v } as never, 1_000)).toBe(false)
-    expect(historialVigente({ mtimeMs: 1_000, v: 5 }, 1_000)).toBe(true)
-    expect(historialVigente({ mtimeMs: 1_000, v: 5 }, 2_000)).toBe(false)
+    for (const v of [0, 1, 2, 3, 4, 5, 7, '6']) expect(historialVigente({ mtimeMs: 1_000, v } as never, 1_000)).toBe(false)
+    expect(historialVigente({ mtimeMs: 1_000, v: 6 }, 1_000)).toBe(true)
+    expect(historialVigente({ mtimeMs: 1_000, v: 6 }, 2_000)).toBe(false)
     expect(historialVigente(null, 1_000)).toBe(false)
     expect(historialVigente(undefined, 1_000)).toBe(false)
 
-    // En el panel, lo que se lee queda con `v: 5` (la forma vigente): con el mismo mtimeMs no se vuelve a leer.
+    // En el panel, lo que se lee queda con `v: 6` (la forma vigente): con el mismo mtimeMs no se vuelve a leer.
     const { llamadas } = motorHistorial(on)
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
@@ -6913,61 +6806,6 @@ describe('historial en el panel', () => {
     // Entre flujos hay una línea en blanco (marginTop 1) y el primero no la lleva.
     const cajas = (await ui.findAll({ type: 'Box' })).filter(b => (b.key ?? '').startsWith('historial-'))
     expect(cajas.map(b => b.props.marginTop ?? 0)).toEqual([0, 1, 1])
-    await ui.unmount()
-  })
-
-  test('el historial mezcla odd.jsonl con flujos.jsonl: misma línea de cifras con su marca, sin totales, y relectura si cambia solo odd', async ($, on) => {
-    const { archivo, llamadas } = motorHistorial(on)
-    const corrida = (dia: number, extra: Record<string, unknown> = {}) =>
-      JSON.stringify({
-        v: 1,
-        t: new Date(2026, 9, dia, 9, 30).toISOString(),
-        raiz: 'D:\\GitHub-Personal\\repoOdd',
-        resultado: 'COMPLETO',
-        titulo: 'Corrida odd',
-        tamano: 'chico',
-        revision: 'omitida',
-        costo: { usd: 0.5, minutos: 5, tokens: { entrada: 1, leidos: 1_200_000, escritos: 0, salida: 3 }, roles: { orquestador: { usd: 0.5, tokens: { entrada: 1, leidos: 1_200_000, escritos: 0, salida: 3 } } } },
-        ...extra,
-      })
-    archivo.texto = fila(1)
-    archivo.odd = { texto: corrida(19), mtimeMs: 500 }
-    await $.session.measure(MEDIDA)
-
-    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    await abrirHistorial(ui)
-    let textos = await textosDe(ui)
-    expect(await filasDe(ui)).toHaveLength(2)
-    // Ya no hay bloque de totales sumados.
-    expect(textos.some(t => /^(normal|odd) ×\d/.test(t) || /^\s*\S+ tok · sal /.test(t))).toBe(false)
-    expect(await ui.find({ type: 'Box', key: 'totales' })).toBeUndefined()
-    // La corrida odd (19/10) va antes que el flujo normal (18/10); las dos con el mismo formato y su marca, y 3 líneas cada una.
-    const i = textos.findIndex(t => t.includes('repoOdd'))
-    expect(textos.slice(i, i + 3)).toEqual(['19/10 09:30 repoOdd odd · chico', 'Corrida odd', '$0,50 · 5m · 1,2M tok · sal 3'])
-    const j = textos.findIndex(t => t.includes('repo1'))
-    expect(j).toBe(i + 3)
-    expect(textos.slice(j, j + 3)).toEqual(['18/10 09:30 repo1 n ✓ CRÍTICO (#1, #5)', 'sin título', '$0,98 · 12m · — tok · sal — · ×1'])
-    expect(textos).toContain('promedio $0,74 · 9m · 2 flujos')
-    expect(llamadas.odd).toEqual(['stat C:\\Users\\x\\.claude\\flujos-odd\\registros\\odd.jsonl', 'read C:\\Users\\x\\.claude\\flujos-odd\\registros\\odd.jsonl'])
-
-    // Con las mismas fechas no vuelve a leer ninguno de los dos; si cambia solo odd.jsonl, sí.
-    await abrirHistorial(ui)
-    expect(llamadas.read).toHaveLength(1)
-    expect(llamadas.odd.filter(l => l.startsWith('read'))).toHaveLength(1)
-    archivo.odd = { texto: [corrida(19), corrida(20, { raiz: 'D:\\GitHub-Personal\\repoNew' })].join('\n'), mtimeMs: 600 }
-    await abrirHistorial(ui)
-    expect(llamadas.odd.filter(l => l.startsWith('read'))).toHaveLength(2)
-    expect((await filasDe(ui))[0]).toContain('repoNew')
-
-    // Un odd.jsonl roto no quita las filas normales; uno que desaparece, tampoco.
-    archivo.odd = { texto: '{ roto\n', mtimeMs: 700 }
-    await abrirHistorial(ui)
-    expect(await filasDe(ui)).toHaveLength(1)
-    archivo.odd = null
-    await abrirHistorial(ui)
-    textos = await textosDe(ui)
-    expect(await filasDe(ui)).toHaveLength(1)
-    expect(textos).not.toContain(AVISO_VACIO)
     await ui.unmount()
   })
 
@@ -7093,45 +6931,22 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  test('el fin de una corrida de odd por turn.complete relee el historial; un turno sin corrida no', async ($, on) => {
-    const { archivo, llamadas } = motorHistorial(on)
-    await $.session.measure(MEDIDA)
-    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    await abrirHistorial(ui)
-    expect(await filasDe(ui)).toHaveLength(6)
-
-    // `odd.mjs --cierre` anota la corrida antes de la respuesta final.
-    archivo.odd = { texto: JSON.stringify({ v: 1, t: new Date(2026, 9, 19, 9, 30).toISOString(), raiz: 'D:\\x\\repoOdd', titulo: 'Corrida', costo: { usd: 1 } }), mtimeMs: 500 }
-    await $.turn.complete(respuesta('sin skill'))
-    expect(llamadas.odd.filter(l => l.startsWith('read'))).toHaveLength(0)
-
-    await $.skill.prompt({ skill: 'odd', text: '' })
-    await $.turn.complete(respuesta('listo'))
-    expect(llamadas.odd.filter(l => l.startsWith('read'))).toHaveLength(1)
-    expect((await filasDe(ui))[0]).toContain('repoOdd')
-
-    // Ya terminada: otro turno no vuelve a mirar los archivos.
-    const antes = llamadas.stat.length
-    await $.turn.complete(respuesta('otra cosa'))
-    expect(llamadas.stat).toHaveLength(antes)
-    await ui.unmount()
-  })
-
   test('a 49, 40 y 32 columnas ninguna línea de un flujo pasa del ancho y las cifras de cada flujo quedan enteras', async ($, on) => {
     const { archivo } = motorHistorial(on)
-    // Una corrida odd con cifras grandes (11,98M tokens en total, que se ven como `12M`): a 32 columnas es la que más aprieta.
-    const corridaOdd = JSON.stringify({
-      v: 1,
+    // Un flujo con cifras grandes (11,98M tokens en total, que se ven como `12M`): a 32 columnas es el que más aprieta.
+    const flujoGrande = JSON.stringify({
+      v: 2,
       t: new Date(2026, 9, 20, 9, 30).toISOString(),
       raiz: 'D:\\x\\r9',
-      titulo: 'Corrida odd con un título largo para cualquier ancho',
-      tamano: 'grande',
-      revision: 'APROBADO',
-      cambios: { mas: 846, menos: 56 },
-      costo: { usd: 4.98, minutos: 36, tokens: { entrada: 1, leidos: 11_000_000, escritos: 500_000, salida: 480_000 } },
+      resultado: 'COMPLETO',
+      titulo: 'Flujo con un título largo para cualquier ancho',
+      clasificacion: 'CRÍTICO (#6)',
+      costo: { usd: 4.98, veredictos: { final: ['APROBADO'] } },
+      tiempos: { activo: 2160 },
+      uso: { tokens: { entrada: 1, leidos: 11_000_000, escritos: 500_000, salida: 480_000 } },
+      subtareas: [{ n: 1, estado: 'HECHO', mas: 846, menos: 56 }],
     })
-    archivo.texto = [fila(1), FLUJO_COMPLETO, fila(3)].join('\n')
-    archivo.odd = { texto: corridaOdd, mtimeMs: 500 }
+    archivo.texto = [fila(1), FLUJO_COMPLETO, fila(3), flujoGrande].join('\n')
     await $.session.measure(MEDIDA)
 
     for (const pane of [PANE_ANCHO, PANE_40, PANE]) {
@@ -7139,8 +6954,8 @@ describe('historial en el panel', () => {
       await abrirHistorial(ui)
 
       const textos = await textosDe(ui)
-      // Sin totales sumados. 4 flujos (odd, 1, A y 3): cada uno con su línea de identidad y su línea de cifras, y entre ellas el título.
-      expect(textos.some(t => /^(normal|odd) ×\d|^odd · sin flujos/.test(t))).toBe(false)
+      // Sin totales sumados. 4 flujos (grande, 1, A y 3): cada uno con su línea de identidad y su línea de cifras, y entre ellas el título.
+      expect(textos.some(t => /^normal ×\d/.test(t))).toBe(false)
       const identidades = textos.filter(t => ES_FILA.test(t))
       const cifras = textos.filter(t => /^\$\S+ .* tok .*sal \S+/.test(t))
       expect(identidades).toHaveLength(4)
@@ -7148,10 +6963,9 @@ describe('historial en el panel', () => {
       for (const l of textos.slice(textos.findIndex(t => t.startsWith('promedio')) + 1)) expect(Array.from(l).length).toBeLessThanOrEqual(pane.props.bodyColumns)
       // Las cuatro cifras están en toda línea de cifras, sea cual sea el ancho; sin tokens anotados van con `—`.
       expect(cifras.every(l => /^\$\S+ (· )?(\d+m|—m) (· )?\S+ tok (· )?sal \S+/.test(l))).toBe(true)
-      // La corrida odd va primero (20/10) y mantiene sus cifras enteras y su marca hasta a 32 columnas; las normales, la suya.
+      // El flujo grande va primero (20/10) y mantiene sus cifras enteras hasta a 32 columnas.
       expect(cifras[0]).toMatch(/^(\$4,98 · 36m · 12M tok · sal 480k|\$4,98 36m 12M tok sal 480k)/)
-      expect(identidades[0]).toMatch(/(^| )odd ✓/)
-      expect(identidades.slice(1).every(l => /(^| )n [✓·]/.test(l))).toBe(true)
+      expect(identidades.every(l => /(^| )n [✓·]/.test(l))).toBe(true)
       // El título largo pasa a otra línea, sin roles ni espera.
       expect(textos.some(l => l.includes('Historial como pestaña'))).toBe(true)
       expect(textos.some(t => /\b(orq|ejec|espera)\b/.test(t))).toBe(false)
@@ -7175,12 +6989,12 @@ describe('historial en el panel', () => {
   })
 
   /**
-   * El motor de `motorHistorial` más lo que pide `session.start`: `settings.read` (`'falla'` rechaza), `fs.exists` de los dos `SKILL.md`
-   * (`null` no lo stubea: rechaza con `no implementation`; `'falla'` en uno lo rechaza) y el historial sin filas, para que su evidencia no cuente.
+   * El motor de `motorHistorial` más lo que pide `session.start`: `settings.read` (`'falla'` rechaza), `fs.exists` del `SKILL.md`
+   * (`null` no lo stubea: rechaza con `no implementation`; `'falla'` lo rechaza) y el historial sin filas, para que su evidencia no cuente.
    */
   function motorInstalados(
     on: On,
-    opciones: { ajustes?: Record<string, unknown> | 'falla'; skills?: { normal?: boolean | 'falla'; odd?: boolean | 'falla' } | null; inicial?: Record<string, unknown> } = {},
+    opciones: { ajustes?: Record<string, unknown> | 'falla'; skills?: { normal?: boolean | 'falla' } | null; inicial?: Record<string, unknown> } = {},
   ) {
     const motor = motorHistorial(on, opciones.inicial)
     motor.archivo.texto = ''
@@ -7191,11 +7005,11 @@ describe('historial en el panel', () => {
     on('session.start', (_$, e) => ({ cwd: e.cwd }))
     on('ui.open', () => ({ value: { isPlaced: true } }))
     const consultas: string[] = []
-    const skills = opciones.skills === undefined ? { normal: false, odd: false } : opciones.skills
+    const skills = opciones.skills === undefined ? { normal: false } : opciones.skills
     if (skills !== null) {
       on('fs.exists', (_$, e) => {
         consultas.push(e.path)
-        const r = e.path.includes('qcc-implementador-odd') ? skills.odd : skills.normal
+        const r = skills.normal
         if (r === 'falla') return { deny: 'no se pudo mirar' }
 
         return { value: r === true }
@@ -7229,7 +7043,7 @@ describe('historial en el panel', () => {
     return nombres
   }
 
-  test('S1: sin ningún implementador solo quedan Inicio y Gasto semanal (y Carpeta); se miraron los dos SKILL.md', async ($, on) => {
+  test('S1: sin ningún implementador solo quedan Inicio y Gasto semanal (y Carpeta); se miró el SKILL.md', async ($, on) => {
     const { consultas } = motorInstalados(on)
     await arrancar($)
 
@@ -7239,12 +7053,12 @@ describe('historial en el panel', () => {
     expect(await ui.find({ type: 'Button', key: 'pestana-historial' })).toBeUndefined()
     expect(await ui.find({ type: 'Button', key: 'carpeta' })).toBeDefined()
     // El motor de prueba dispara el tick más de una vez: importa qué rutas se miraron, no cuántas veces.
-    expect([...new Set(consultas)].sort()).toEqual(['C:\\Users\\x\\.claude\\skills\\qcc-implementador-odd\\SKILL.md', 'C:\\Users\\x\\.claude\\skills\\qcc-implementador\\SKILL.md'].sort())
+    expect([...new Set(consultas)].sort()).toEqual(['C:\\Users\\x\\.claude\\skills\\qcc-implementador\\SKILL.md'])
     await ui.unmount()
   })
 
   test('S2: con /impl (por archivo o por ajustes) salen tres pestañas (sin Flujo), en orden y con sus hotkeys', async ($, on) => {
-    motorInstalados(on, { skills: { normal: true, odd: false } })
+    motorInstalados(on, { skills: { normal: true } })
     await arrancar($)
 
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
@@ -7265,17 +7079,8 @@ describe('historial en el panel', () => {
     })
   }
 
-  test('S3: con solo /odd sale Historial pero no Flujo; `impl@x` no activa odd', async ($, on) => {
-    motorInstalados(on, { ajustes: { enabledPlugins: { 'odd@mercado': true } } })
-    await arrancar($)
-
-    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    expect(await pestanasDe(ui)).toEqual(['pestana-inicio', 'pestana-semana', 'pestana-historial'])
-    await ui.unmount()
-  })
-
   test('S1: `enabledPlugins` en false (o `commit` habilitado) no cuenta como instalado', async ($, on) => {
-    motorInstalados(on, { ajustes: { enabledPlugins: { 'impl@m': false, 'odd@m': false, 'commit@m': true } } })
+    motorInstalados(on, { ajustes: { enabledPlugins: { 'impl@m': false, 'commit@m': true } } })
     await arrancar($)
 
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
@@ -7296,20 +7101,15 @@ describe('historial en el panel', () => {
     await ui.unmount()
   })
 
-  for (const [nombre, skills] of [
-    ['/impl', { normal: true, odd: false }],
-    ['solo odd', { normal: false, odd: true }],
-  ] as const) {
-    test(`S4: con ${nombre} sin flujo en curso la cabecera no dibuja el flujo y la leyenda conserva ■ orquestador`, async ($, on) => {
-      motorInstalados(on, { skills })
-      await arrancar($)
+  test('S4: con /impl sin flujo en curso la cabecera no dibuja el flujo y la leyenda conserva ■ orquestador', async ($, on) => {
+    motorInstalados(on, { skills: { normal: true } })
+    await arrancar($)
 
-      const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-      expect(await ui.find({ type: 'Box', key: 'flujo-resumen' })).toBeUndefined()
-      expect(await leyendaDe(ui)).toEqual(['directo', 'orquestador', 'subagentes'])
-      await ui.unmount()
-    })
-  }
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    expect(await ui.find({ type: 'Box', key: 'flujo-resumen' })).toBeUndefined()
+    expect(await leyendaDe(ui)).toEqual(['directo', 'orquestador', 'subagentes'])
+    await ui.unmount()
+  })
 
   test('S5: la pestaña guardada oculta dibuja Inicio y no borra la preferencia', async ($, on) => {
     const { guardados } = motorInstalados(on, { inicial: { 'prefs:pestana': 'historial' } })
@@ -7323,10 +7123,10 @@ describe('historial en el panel', () => {
   })
 
   for (const [nombre, caso] of [
-    ['`settings.read` rechaza', { ajustes: 'falla', skills: { normal: false, odd: false } }],
-    ['`settings.read` trae {} sin enabledPlugins', { ajustes: {}, skills: { normal: false, odd: false } }],
+    ['`settings.read` rechaza', { ajustes: 'falla', skills: { normal: false } }],
+    ['`settings.read` trae {} sin enabledPlugins', { ajustes: {}, skills: { normal: false } }],
     ['`fs.exists` sin stub rechaza', { skills: null }],
-    ['`fs.exists` rechaza el de /impl', { skills: { normal: 'falla', odd: false } }],
+    ['`fs.exists` rechaza el de /impl', { skills: { normal: 'falla' } }],
   ] as const) {
     test(`S6: si ${nombre} se muestra todo`, async ($, on) => {
       motorInstalados(on, caso)
@@ -7338,16 +7138,6 @@ describe('historial en el panel', () => {
       await ui.unmount()
     })
   }
-
-  test('S6: si `fs.exists` rechaza el de odd (y /impl no está) Flujo sigue oculto pero Historial y ■ orquestador se muestran', async ($, on) => {
-    motorInstalados(on, { skills: { normal: false, odd: 'falla' } })
-    await arrancar($)
-
-    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
-    expect(await pestanasDe(ui)).toEqual(['pestana-inicio', 'pestana-semana', 'pestana-historial'])
-    expect(await leyendaDe(ui)).toEqual(['directo', 'orquestador', 'subagentes'])
-    await ui.unmount()
-  })
 
   test('S6: sin carpeta personal (`node` falla) la detección es dudosa y se muestra todo; node se pidió una vez', async ($, on) => {
     const { archivo, llamadas, consultas } = motorInstalados(on)
@@ -7377,7 +7167,7 @@ describe('historial en el panel', () => {
 describe('implementadores instalados (puro)', () => {
   test('rutaSkill: separador de la carpeta personal, separadores finales fuera y null si está vacía', () => {
     expect(rutaSkill('C:\\Users\\x', 'qcc-implementador')).toBe('C:\\Users\\x\\.claude\\skills\\qcc-implementador\\SKILL.md')
-    expect(rutaSkill('C:\\Users\\x\\\\', 'qcc-implementador-odd')).toBe('C:\\Users\\x\\.claude\\skills\\qcc-implementador-odd\\SKILL.md')
+    expect(rutaSkill('C:\\Users\\x\\\\', 'qcc-implementador')).toBe('C:\\Users\\x\\.claude\\skills\\qcc-implementador\\SKILL.md')
     expect(rutaSkill('/home/x', 'qcc-implementador')).toBe('/home/x/.claude/skills/qcc-implementador/SKILL.md')
     expect(rutaSkill('/home/x//', 'qcc-implementador')).toBe('/home/x/.claude/skills/qcc-implementador/SKILL.md')
     expect(rutaSkill('', 'qcc-implementador')).toBeNull()
@@ -7386,56 +7176,49 @@ describe('implementadores instalados (puro)', () => {
 
   test('detectar: ajustes y archivo; `false` solo si ambos lo dicen; cualquier fallo sin hallazgo es null', () => {
     const plugins = (enabledPlugins: unknown) => ({ enabledPlugins })
-    const casos: { ajustes: unknown; normal: boolean | null; odd: boolean | null; espera: { normal: boolean | null; odd: boolean | null } }[] = [
+    const casos: { ajustes: unknown; normal: boolean | null; espera: { normal: boolean | null } }[] = [
       // Nada instalado, todo comprobado (`enabledPlugins` presente como objeto).
-      { ajustes: plugins({}), normal: false, odd: false, espera: { normal: false, odd: false } },
+      { ajustes: plugins({}), normal: false, espera: { normal: false } },
       // Solo por archivo (la instalación manual vieja).
-      { ajustes: plugins({}), normal: true, odd: false, espera: { normal: true, odd: false } },
-      { ajustes: plugins({}), normal: false, odd: true, espera: { normal: false, odd: true } },
+      { ajustes: plugins({}), normal: true, espera: { normal: true } },
       // Solo por ajustes, con mercado o con el nombre pelado.
-      { ajustes: plugins({ 'impl@m': true }), normal: false, odd: false, espera: { normal: true, odd: false } },
-      { ajustes: plugins({ impl: true }), normal: false, odd: false, espera: { normal: true, odd: false } },
-      { ajustes: plugins({ 'odd@m': true }), normal: false, odd: false, espera: { normal: false, odd: true } },
-      { ajustes: plugins({ odd: true }), normal: false, odd: false, espera: { normal: false, odd: true } },
+      { ajustes: plugins({ 'impl@m': true }), normal: false, espera: { normal: true } },
+      { ajustes: plugins({ impl: true }), normal: false, espera: { normal: true } },
       // El paquete `qcc` ya no existe y los nombres viejos tampoco cuentan.
-      { ajustes: plugins({ 'qcc@m': true }), normal: false, odd: false, espera: { normal: false, odd: false } },
-      { ajustes: plugins({ qcc: true }), normal: false, odd: false, espera: { normal: false, odd: false } },
-      { ajustes: plugins({ 'qcc-implementador@m': true, 'qcc-implementador-odd@m': true }), normal: false, odd: false, espera: { normal: false, odd: false } },
+      { ajustes: plugins({ 'qcc@m': true }), normal: false, espera: { normal: false } },
+      { ajustes: plugins({ qcc: true }), normal: false, espera: { normal: false } },
+      { ajustes: plugins({ 'qcc-implementador@m': true }), normal: false, espera: { normal: false } },
       // Solo un valor exactamente `true` cuenta; otros plugins y claves parecidas no.
-      { ajustes: plugins({ 'impl@m': false, 'odd@m': 'true', 'qcc@m': 1 }), normal: false, odd: false, espera: { normal: false, odd: false } },
-      { ajustes: plugins({ 'commit@m': true, 'panel@m': true, 'implementadores@m': true, 'impls@m': true }), normal: false, odd: false, espera: { normal: false, odd: false } },
+      { ajustes: plugins({ 'impl@m': false, 'qcc@m': 1 }), normal: false, espera: { normal: false } },
+      { ajustes: plugins({ 'commit@m': true, 'panel@m': true, 'implementadores@m': true, 'impls@m': true }), normal: false, espera: { normal: false } },
       // Dudoso: ajustes ilegibles, sin `enabledPlugins` (o que no es un objeto) o archivo sin comprobar y nada hallado.
-      { ajustes: {}, normal: false, odd: false, espera: { normal: null, odd: null } },
-      { ajustes: {}, normal: true, odd: false, espera: { normal: true, odd: null } },
-      { ajustes: {}, normal: false, odd: true, espera: { normal: null, odd: true } },
-      { ajustes: plugins([true]), normal: false, odd: false, espera: { normal: null, odd: null } },
-      { ajustes: null, normal: false, odd: false, espera: { normal: null, odd: null } },
-      { ajustes: [], normal: false, odd: false, espera: { normal: null, odd: null } },
-      { ajustes: {}, normal: null, odd: null, espera: { normal: null, odd: null } },
-      { ajustes: plugins({}), normal: null, odd: false, espera: { normal: null, odd: false } },
-      { ajustes: {}, normal: null, odd: false, espera: { normal: null, odd: null } },
-      { ajustes: null, normal: null, odd: null, espera: { normal: null, odd: null } },
+      { ajustes: {}, normal: false, espera: { normal: null } },
+      { ajustes: {}, normal: true, espera: { normal: true } },
+      { ajustes: plugins([true]), normal: false, espera: { normal: null } },
+      { ajustes: null, normal: false, espera: { normal: null } },
+      { ajustes: [], normal: false, espera: { normal: null } },
+      { ajustes: {}, normal: null, espera: { normal: null } },
+      { ajustes: plugins({}), normal: null, espera: { normal: null } },
+      { ajustes: null, normal: null, espera: { normal: null } },
       // Lo hallado gana aunque lo otro falle.
-      { ajustes: null, normal: true, odd: false, espera: { normal: true, odd: null } },
-      { ajustes: plugins({ 'impl@m': true }), normal: null, odd: null, espera: { normal: true, odd: null } },
+      { ajustes: null, normal: true, espera: { normal: true } },
+      { ajustes: plugins({ 'impl@m': true }), normal: null, espera: { normal: true } },
     ]
-    for (const c of casos) expect(detectar({ ajustes: c.ajustes, normal: c.normal, odd: c.odd })).toEqual(c.espera)
+    for (const c of casos) expect(detectar({ ajustes: c.ajustes, normal: c.normal })).toEqual(c.espera)
   })
 
   test('vistaDe: sin detección o dudosa se muestra todo; la evidencia de uso gana sobre «no está»', () => {
-    const nada = { flujo: false, odd: false, historial: false }
+    const nada = { flujo: false, historial: false }
     const todo = { flujo: true, historial: true, orquestador: true }
-    for (const inst of [null, undefined, { normal: null, odd: null }]) expect(vistaDe(inst, nada)).toEqual(todo)
-    expect(vistaDe({ normal: true, odd: false }, nada)).toEqual(todo)
-    expect(vistaDe({ normal: false, odd: false }, nada)).toEqual({ flujo: false, historial: false, orquestador: false })
-    expect(vistaDe({ normal: false, odd: true }, nada)).toEqual({ flujo: false, historial: true, orquestador: true })
-    expect(vistaDe({ normal: null, odd: false }, nada)).toEqual(todo)
-    expect(vistaDe({ normal: false, odd: null }, nada)).toEqual({ flujo: false, historial: true, orquestador: true })
+    for (const inst of [null, undefined, { normal: null }]) expect(vistaDe(inst, nada)).toEqual(todo)
+    expect(vistaDe({ normal: true }, nada)).toEqual(todo)
+    expect(vistaDe({ normal: false }, nada)).toEqual({ flujo: false, historial: false, orquestador: false })
 
-    const ninguno = { normal: false, odd: false }
+    const ninguno = { normal: false }
     expect(vistaDe(ninguno, { ...nada, flujo: true })).toEqual(todo)
-    expect(vistaDe(ninguno, { ...nada, odd: true })).toEqual({ flujo: false, historial: true, orquestador: true })
     expect(vistaDe(ninguno, { ...nada, historial: true })).toEqual({ flujo: false, historial: true, orquestador: false })
+    expect(vistaDe({ normal: null }, { ...nada, historial: true })).toEqual(todo)
+    expect(vistaDe({ normal: true }, { ...nada, historial: true })).toEqual(todo)
   })
 
   test('pestanaValida con vista: una pestaña oculta da inicio; sin vista todas valen', () => {
@@ -7483,9 +7266,9 @@ describe('freno', () => {
   test('freno con impl: frena con el nombre nuevo y deja pasar el viejo', () => {
     expect(decidirFreno({ texto: '/impl x', comando: 'impl' }, 96_200, null, null)).toEqual({ motivo: MOTIVO_A, freno: { frenado: true } })
     expect(decidirFreno({ texto: '/qcc:impl x', comando: 'qcc:impl' }, 96_200, null, null).motivo).toBe(MOTIVO_A)
-    // La forma del plugin `impl` frena; la del odd (`odd:odd`) y el nombre viejo no son este flujo.
+    // La forma del plugin `impl` frena; la de otro plugin (`otro:otro`) y el nombre viejo no son este flujo.
     expect(decidirFreno({ texto: '/impl:impl x', comando: 'impl:impl' }, 96_200, null, null).motivo).toBe(MOTIVO_A)
-    expect(decidirFreno({ texto: '/odd:odd x', comando: 'odd:odd' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
+    expect(decidirFreno({ texto: '/otro:otro x', comando: 'otro:otro' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
     expect(decidirFreno({ texto: '/qcc-implementador x', comando: 'qcc-implementador' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
     expect(decidirFreno({ texto: '/implementador x', comando: 'implementador' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })
     expect(decidirFreno({ texto: '/qcc:implementador x', comando: 'qcc:implementador' }, 96_200, null, null)).toEqual({ motivo: null, freno: null })

@@ -8,18 +8,16 @@ export type { Instalados }
 /** Lo que usa la vista del panel: qué pestañas y entradas se muestran. */
 export type Vista = { flujo: boolean; historial: boolean; orquestador: boolean }
 
-/** La evidencia de uso que gana sobre la detección: hay un flujo en la sesión, una corrida de odd o filas de historial. */
-export type Uso = { flujo: boolean; odd: boolean; historial: boolean }
+/** La evidencia de uso que gana sobre la detección: hay un flujo en la sesión, o filas de historial. */
+export type Uso = { flujo: boolean; historial: boolean }
 
-/** Lo que `detectar` recibe: los ajustes leídos (`null` si falló) y si existe el `SKILL.md` de cada flujo (`null` si no se pudo comprobar). */
-export type Entrada = { ajustes: unknown; normal: boolean | null; odd: boolean | null }
+/** Lo que `detectar` recibe: los ajustes leídos (`null` si falló) y si existe el `SKILL.md` del flujo (`null` si no se pudo comprobar). */
+export type Entrada = { ajustes: unknown; normal: boolean | null }
 
 export const NOMBRE_NORMAL = 'impl'
-export const NOMBRE_ODD = 'odd'
 
-/** Los nombres viejos, con los que la instalación manual dejó su carpeta en `~/.claude/skills`. */
+/** El nombre viejo, con el que la instalación manual dejó su carpeta en `~/.claude/skills`. */
 export const COPIA_NORMAL = 'qcc-implementador'
-export const COPIA_ODD = 'qcc-implementador-odd'
 
 /**
  * La ruta de `<home>/.claude/skills/<nombre>/SKILL.md`; `null` si `home` está vacío. El separador es `\` si `home` lo contiene y `/` si no;
@@ -65,20 +63,16 @@ function unir(ajustes: boolean | null, archivo: boolean | null): boolean | null 
  * de la instalación manual. `false` solo si los dos caminos se comprobaron bien y ninguno lo halla; si algo falló, o los ajustes no traen
  * `enabledPlugins`, `null`.
  */
-export function detectar({ ajustes, normal, odd }: Entrada): Instalados {
-  return {
-    normal: unir(porAjustes(ajustes, NOMBRE_NORMAL), normal),
-    odd: unir(porAjustes(ajustes, NOMBRE_ODD), odd),
-  }
+export function detectar({ ajustes, normal }: Entrada): Instalados {
+  return { normal: unir(porAjustes(ajustes, NOMBRE_NORMAL), normal) }
 }
 
 /**
  * Qué muestra el panel. `inst` `null` o sin definir (aún sin detectar) lo muestra todo; la evidencia de uso gana sobre un «no está».
- * El historial sale con cualquiera de los dos; «Flujo» solo sigue a `/impl`.
+ * El historial sale también si ya hay filas.
  */
 export function vistaDe(inst: Instalados | null | undefined, uso: Uso): Vista {
   const normal = inst?.normal !== false || uso.flujo
-  const odd = inst?.odd !== false || uso.odd
 
-  return { flujo: normal, historial: normal || odd || uso.historial, orquestador: normal || odd }
+  return { flujo: normal, historial: normal || uso.historial, orquestador: normal }
 }

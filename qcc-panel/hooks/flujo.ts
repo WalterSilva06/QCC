@@ -62,21 +62,16 @@ export function pasosDe(f: Flujo): readonly string[] {
 }
 
 /**
- * El rol corto de un agente: su nombre sin espacios, sin el prefijo de su plugin (`impl:`, `odd:`, `commit:` o uno que empiece por `qcc`) ni `qcc-`
+ * El rol corto de un agente: su nombre sin espacios, sin el prefijo de su plugin (`impl:`, `commit:` o uno que empiece por `qcc`) ni `qcc-`
  * (`impl:qcc-explorador` y `qcc-explorador` → `explorador`).
  */
 export function rolDeAgente(nombre: string): string {
-  return nombre.trim().replace(/^(?:(?:impl|odd|commit|qcc(?:-[a-z]+)*):)?qcc-/, '')
+  return nombre.trim().replace(/^(?:(?:impl|commit|qcc(?:-[a-z]+)*):)?qcc-/, '')
 }
 
 /** El nombre de la skill sin `/` ni prefijo `plugin:`. */
 function nombreDeSkill(skill: string): string {
   return skill.trim().replace(/^\//, '').split(':').pop() ?? ''
-}
-
-/** Si `skill` es `odd` (con o sin `/` y con o sin prefijo `plugin:`). No es un flujo del panel: solo marca sus tokens. */
-export function esSkillOdd(skill: string): boolean {
-  return nombreDeSkill(skill) === 'odd'
 }
 
 /**

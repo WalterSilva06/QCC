@@ -168,16 +168,13 @@ export type Flujo = {
 }
 
 /**
- * Una fila del historial de flujos (`~/.claude/flujos/registros/flujos.jsonl` o `~/.claude/flujos-odd/registros/odd.jsonl`), ya reducida
- * a lo que muestra la pestaña «Historial».
+ * Una fila del historial de flujos (`~/.claude/flujos/registros/flujos.jsonl`), ya reducida a lo que muestra la pestaña «Historial».
  */
 export type FilaHistorial = {
   /** Hora de cierre del flujo, ISO. */
   t: string
   /** Nombre de la carpeta del repo (último tramo de `raiz`); `?` si falta. */
   repo: string
-  /** Qué flujo fue: `normal` (`/impl`, de `flujos.jsonl`) u `odd` (`/odd`, de `odd.jsonl`). Si falta (caché de una versión anterior), `normal`. */
-  flujo?: 'normal' | 'odd'
   /** Costo real en dólares; falta si no se anotó. */
   usd?: number
   /** Minutos activos; falta si no se anotaron. */
@@ -206,10 +203,10 @@ export type FilaHistorial = {
   salida?: number
 }
 
-/** El historial leído de los dos registros: la suma de sus fechas de modificación (ms; la de uno que no existe cuenta 0) y las últimas filas, la más reciente primero. */
+/** El historial leído de `flujos.jsonl`: su fecha de modificación (ms) y las últimas filas, la más reciente primero. */
 export type Historial = {
-  /** Forma de lo guardado: `5` trae los tokens de cada fila y no trae `totales`. Una caché sin `v`, o con `2`, `3` o `4`, se vuelve a leer. */
-  v?: 5
+  /** Forma de lo guardado: `6` trae solo filas de `flujos.jsonl`, con los tokens de cada una y sin `totales`. Una caché sin `v`, o con `2`, `3`, `4` o `5`, se vuelve a leer. */
+  v?: 6
   mtimeMs: number
   filas: FilaHistorial[]
 }
@@ -218,8 +215,6 @@ export type Historial = {
 export type Instalados = {
   /** `/impl`. */
   normal: boolean | null
-  /** `/odd`. */
-  odd: boolean | null
 }
 
 /** Las pestañas del panel: «Inicio», «Gasto semanal», «Historial» y «Agentes». «Carpeta» es un botón, no una pestaña. «Historial» puede estar oculta si no hay un implementador instalado; «Agentes» solo aparece si hay algún agente anotado. Un `flujo` guardado por una versión anterior ya no es una pestaña: abre «Inicio». */
@@ -307,8 +302,6 @@ declare module 'claude-code' {
       home?: string | null
       /** El freno de contexto de `prompt.submit`; `null` si no hay nada que recordar. Solo de esta terminal. Si falta (estado de una versión anterior), `null`. */
       freno?: Freno | null
-      /** Hay una corrida de `/odd` en este turno: el hilo principal anota sus tokens como los de un flujo. Se borra al terminar el turno del hilo principal. Solo de esta terminal. Si falta (estado de una versión anterior), `false`. */
-      corridaOdd?: boolean
       /** Los implementadores detectados (ajustes y `SKILL.md`); `null` si aún no se detectó o si la detección fue dudosa. Si falta (estado de una versión anterior), `null`. */
       instalados?: Instalados | null
       /** El caché del prompt del hilo principal; `null` hasta la primera respuesta o tras un `/clear`. Solo de esta terminal. Si falta (estado de una versión anterior), `null`. */

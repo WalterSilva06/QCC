@@ -21,7 +21,6 @@ import {
   congelarConsumo,
   cuadradosDeFila,
   datosDeExplorador,
-  esSkillOdd,
   iniciarFlujo,
   marcarAgente,
   marcarOrquestador,
@@ -35,8 +34,8 @@ import {
   terminarFlujo,
 } from './flujo'
 import type { Senal } from './flujo'
-import { cifraMinutos, cifraUsd, leerHistorial, lineasHistorial, promedioHistorial, rutaHistorial, rutaHistorialOdd, unirHistorial } from './historial'
-import { COPIA_NORMAL, COPIA_ODD, detectar, rutaSkill, vistaDe } from './instalados'
+import { cifraMinutos, cifraUsd, leerHistorial, lineasHistorial, promedioHistorial, rutaHistorial, unirHistorial } from './historial'
+import { COPIA_NORMAL, detectar, rutaSkill, vistaDe } from './instalados'
 import {
   aDesglose,
   barra,
@@ -110,7 +109,6 @@ const filasExploradores = atom({ plugin: 'panel', key: 'filasExploradores' } as 
 const historial = atom({ plugin: 'panel', key: 'historial' } as const, null)
 const home = atom({ plugin: 'panel', key: 'home' } as const, null)
 const freno = atom({ plugin: 'panel', key: 'freno' } as const, null)
-const corridaOdd = atom({ plugin: 'panel', key: 'corridaOdd' } as const, false)
 const instalados = atom({ plugin: 'panel', key: 'instalados' } as const, null)
 const cache = atom({ plugin: 'panel', key: 'cache' } as const, null)
 const avisoContexto = atom({ plugin: 'panel', key: 'avisoContexto' } as const, 0)
@@ -169,15 +167,6 @@ async function enFlujo($: EngineInterface): Promise<boolean> {
     const f = await read($, flujo)
 
     return f !== null && f.estado === 'en curso'
-  } catch {
-    return false
-  }
-}
-
-/** Si hay una corrida de `/odd` en este turno. Nunca rechaza: ante un fallo dice que no. */
-async function enCorridaOdd($: EngineInterface): Promise<boolean> {
-  try {
-    return (await read($, corridaOdd)) === true
   } catch {
     return false
   }
@@ -307,9 +296,8 @@ function carpetaPersonal($: EngineInterface): Promise<string> {
 }
 
 /**
- * Lee `flujos.jsonl` y `odd.jsonl` si cambiaron desde la última vez: pide la carpeta personal una vez (`''` si falla y no se repite),
- * mira la fecha de los dos archivos y solo los lee si la suma es otra. Un fallo deja el historial como estaba; si falta uno de los dos
- * (odd.jsonl solo existe tras la primera corrida de odd), se muestra el otro.
+ * Lee `flujos.jsonl` si cambió desde la última vez: pide la carpeta personal una vez (`''` si falla y no se repite),
+ * mira la fecha del archivo y solo lo lee si es otra. Un fallo, o que el archivo no exista, deja el historial como estaba.
  */
 async function leerArchivoHistorial($: EngineInterface) {
   try {
@@ -318,27 +306,22 @@ async function leerArchivoHistorial($: EngineInterface) {
     const ruta = rutaHistorial(casa)
     if (ruta === null) return
 
-    const rutaOdd = rutaHistorialOdd(casa)
-    const fecha = await fechaDeRegistro($, ruta)
-    const fechaOdd = rutaOdd === null ? null : await fechaDeRegistro($, rutaOdd)
-    // Ninguno de los dos existe: el historial queda como estaba.
-    if (fecha === null && fechaOdd === null) return
+    const mtimeMs = await fechaDeRegistro($, ruta)
+    // El archivo no existe: el historial queda como estaba.
+    if (mtimeMs === null) return
 
-    // Otra suma de fechas (también si uno de los dos aparece o desaparece) obliga a leer los dos.
-    const mtimeMs = (fecha ?? 0) + (fechaOdd ?? 0)
     const actual = (await read($, historial)) ?? null
-    // Una caché sin `v: 5` viene de una versión anterior (sin los tokens de cada fila, o con `totales`): se vuelve a leer.
+    // Una caché sin `v: 6` viene de una versión anterior (con filas de otro registro, sin los tokens de cada fila o con `totales`): se vuelve a leer.
     if (historialVigente(actual, mtimeMs)) return
 
-    // Un archivo que existe y no se deja leer deja el historial como estaba (lanza); uno que no existe cuenta como vacío.
-    const texto = fecha === null ? '' : await $.fs.read(ruta)
-    const textoOdd = fechaOdd === null || rutaOdd === null ? '' : await $.fs.read(rutaOdd)
-    if (typeof texto !== 'string' || typeof textoOdd !== 'string') return
+    // Un archivo que existe y no se deja leer deja el historial como estaba (lanza).
+    const texto = await $.fs.read(ruta)
+    if (typeof texto !== 'string') return
 
-    // En pantalla van solo las 10 filas más recientes entre los dos registros.
-    const filas = unirHistorial([leerHistorial(texto, 10), leerHistorial(textoOdd, 10, 'odd')], 10)
+    // En pantalla van solo las 10 filas más recientes.
+    const filas = unirHistorial([leerHistorial(texto, 10)], 10)
 
-    await update($, historial, () => ({ v: 5, mtimeMs, filas }))
+    await update($, historial, () => ({ v: 6, mtimeMs, filas }))
   } catch {
     // Sin archivo o sin lectura el historial queda como estaba.
   }
@@ -380,13 +363,10 @@ async function detectarInstalados($: EngineInterface): Promise<void> {
       // Sin ajustes legibles la detección es dudosa.
     }
     const casa = await carpetaPersonal($)
-    const [normal, odd] = await Promise.all([
-      existeArchivo($, rutaSkill(casa, COPIA_NORMAL)),
-      existeArchivo($, rutaSkill(casa, COPIA_ODD)),
-    ])
-    const nuevo = detectar({ ajustes, normal, odd })
+    const normal = await existeArchivo($, rutaSkill(casa, COPIA_NORMAL))
+    const nuevo = detectar({ ajustes, normal })
     const actual = (await read($, instalados)) ?? null
-    if (actual !== null && actual.normal === nuevo.normal && actual.odd === nuevo.odd) return
+    if (actual !== null && actual.normal === nuevo.normal) return
 
     await update($, instalados, () => nuevo)
   } catch {
@@ -864,7 +844,7 @@ export const register: Register = on => {
       await marcarFlujo($, f => sumarGastoDeExplorador(sumarGasto(f, uso), e.agentId, uso))
       try {
         // La marca se decide al llegar la respuesta: en la fila, `turn.complete` ya pudo cerrar el flujo.
-        const deFlujo = e.agentId === undefined && ((await enFlujo($)) || (await enCorridaOdd($)))
+        const deFlujo = e.agentId === undefined && (await enFlujo($))
         await anotarUso($, r.usage.model || e.model, e.effort, e.agentId !== undefined, deFlujo, r.usage)
       } catch {
         // Perder una cuenta es mejor que frenar la respuesta.
@@ -891,14 +871,6 @@ export const register: Register = on => {
       } catch {
         // La espera caduca sola a los 30 min.
       }
-      let terminoOdd = false
-      try {
-        // El turno del hilo principal cierra la corrida de odd, como cierra el flujo.
-        terminoOdd = await enCorridaOdd($)
-        if (terminoOdd) await update($, corridaOdd, () => false)
-      } catch {
-        // Sin borrarla, el siguiente turno anotaría de más como flujo hasta la próxima corrida.
-      }
       // Lo gastado hasta aquí queda fijo en el flujo que acaba de terminar; el trabajo que siga en la sesión no lo mueve.
       const ses = await readSesion($)
       // Si el flujo estaba en curso y este turno lo cierra; se decide dentro del callback, con el estado que `update` leyó.
@@ -912,8 +884,8 @@ export const register: Register = on => {
         return terminoAhora ? congelarConsumo(fin, ses) : fin
       })
       if (terminoAhora) avisar($, `Flujo terminado: ${estadoFin}`)
-      // El flujo ya anotó su fila en `flujos.jsonl` (y la corrida de odd la suya en `odd.jsonl`); `releerHistorial` nunca rechaza.
-      if (terminoAhora || terminoOdd) await releerHistorial($)
+      // El flujo ya anotó su fila en `flujos.jsonl`; `releerHistorial` nunca rechaza.
+      if (terminoAhora) await releerHistorial($)
     }
 
     return next(e)
@@ -929,12 +901,6 @@ export const register: Register = on => {
       if (iniciarFlujo(e.skill, e.text) !== null) await vaciarFilasExploradores($)
     } catch {
       // Sin vaciar, el ■ de más solo se ve con un flujo en curso y exploradores en vuelo.
-    }
-    try {
-      // Odd no es un flujo del panel: solo marca los tokens del hilo principal hasta que termine el turno.
-      if (esSkillOdd(e.skill)) await update($, corridaOdd, () => true)
-    } catch {
-      // Sin la marca, los tokens de la corrida se anotan como los de cualquier turno.
     }
 
     return next(e)
@@ -1056,7 +1022,6 @@ export const register: Register = on => {
     const pestGuardada = (await read($, pestana)) ?? 'inicio'
     const his = (await read($, historial)) ?? null
     const inst = (await read($, instalados)) ?? null
-    const odd = (await read($, corridaOdd)) === true
     const cac = (await read($, cache)) ?? null
     const ags = (await read($, agentes)) ?? []
     const arcs = (await read($, archivos)) ?? []
@@ -1064,7 +1029,7 @@ export const register: Register = on => {
     const t = await $.clock.now()
 
     // Qué se muestra según los implementadores instalados; la evidencia de uso gana sobre un «no está».
-    const vista = vistaDe(inst, { flujo: fl !== null, odd, historial: (his?.filas.length ?? 0) > 0 })
+    const vista = vistaDe(inst, { flujo: fl !== null, historial: (his?.filas.length ?? 0) > 0 })
     // Una pestaña oculta dibuja «Inicio»; la preferencia guardada no se borra. «Agentes» solo existe con algún agente anotado.
     const pest = pestanaValida(pestGuardada, { ...vista, agentes: ags.length > 0 })
 
