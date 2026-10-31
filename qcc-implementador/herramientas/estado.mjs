@@ -372,13 +372,26 @@ export function campoDe(lineas, nombre) {
   return null
 }
 
-/** Plan en texto → `{ cabecera, subtareas: [{ n, objetivo, lineas }], pie }`, con el formato de plan.md §3. La línea «Sin cambios» de un re-plan se descarta. */
+const RE_COSTO = /^\s*(?:\*\*)?Costo(?:\*\*)?\s*:/i
+
+/** Quita del texto del plan las líneas posteriores a «Costo:» que no sean un campo del pie, `S<n> ·` ni «Sin cambios» (prosa que sobra). El resto queda tal cual. */
+export function recortarPie(texto) {
+  let trasCosto = false
+  return String(texto).split('\n').filter((l) => {
+    if (trasCosto && !RE_PIE.test(l) && !RE_SUBTAREA.test(l) && !RE_SIN_CAMBIOS.test(l)) return false
+    if (RE_COSTO.test(l)) trasCosto = true
+    else if (RE_SUBTAREA.test(l)) trasCosto = false
+    return true
+  }).join('\n')
+}
+
+/** Plan en texto → `{ cabecera, subtareas: [{ n, objetivo, lineas }], pie }`, con el formato de plan.md §3. La línea «Sin cambios» de un re-plan se descarta, y la prosa tras «Costo:» también. */
 export function partesDelPlan(texto) {
   const cabecera = []
   const subtareas = []
   const pie = []
   let actual = cabecera
-  for (const l of String(texto).replace(/\r\n/g, '\n').split('\n')) {
+  for (const l of recortarPie(String(texto).replace(/\r\n/g, '\n')).split('\n')) {
     if (RE_SIN_CAMBIOS.test(l)) continue
     const s = RE_SUBTAREA.exec(l)
     if (s) {
@@ -732,6 +745,20 @@ const RE_NINGUNO = /^\s*(?:[-*]\s*)?ninguno\.?\s*$/i
 /** Tope de líneas de hallazgos por explorador según cuántos van en paralelo (1–5); el informe suma ~25 en total. */
 const TOPE_POR_EXPLORADORES = { 1: 25, 2: 20, 3: 16, 4: 15, 5: 14 }
 const MAX_LINEA_EXPLORACION = 160
+const RE_RUTA_LINEA = /[^\s`—]+:\d+/
+
+/** Líneas del informe sin la prosa que sobra: en la última sección, tras un renglón vacío, solo quedan viñetas («-», «*») y líneas con `ruta:línea`. */
+function sinProsaFinal(texto) {
+  const lineas = String(texto ?? '').split('\n')
+  const ultimo = lineas.findLastIndex((l) => RE_ENCABEZADO.test(l))
+  if (ultimo < 0) return lineas
+  let hayVacio = false
+  return lineas.filter((l, i) => {
+    if (i <= ultimo) return true
+    if (!l.trim()) hayVacio = true
+    return !hayVacio || !l.trim() || /^\s*[-*]/.test(l) || RE_RUTA_LINEA.test(l)
+  })
+}
 
 /** Cuántos exploradores como máximo según los archivos del repo (MAPA): <150 → 2, 150–800 → 3, >800 → 5; sin dato, 2. */
 export function techoDeExploradores(archivos) {
@@ -748,7 +775,7 @@ export function topeDeLineas(n) {
 export function avisosDeLargo(informes, tope) {
   const avisos = []
   for (const { id, texto } of informes) {
-    const lineas = String(texto ?? '').split('\n').map((l) => l.trimEnd()).filter((l) => l.trim() && !RE_ENCABEZADO.test(l) && !RE_NINGUNO.test(l))
+    const lineas = sinProsaFinal(texto).map((l) => l.trimEnd()).filter((l) => l.trim() && !RE_ENCABEZADO.test(l) && !RE_NINGUNO.test(l))
     if (lineas.length > tope) avisos.push(`LARGO: agente ${id} con ${lineas.length} hallazgos (tope ${tope})`)
     const anchas = lineas.filter((l) => l.length > MAX_LINEA_EXPLORACION).length
     if (anchas) avisos.push(`LARGO: agente ${id} con ${anchas} líneas de más de ${MAX_LINEA_EXPLORACION} caracteres`)
@@ -758,7 +785,7 @@ export function avisosDeLargo(informes, tope) {
 
 /** Clave para no repetir un hallazgo: su primer `ruta:línea`, o el texto antes de « — », o la línea entera. */
 function claveDeHallazgo(linea) {
-  const ruta = /[^\s`—]+:\d+/.exec(linea)
+  const ruta = RE_RUTA_LINEA.exec(linea)
   if (ruta) return `ruta:${ruta[0]}`
   return `texto:${linea.split(' — ')[0].replace(/^\s*[-*]\s*/, '').trim()}`
 }
@@ -775,7 +802,7 @@ export function fusionarExploraciones(informes) {
   for (const { id, texto } of informes) {
     const presentes = new Set()
     let actual = null
-    for (const linea of String(texto ?? '').split('\n')) {
+    for (const linea of sinProsaFinal(texto)) {
       const encabezado = RE_ENCABEZADO.exec(linea)
       if (encabezado) {
         actual = encabezado[1]
@@ -844,7 +871,7 @@ function guardarInforme(id, tipo, ajuste) {
   }
   const texto = informes[0].texto
   const previo = ajuste ? leerTexto(destino) : null
-  const plan = previo ? fusionarPlanes(previo, texto) : texto
+  const plan = previo ? fusionarPlanes(previo, texto) : recortarPie(texto).trim()
   fs.writeFileSync(destino, plan + '\n')
   resumirPlan(plan, destino)
 }

@@ -115,7 +115,7 @@ function veredictoDe(filas, rol) {
   const campo = VEREDICTO_POR_ROL[rol]
   if (!campo) return null
   const textos = filas.filter((f) => f?.type === 'assistant').flatMap((f) => (f.message?.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text))
-  return new RegExp(`^[\\s*_>\`-]*${campo}:\\s*\\**\\s*([A-ZÁÉÍÓÚ]+)`, 'm').exec(textos.at(-1) ?? '')?.[1] ?? null
+  return new RegExp(`^[\\s*_>\`-]*${campo}(?:\\*\\*)?:\\s*\\**\\s*([A-ZÁÉÍÓÚ]+)`, 'm').exec(textos.at(-1) ?? '')?.[1] ?? null
 }
 
 /** Si la fila es el `/impl` (o `/impl:impl`) que el usuario escribió en el hilo principal. */

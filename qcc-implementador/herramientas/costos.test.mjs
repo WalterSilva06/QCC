@@ -217,6 +217,38 @@ test('costos: reconoce /impl y agentType qcc-ejecutor como rol ejecutor', () => 
   assert.ok('1' in m.tiempos.fases)
 })
 
+test('costos: veredicto con negrita que cierra antes de los dos puntos', () => {
+  const raiz = path.join(os.tmpdir(), 'repo-metricas-negrita')
+  const claude = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
+  temporales.push(claude)
+  const sesion = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  const subagentes = path.join(sesion, 's1', 'subagents')
+  fs.mkdirSync(subagentes, { recursive: true })
+  const inicio = Date.parse('2026-01-01T10:00:00.000Z')
+  const en = (s) => new Date(inicio + s * 1000).toISOString()
+  const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
+  const uso = { input_tokens: 10, cache_read_input_tokens: 1000, cache_creation_input_tokens: 500, output_tokens: 100 }
+  const turno = (id, s, texto) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-sonnet-5-5', usage: uso, content: [{ type: 'text', text: texto }] } })
+  fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
+    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/impl</command-name>' } },
+    turno('o1', 60, 'x'),
+  ]))
+  const agente = (nombre, tipo, prompt, desde, texto) => {
+    fs.writeFileSync(path.join(subagentes, `${nombre}.meta.json`), JSON.stringify({ agentType: tipo }))
+    fs.writeFileSync(path.join(subagentes, `${nombre}.jsonl`), jsonl([{ type: 'user', timestamp: en(desde), message: { role: 'user', content: prompt } }, turno(`m-${nombre}`, desde + 10, texto)]))
+  }
+  agente('agent-x1', 'impl:qcc-ejecutor', 'SUBTAREA 1/2: a', 100, '**ESTADO**: HECHO')
+  agente('agent-x2', 'impl:qcc-ejecutor', 'SUBTAREA 2/2: b', 120, '**ESTADO: FALLA**')
+  const final = 'QUÉ REVISAR: cambio completo (2 subtarea(s))'
+  agente('agent-f1', 'impl:qcc-revisor', final, 200, '**VEREDICTO**: APROBADO\nPROBLEMAS: ninguno')
+  agente('agent-f2', 'impl:qcc-revisor', final, 220, '**VEREDICTO: AJUSTAR**')
+  agente('agent-f3', 'impl:qcc-revisor', final, 240, 'VEREDICTO: RECHAZADO')
+
+  const m = metricasDelFlujo(raiz, en(0), { proyectos: path.join(claude, 'projects'), hasta: en(500), base: null })
+  assert.deepEqual(m.costo.veredictos.ejecutor, ['HECHO', 'FALLA'])
+  assert.deepEqual(m.costo.veredictos.final, ['APROBADO', 'AJUSTAR', 'RECHAZADO'])
+})
+
 /** Corre costos.mjs con esos argumentos: `{ salida, codigo }`. */
 const costosCon = (...args) => {
   const r = spawnSync(process.execPath, [fileURLToPath(new URL('./costos.mjs', import.meta.url)), ...args], { encoding: 'utf8' })

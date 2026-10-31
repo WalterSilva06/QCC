@@ -54,6 +54,44 @@ test('estado: permitidos, rutas críticas y fusión de un re-plan (puras)', () =
   assert.match(fusion, /^Clasificación: sin criterios/m)
 })
 
+test('plan: la prosa tras Costo no entra en el pie', () => {
+  const prosa = 'Omití X; riesgo Y'
+  // Con o sin renglón vacío antes, la prosa tras «Costo:» se descarta.
+  assert.deepEqual(partesDelPlan(`${PLAN}\n\n${prosa}`).pie, partesDelPlan(PLAN).pie)
+  assert.deepEqual(partesDelPlan(`${PLAN}\n${prosa}`).pie, partesDelPlan(PLAN).pie)
+  const replan = `S1 · Cambiar la guardia\n- Crítica: sí\nVerificación final: v\nQueda para ti: nada\nCosto: 1 ejecutor(es)\n\n${prosa}`
+  const fusion = fusionarPlanes(PLAN, replan)
+  assert.doesNotMatch(fusion, /Omití X/)
+  assert.match(fusion, /^Costo: 1 ejecutor\(es\)$/m)
+
+  // «Queda para ti» con líneas `! comando` (sin viñeta) antes de «Costo:» se conserva entero.
+  const conComandos = PLAN.replace('Queda para ti: nada', 'Queda para ti: migrar\n! pnpm db:migrate  # requiere red\n! pnpm db:seed')
+  const pie = partesDelPlan(`${conComandos}\n\n${prosa}`).pie
+  assert.deepEqual(pie, partesDelPlan(conComandos).pie)
+  assert.ok(pie.includes('! pnpm db:migrate  # requiere red') && pie.includes('! pnpm db:seed'))
+
+  // Una subtarea o un «Sin cambios» tras «Costo:» siguen contando.
+  const tras = partesDelPlan(`${PLAN}\nS3 · Otra\n- Crítica: no\nSin cambios: S1`)
+  assert.deepEqual(tras.subtareas.map((s) => s.n), [1, 2, 3])
+  assert.deepEqual(tras.subtareas[2].lineas, ['S3 · Otra', '- Crítica: no'])
+})
+
+test('plan: --guardar un plan nuevo descarta la prosa tras Costo y deja el resto igual', () => {
+  const claude = transcripts({
+    sola: `${PLAN}\n\nOmití X; riesgo Y`,
+    pegada: `${PLAN}\nOmití X; riesgo Y\nOtra línea`,
+    limpia: PLAN,
+  })
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+  const { raiz } = estadoCon({}, () => ['--guardar', 'sola', 'plan', '--paso', '2'], {}, entorno)
+  const plan = () => fs.readFileSync(path.join(flujoDe(raiz), 'plan.md'), 'utf8')
+  assert.equal(plan(), PLAN + '\n')
+  estadoEn(raiz, ['--guardar', 'pegada', 'plan'], entorno)
+  assert.equal(plan(), PLAN + '\n')
+  estadoEn(raiz, ['--guardar', 'limpia', 'plan'], entorno)
+  assert.equal(plan(), PLAN + '\n')
+})
+
 test('estado: decisionesDelPlan replica pasos.md y comun.md', () => {
   const sub = (n, permitidos, critica = 'no', fijos = []) => ({ n, critica, permitidos, fijos })
   const SIN = 'sin criterios — solo texto'
@@ -401,6 +439,39 @@ test('estado: fusionarExploraciones une secciones sin repetir ruta:línea (pura)
   assert.match(texto, /ACOPLAMIENTOS\n- ninguno\n/)
   assert.match(texto, /DUDAS\n- ninguno$/)
   assert.deepEqual(incompletos, [{ id: 'b', faltan: ['DUDAS'] }])
+})
+
+test('estado: fusionarExploraciones ignora la prosa tras la última sección', () => {
+  const base = 'ARCHIVOS\n- x.ts:1 — uno\n\nTESTS\n- ninguno\n\nACOPLAMIENTOS\n- ninguno\n\nDATOS\n- ninguno\n\nDUDAS\n- ¿algo?'
+  const uno = `${base}\n\nOmití X; riesgo Y`
+  const dos = `${base.replace('x.ts:1', 'y.ts:2')}\n\nOtra prosa suelta\n- viñeta tras vacío\nz.ts:9 — con ruta\nprosa pegada`
+  const { texto } = fusionarExploraciones([{ id: 'a', texto: uno }, { id: 'b', texto: dos }])
+
+  assert.doesNotMatch(texto, /Omití X|Otra prosa|prosa pegada/)
+  assert.match(texto, /- viñeta tras vacío/)
+  assert.match(texto, /z\.ts:9 — con ruta/)
+  // Una sección que no es la última no pierde líneas sin viñeta.
+  assert.match(fusionarExploraciones([{ id: 'a', texto: 'ARCHIVOS\n\nsin viñeta\nTESTS\n- t.ts:1' }]).texto, /sin viñeta/)
+
+  // Tope justo: la prosa no cuenta como hallazgo; una viñeta tras el vacío sí.
+  const justo = `${informeDe(24).replace('\nDUDAS', '\nDUDAS\n- ¿algo?')}\n\nOmití X; riesgo Y`
+  assert.deepEqual(avisosDeLargo([{ id: 'a', texto: justo }], 25), [])
+  assert.deepEqual(avisosDeLargo([{ id: 'a', texto: `${justo}\n- otra viñeta` }], 25), ['LARGO: agente a con 26 hallazgos (tope 25)'])
+  assert.deepEqual(avisosDeLargo([{ id: 'a', texto: `${justo}\n- otra viñeta` }], 26), [])
+  // Ni las líneas anchas de la prosa avisan.
+  assert.deepEqual(avisosDeLargo([{ id: 'a', texto: `${justo} ${'x'.repeat(200)}` }], 25), [])
+})
+
+test('estado: --guardar e1,e2 exploracion deja fuera la prosa final', () => {
+  const claude = transcripts({
+    p1: 'ARCHIVOS\n- a.ts:1 — uno\nTESTS\n- ninguno\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\nDUDAS\n- ninguno\n\nOmití X; riesgo Y',
+    p2: 'ARCHIVOS\n- b.ts:2 — dos\nTESTS\n- ninguno\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\nDUDAS\n- ninguno\n\nCierro aquí.',
+  })
+  const { raiz } = estadoCon({}, () => ['--guardar', 'p1,p2', 'exploracion', '--paso', '2'], {}, { CLAUDE_CONFIG_DIR: claude })
+  const md = fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8')
+  assert.doesNotMatch(md, /Omití|Cierro aquí/)
+  assert.match(md, /- a\.ts:1 — uno/)
+  assert.match(md, /- b\.ts:2 — dos/)
 })
 
 test('estado: --guardar con varios exploradores escribe un solo exploracion.md', () => {
