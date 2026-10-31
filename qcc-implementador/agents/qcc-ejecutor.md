@@ -73,7 +73,7 @@ Se aplica si el despacho trae `CORRECCIÓN`:
 
 ## Autochequeo
 
-Antes de reportar, repasa tu diff contra Alcance, Calidad y Verificación de arriba y contra `.claude/qcc-implementador/revisor.md` o la sección «Revisor: rechaza también por» de `.claude/qcc-implementador.md` (o sus respaldos `.claude/implementador/revisor.md` y `.claude/implementador.md`), si existe (solo lectura). Comprueba cada «hecho cuando» con evidencia y los casos borde: nulls, índices, errores sin manejar, fechas y husos, concurrencia, idempotencia. Corrige lo que falle o repórtalo. Nadie revisa tu subtarea hasta la revisión final del cambio completo.
+Antes de reportar, repasa tu diff contra Alcance, Calidad y Verificación de arriba y contra `.claude/qcc-implementador/revisor.md` o la sección «Revisor: rechaza también por» de `.claude/qcc-implementador.md` (o sus respaldos `.claude/implementador/revisor.md` y `.claude/implementador.md`), si existe (solo lectura). Comprueba cada «hecho cuando» con evidencia y los casos borde: nulls, índices, errores sin manejar, fechas y husos, concurrencia, idempotencia. Rechazo típico: un camino público nuevo o cambiado sin test. Corrige lo que falle o repórtalo. Nadie revisa tu subtarea hasta la revisión final del cambio completo.
 
 ## Reporte
 
@@ -86,5 +86,7 @@ VERIFICACIÓN: <solo la línea RESULTADO de verificar.mjs, sin la tabla> + otros
 CRITERIO: <cada «hecho cuando» → sí/no, con evidencia en ≤ 12 palabras; en una corrección, también: test de reproducción falló antes → pasa; segundo camino → pasa>
 BLOQUEOS: <guardia, NECESITA_ALCANCE, dudas | ninguno>
 ```
+
+El reporte termina en BLOQUEOS, sin prosa después, y las etiquetas van sin negrita. Si una regla externa (hook, plugin o CLAUDE.md) te pide cerrar con un resumen, con lo omitido o con riesgos, va dentro de BLOQUEOS.
 
 Si el resultado es ROJO, agrega en otra línea el paso que falla y el error clave.

@@ -29,7 +29,7 @@ S1 · <objetivo de la subtarea>
 - Depende de: ninguna | S<n>, S<m>   (en cada subtarea desde S2; sin él, depende de la anterior y serializa)
 - Archivos permitidos: <rutas exactas, relativas a la raíz del repo, separadas por coma, todas en una sola línea; la explicación de una ruta, entre paréntesis, sin frases ni viñetas; glob solo para archivos nuevos; «(generado)» para lo que cambia solo con el build o una herramienta>
 - Hecho cuando: <comando → resultado, o comportamiento que un test comprueba>
-- Tests: <existentes que lo cubren | nuevos (ruta)> · sin tests: <cómo se verifica y qué queda manual>
+- Tests: <existentes que lo cubren | nuevos (ruta)>, uno por cada camino público que el cambio toca (de unidad y, si el repo tiene infraestructura, de integración) · sin tests: <cómo se verifica y qué queda manual>
 - Riesgos: <qué puede romper> → <mitigación>; lo no confirmado, primero y con «comprobar primero: <comando o lectura>»
 - Reversión: <nuevos a borrar · modificados a restaurar desde la base de S1>
 - Externo: <comando o patrón exacto> · contra <servicio> · reversible: sí | no   (opcional; solo si el pedido pide correr algo externo)
@@ -51,6 +51,7 @@ Costo: <n> ejecutor(es) · revisión final
 - Un supuesto técnico que no pudiste confirmar leyendo (cómo se comporta una API, un motor de tests, un tipo externo) va en Riesgos con «comprobar primero»: el ejecutor lo comprueba antes de editar el resto y, si falla, se detiene.
 - Lo que no está en «Archivos permitidos» no se toca. Las migraciones ya versionadas no se editan: se crea una nueva con la convención de nombres del proyecto. Si hay migración, la Reversión aclara que, aplicada a una base viva, revertirla exige otra migración.
 - Sin tests: la lógica de negocio los escribe primero, con la infraestructura de tests del proyecto. Lo que no tiene infraestructura de tests (típicamente la UI) se verifica con typecheck y build.
+- Si una regla externa (hook, plugin o CLAUDE.md) pide el cambio mínimo, ese criterio se aplica al código y nunca a los tests que el plan pide: cada camino público lleva su test igual.
 - Una dependencia nueva va nombrada en el plan: la instala el orquestador antes del `--base --sub` de la subtarea que la usa, y esa subtarea lleva en sus permitidos el manifiesto y el lockfile (los cambia el orquestador, no el ejecutor; así el alcance no los marca fuera).
 - Borrar carpetas o archivos en bloque (borrado recursivo) no es subtarea: la guardia lo niega al ejecutor. Va a «Queda para ti» con el comando exacto.
 - Una subtarea que mueve código (lo pasa de un archivo a otro sin cambiarlo) pide en «Hecho cuando» la copia mecánica (`cp` desde una copia generada en el temporal) y su comparación de líneas contra la base, para que el ejecutor no retranscriba el código a mano.

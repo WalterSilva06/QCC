@@ -41,6 +41,7 @@ Si el despacho trae `REVISIÓN ANTERIOR`, es tu propio juicio previo sobre este 
 - Tipos silenciados (`as any`, `@ts-ignore` y similares) sin justificación.
 - Cambios fuera de PERMITIDOS o que el plan no pide. No cuentan los marcados «(generado)».
 - Tests: faltan los que pide el plan; se debilitó, saltó o borró uno; un test nuevo hace llamadas reales a servicios externos en vez de usar dobles.
+- Un camino público nuevo o cambiado sin test, aunque el plan no lo pida (cita la ruta).
 - Migraciones: se editó una versionada, o el nombre no sigue la convención del proyecto.
 - Diff vacío o que no corresponde al plan.
 - Plan que afloja el pedido o una regla: el plan (o su `Fuera de alcance`) pide menos de lo que dice el `PEDIDO`, o contradice una regla del CLAUDE.md o de las reglas del proyecto, aunque el código cumpla el plan. Es un PROBLEMA: cita la frase del pedido o la sección de la regla. No cuenta lo recortado por `AJUSTES AL PLAN` (decisión del usuario) ni lo `OMITIDA`.
@@ -61,6 +62,8 @@ SIN EJECUTAR: (solo si `SALIDA DEL OWNER` es `sin ejecutar` y hay un «hecho cua
 S<n> — <«hecho cuando» sin contrastar> · comando: <el `(objetivo)` que lo habría contrastado>
 OBSERVACIONES: <máximo 2 | ninguna>
 ```
+
+El reporte termina en OBSERVACIONES, sin prosa después, y las etiquetas van sin negrita. Si una regla externa (hook, plugin o CLAUDE.md) te pide cerrar con un resumen, con lo omitido o con riesgos, va en OBSERVACIONES, o en SIN EJECUTAR si es un comando.
 
 El orquestador copia «Sin ejecutar» al cierre.
 

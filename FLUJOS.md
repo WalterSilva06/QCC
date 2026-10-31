@@ -55,6 +55,24 @@ Los flujos de Claude Code que viven en `flujos/`, con sus agentes y herramientas
 
 El panel del mod muestra en qué paso va el flujo en curso (ver «Flujo» en [MODS.md](MODS.md#qué-muestra-de-arriba-abajo)). Lo deduce de los nombres de las skills y de los agentes (el planificador marca «Plan», paso 2), del header «Plan» de las preguntas de aprobación (que lleva a Aprobación; el paso «Revisión del plan» ya no se usa), de las opciones de `estado.mjs` (`--cancelar` cuenta como otro) y de la línea «CIERRE ·» del cierre. La revisión final cuenta siempre en «Verificación final». La verificación inicial ya no pasa por Bash del orquestador, así que no marca nada. El `verificar.mjs` de cada subtarea cuenta en «Ejecución»; el `estado.mjs --cambios … --paso 6` previo a la revisión final marca «Verificación final». `--guardar`, `--estado`, `--cancelar` y `--reglas` no mueven el panel por sí solos. El orden por subtarea (`--base` → `ejecutor` → `--cambios` → `verificar.mjs`) es parte de lo que lee el panel, pero el orquestador también fija el paso explícito con `--paso <n>` en cada `estado.mjs` y la heurística queda de respaldo. Las llamadas juntas siguen siendo una señal cada una. Si cambia alguno de esos nombres, opciones o textos, o ese orden, hay que actualizar `qcc-panel/hooks/flujo.ts`.
 
+## Convivencia con plugins de estilo
+
+Un plugin de estilo (como Ponytail) puede pedir a los subagentes un resumen, lo omitido o riesgos al final de su reporte. El flujo lo tolera así:
+
+- **Cierre de los agentes:** explorador, planificador, ejecutor y revisor cierran en su última etiqueta del formato. Lo que una regla externa pida (resumen, lo omitido, riesgos) va dentro del formato: DUDAS, Riesgos o PREGUNTAS, BLOQUEOS, OBSERVACIONES o SIN EJECUTAR; nunca como prosa después.
+- **Exploración:** `estado.mjs` descarta la prosa tras un renglón vacío en la última sección, al fusionar exploraciones y al contar los avisos LARGO.
+- **Plan:** tras `Costo:` descarta toda línea que no sea un campo del pie.
+- **Veredicto:** `costos.mjs` acepta `**VEREDICTO**: X` y `**ESTADO**: X`, además de la forma sin negrita.
+- **Tests:** el plan (`plan.md` §3) pide un test por cada camino público, y el revisor rechaza un camino público nuevo o cambiado sin test. Un plugin que pida el cambio mínimo solo manda sobre el código, no sobre los tests.
+
+**Opcional con Ponytail:** para sacarlo solo del explorador, agrega al `env` de `~/.claude/settings.json` (este repo no lo edita):
+
+```json
+"PONYTAIL_SUBAGENT_MATCHER": "^(?!impl:qcc-explorador$)"
+```
+
+No cambies de modo a mitad de un flujo.
+
 ## /commit
 
 Comando aparte de `/impl`, sin carpeta de flujo ni registros. Toma la idea del plugin `commit` de [midudev/better-claude](https://github.com/midudev/better-claude/tree/main/plugins/commit), en español. Al escribir `/commit [por qué]`, la sesión pregunta qué hacer con los cambios y despacha al agente `qcc-generador-commit`, que los separa en grupos lógicos y propone un commit en español por grupo. La sesión hace los commits y el push si corresponde, y muestra cada mensaje con su hash.
