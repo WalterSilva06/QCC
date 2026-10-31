@@ -132,7 +132,7 @@ test('costos: métricas del flujo desde transcripts armados', () => {
     turno('o8', 700, [agenteDe('x3', 'ejecutor', E1_CORRECCION, 'low')], uso(1)),
     turno('o9', 800, [agenteDe('x4', 'revisor', 'QUÉ REVISAR: cambio completo (2 subtarea(s))')], uso(1)),
     resultado(850, 'x4', 'VEREDICTO: RECHAZADO'),
-    resultado(860, 'b6', 'ALCANCE: FUERA (a.ts)\nresto'),
+    resultado(860, 'b6', 'ALCANCE: FUERA (a.ts)\nresto\n  12\tconsole.log(`ALCANCE: FUERA (${fuera})`)'),
     turno('o10', 900, [bash('b7', `${ESTADO} --cambios abc --paso 7`)], uso(2)),
   ]))
   const agente = (nombre, tipo, prompt, desde, filas) => {

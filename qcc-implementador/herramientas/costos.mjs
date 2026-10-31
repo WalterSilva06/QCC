@@ -371,7 +371,7 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
   const herramientasDe = (nombre) => exploradores.reduce((s, a) => s + a.filas.reduce((n, f) => n + bloquesDe(f, 'tool_use').filter((c) => c.name === nombre).length, 0), 0)
   const alcanceFuera = []
   for (const f of principal) {
-    for (const c of bloquesDe(f, 'tool_result')) alcanceFuera.push(...(textoDe(c.content).match(/ALCANCE: FUERA[^\n]*/g) ?? []))
+    for (const c of bloquesDe(f, 'tool_result')) alcanceFuera.push(...(textoDe(c.content).match(/^ALCANCE: FUERA[^\n]*/gm) ?? []))
   }
   return {
     costo: costoDe(lectura),
