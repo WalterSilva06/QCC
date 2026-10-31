@@ -65,7 +65,7 @@ Un plugin de estilo (como Ponytail) puede pedir a los subagentes un resumen, lo 
 - **Veredicto:** `costos.mjs` acepta `**VEREDICTO**: X` y `**ESTADO**: X`, además de la forma sin negrita.
 - **Tests:** el plan (`plan.md` §3) pide un test por cada camino público, y el revisor rechaza un camino público nuevo o cambiado sin test. Un plugin que pida el cambio mínimo solo manda sobre el código, no sobre los tests.
 
-**Opcional con Ponytail:** para sacarlo solo del explorador, agrega al `env` de `~/.claude/settings.json` (este repo no lo edita):
+**Opcional con Ponytail:** para sacarlo solo del explorador, agrega al `env` del `settings.json` de tu carpeta de Claude Code (`CLAUDE_CONFIG_DIR` o `~/.claude`; este repo no lo edita):
 
 ```json
 "PONYTAIL_SUBAGENT_MATCHER": "^(?!impl:qcc-explorador$)"
