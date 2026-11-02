@@ -232,7 +232,7 @@ export type AgenteVisto = {
   desde: number
   /** Hora (ms) en que volvió; falta mientras corre. */
   fin?: number
-  /** `corriendo`, `listo` (su `Agent` volvió bien) o `fallo` (su `Agent` falló). */
+  /** `corriendo`, `listo` (dio su respuesta final: `turn.step` sin herramientas) o `fallo` (su `Agent` falló). */
   estado: 'corriendo' | 'listo' | 'fallo'
   /** Herramientas que llamó (los `tool.call` con su `agentId`). */
   herramientas: number
@@ -244,6 +244,10 @@ export type AgenteVisto = {
   total?: number
   /** Modelo y esfuerzo del último que se le vio (`Sonnet high`). Falta si aún no respondió o si se anotó antes de la recarga. */
   modelo?: string
+  /** Lanzó una tarea en segundo plano (`run_in_background`): su próximo turno sin herramientas es una espera, no su respuesta final. Falta si no. */
+  fondo?: true
+  /** Terminó su turno esperando esa tarea: el id de fila de su última petición (`idFila`). Su ■ sigue en espera aunque termine el turno del hilo principal. Falta si no. */
+  espera?: string
 }
 
 /** Un archivo editado (`Edit`, `Write` o `NotebookEdit`) en la sesión. */

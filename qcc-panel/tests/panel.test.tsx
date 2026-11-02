@@ -2,7 +2,17 @@ import type { On, SessionContextBreakdown, SessionMeasureInput } from 'claude-co
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { anotarAgente, anotarArchivo, anotarGasto, anotarHerramienta, cerrarAgente, resumenAgentes, TOPE_AGENTES, TOPE_ARCHIVOS } from '../hooks/agentes'
+import {
+  agentesEnCurso,
+  anotarAgente,
+  anotarArchivo,
+  anotarGasto,
+  anotarHerramienta,
+  cerrarAgente,
+  resumenAgentes,
+  TOPE_AGENTES,
+  TOPE_ARCHIVOS,
+} from '../hooks/agentes'
 import { anotarCache, decidirAvisoContexto, restante, tasaAciertos, TTL_CACHE_MS } from '../hooks/cache'
 import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
@@ -46,7 +56,7 @@ import {
   clave,
   comoRegistro,
   estadoActividad,
-  estadosDeCuadros,
+  estadoDeFila,
   etiquetaDia,
   familia,
   idDeFila,
@@ -985,10 +995,10 @@ describe('semana', () => {
     expect(textos).not.toContain('Esta semana')
     // Las etiquetas de la sesión llevan relleno al largo común: se comparan sin él.
     const deSesion = todos.slice(ses).map(t => t.trimEnd())
-    // Los dos ■ de la fila unida de medium restan 4 columnas al presupuesto de etiquetas (32 − 14 − 4 = 14): se acorta con «…».
-    expect(deSesion.filter(t => t === 'Opus 5.5 medi…')).toHaveLength(1)
+    // El sufijo « ■ x0» de la fila unida de medium resta 5 columnas al presupuesto de etiquetas (32 − 14 − 5 = 13): se acorta con «…».
+    expect(deSesion.filter(t => t === 'Opus 5.5 med…')).toHaveLength(1)
     expect(deSesion.filter(t => t === 'Opus 5.5 high')).toHaveLength(1)
-    expect(deSesion.indexOf('Opus 5.5 medi…')).toBeLessThan(deSesion.indexOf('Opus 5.5 high'))
+    expect(deSesion.indexOf('Opus 5.5 med…')).toBeLessThan(deSesion.indexOf('Opus 5.5 high'))
     // medium (200k de 300k, 100k de subagente): principal, sub y vacío; high (100k) sin subagente: una sola barra.
     expect(
       arbol
@@ -1206,7 +1216,8 @@ describe('semana', () => {
 
     expect(ses).toBeGreaterThan(-1)
     const deSesion = textos.slice(ses)
-    expect(deSesion).toContain('Opus 5.5 medium')
+    // A 32 columnas el sufijo « ■ x0» deja 13 para la etiqueta: se acorta con «…».
+    expect(deSesion).toContain('Opus 5.5 med…')
     expect(deSesion.map(t => t.trimEnd())).not.toContain('Sonnet 5.5 low')
 
     await ui.press({ key: 'pestana-semana' })
@@ -1237,10 +1248,11 @@ describe('semana', () => {
     const ses = textos.indexOf('SESIÓN  ')
 
     // Sesión: una sola fila, es el 100 % de su sección.
-    const i = textos.indexOf('Opus 5.5 medium', ses)
+    // A 32 columnas la etiqueta se acorta a 13 para dejar sitio al sufijo « ■ x0».
+    const i = textos.indexOf('Opus 5.5 med…', ses)
     expect(i).toBeGreaterThan(ses)
-    // Tras la etiqueta va el ■ de actividad (solo en la sesión): por eso son 6 textos y no 5.
-    expect(textos.slice(i, i + 6)).toEqual(['Opus 5.5 medium', ' ■', '   100k', '     2k', '█'.repeat(25), ' 100,0%'])
+    // Tras la etiqueta van el ■ de actividad y su « xN» (solo en la sesión): por eso son 7 textos y no 5.
+    expect(textos.slice(i, i + 7)).toEqual(['Opus 5.5 med…', ' ■', ' x0', '   100k', '     2k', '█'.repeat(25), ' 100,0%'])
 
     await ui.press({ key: 'pestana-semana' })
     textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
@@ -1314,7 +1326,7 @@ describe('semana', () => {
     let textos = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
     // Inicio: «Esta sesión» sí, «Esta semana» no.
     expect(textos).toContain('SESIÓN  ')
-    expect(textos).toContain('Opus 5.5 medium')
+    expect(textos).toContain('Opus 5.5 med…')
     expect(textos).not.toContain('Esta semana')
     expect(textos.map(t => t.trimEnd())).not.toContain('Sonnet 5.5 low')
     const boton = await ui.find({ type: 'Button', key: 'pestana-semana' })
@@ -1924,28 +1936,27 @@ describe('actividad (puro)', () => {
     expect(estadoActividad(a, B, T0 + 2_000)).toBe('activo')
   })
 
-  test('estadosDeCuadros: verdes hasta enVuelo, el resto en espera; n=1 igual a estadoActividad', async () => {
+  test('estadoDeFila: activo gana a espera, espera gana a inactivo, sin ids inactivo y la espera caduca', async () => {
+    // A en vuelo, B esperando una herramienta: activo gana.
     let a: Actividad = iniciarPeticion({}, A, T0)
-    a = iniciarPeticion(a, A, T0)
+    a = terminarPeticion(iniciarPeticion(a, B, T0), B, T0 + 1_000, true)
+    expect(estadoDeFila(a, [A, B], T0 + 2_000)).toBe('activo')
+    expect(estadoDeFila(a, [B, A], T0 + 2_000)).toBe('activo')
 
-    // Dos en vuelo de cuatro cuadros: dos verdes y dos en espera.
-    expect(estadosDeCuadros(a, A, 4, T0)).toEqual(['activo', 'activo', 'espera', 'espera'])
+    // Sin nada en vuelo, una espera y un inactivo: espera.
+    const pendiente = terminarPeticion(a, A, T0 + 1_000, false)
+    expect(estadoDeFila(pendiente, [A, B], T0 + 2_000)).toBe('espera')
 
-    // Más en vuelo que cuadros: todos verdes.
-    expect(estadosDeCuadros(a, A, 1, T0)).toEqual(['activo'])
-    expect(estadosDeCuadros(a, A, 2, T0)).toEqual(['activo', 'activo'])
+    // Lista vacía o ids desconocidos: inactivo.
+    expect(estadoDeFila(a, [], T0)).toBe('inactivo')
+    expect(estadoDeFila(a, ['desconocida'], T0)).toBe('inactivo')
 
-    // Sin petición en vuelo, pendiente: todos en espera.
-    const pendiente = terminarPeticion(terminarPeticion(a, A, T0 + 1_000, true), A, T0 + 1_000, true)
-    expect(estadosDeCuadros(pendiente, A, 3, T0 + 2_000)).toEqual(['espera', 'espera', 'espera'])
+    // Un solo id: el mismo estado que estadoActividad.
+    expect(estadoDeFila(a, [A], T0)).toBe(estadoActividad(a, A, T0))
 
-    // Fila desconocida: inactivos.
-    expect(estadosDeCuadros(a, B, 2, T0)).toEqual(['inactivo', 'inactivo'])
-
-    // n = 1 siempre es [estadoActividad].
-    for (const [act, id, t] of [[a, A, T0], [pendiente, A, T0 + 2_000], [pendiente, A, T0 + ESPERA_MAX_MS + 2_000], [a, B, T0]] as const) {
-      expect(estadosDeCuadros(act, id, 1, t)).toEqual([estadoActividad(act, id, t)])
-    }
+    // La espera caduca a los ESPERA_MAX_MS.
+    expect(estadoDeFila(pendiente, [B], T0 + 1_000 + ESPERA_MAX_MS)).toBe('espera')
+    expect(estadoDeFila(pendiente, [B], T0 + 1_000 + ESPERA_MAX_MS + 1)).toBe('inactivo')
   })
 
   test('la misma fila pendiente sin ninguna otra activa → espera', async () => {
@@ -4501,7 +4512,7 @@ describe('actividad en el panel', () => {
     await ui.unmount()
   })
 
-  test('el principal pide herramienta mientras un subagente sigue en curso: principal warning, subagente success', async ($, on) => {
+  test('el principal pide herramienta mientras un subagente sigue en curso: el ■ único va en success y luego en warning', async ($, on) => {
     const motor = preparar(on)
     await $.session.measure(MEDIDA)
     await paso($, 'claude-opus-5-5', 'high')
@@ -4514,13 +4525,13 @@ describe('actividad en el panel', () => {
     motor.pidenHerramienta.add('principal')
     await paso($, 'claude-opus-5-5', 'high')
 
-    // Una sola fila unida: el ■ del principal primero y el del subagente después, cada uno con su estado.
-    expect(await coloresDe(ui, 'Opus 5.5 high')).toEqual(['warning', 'success'])
+    // Una sola fila unida con un solo ■: el principal espera pero el subagente va en vuelo, y activo gana.
+    expect(await coloresDe(ui, 'Opus 5.5 high')).toEqual(['success'])
 
     // Al terminar el subagente el principal sigue esperando su herramienta (hasta turn.complete o una nueva petición).
     abrirSub()
     await sub
-    expect(await coloresDe(ui, 'Opus 5.5 high')).toEqual(['warning', 'subtle'])
+    expect(await coloresDe(ui, 'Opus 5.5 high')).toEqual(['warning'])
     await ui.unmount()
   })
 
@@ -4583,7 +4594,7 @@ describe('actividad en el panel', () => {
     await ui.unmount()
   })
 
-  test('«Esta semana» no lleva cuadrados; «Esta sesión» lleva uno por origen en su única fila unida', async ($, on) => {
+  test('«Esta semana» no lleva cuadrados; «Esta sesión» lleva un solo ■ con « x0» en su única fila unida', async ($, on) => {
     const motor = preparar(on)
     await $.session.measure(MEDIDA)
     await paso($, 'claude-opus-5-5', 'high')
@@ -4591,10 +4602,11 @@ describe('actividad en el panel', () => {
     motor.detener('principal')()
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-    // Inicio: «Esta sesión» con un ■ por origen.
+    // Inicio: «Esta sesión» con un solo ■ por fila y su « x0».
     const inicio = (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
-    expect(inicio.filter(t => t === ' ■')).toHaveLength(2)
-    expect(await coloresDe(ui, 'Opus 5.5 high')).toEqual(['subtle', 'subtle'])
+    expect(inicio.filter(t => t === ' ■')).toHaveLength(1)
+    expect(inicio.filter(t => t === ' x0')).toHaveLength(1)
+    expect(await coloresDe(ui, 'Opus 5.5 high')).toEqual(['subtle'])
 
     // Gasto semanal: la tabla no lleva cuadrados.
     await ui.press({ key: 'pestana-semana' })
@@ -4759,13 +4771,17 @@ describe('flujo en el panel', () => {
 
   test('el hilo principal anota flujo|… solo con el flujo en curso; los subagentes, antes y después, sin marca', async ($, on) => {
     const { guardados } = preparar(on)
+    // Un subagente sigue trabajando (su respuesta pide herramienta) hasta que se le da su respuesta final.
+    const terminan = new Set<string>()
     on('turn.step', async function* (_$, e) {
+      const pide = e.agentId !== undefined && !terminan.has(e.agentId)
+
       return {
         turnId: e.turnId,
         index: e.index,
         answer: 'ok',
-        toolUses: [],
-        stopReason: 'end_turn' as const,
+        toolUses: pide ? [{ name: 'Read', input: {} }] : [],
+        stopReason: pide ? ('tool_use' as const) : ('end_turn' as const),
         usage: { ...USO, model: e.model },
       }
     })
@@ -4830,13 +4846,17 @@ describe('flujo en el panel', () => {
   test('Esta sesión y Esta semana pintan en cyan_FOR_SUBAGENTS_ONLY el tramo del orquestador; lo de fuera del flujo sigue en claude', async ($, on) => {
     const h = String(inicioDeHora(AHORA))
     preparar(on, [], { 'uso:otra': { [h]: { [clave('claude-sonnet-5-5', 'low')]: [400_000, 0, 0, 0] } } })
+    // Un subagente sigue trabajando (su respuesta pide herramienta) hasta que se le da su respuesta final.
+    const terminan = new Set<string>()
     on('turn.step', async function* (_$, e) {
+      const pide = e.agentId !== undefined && !terminan.has(e.agentId)
+
       return {
         turnId: e.turnId,
         index: e.index,
         answer: 'ok',
-        toolUses: [],
-        stopReason: 'end_turn' as const,
+        toolUses: pide ? [{ name: 'Read', input: {} }] : [],
+        stopReason: pide ? ('tool_use' as const) : ('end_turn' as const),
         usage: { ...USO, model: e.model },
       }
     })
@@ -4911,13 +4931,17 @@ describe('flujo en el panel', () => {
    */
   async function conFlujoYSubagente($: Engine, on: On, pane: typeof PANE | typeof PANE_ANCHO) {
     preparar(on)
+    // Un subagente sigue trabajando (su respuesta pide herramienta) hasta que se le da su respuesta final.
+    const terminan = new Set<string>()
     on('turn.step', async function* (_$, e) {
+      const pide = e.agentId !== undefined && !terminan.has(e.agentId)
+
       return {
         turnId: e.turnId,
         index: e.index,
         answer: 'ok',
-        toolUses: [],
-        stopReason: 'end_turn' as const,
+        toolUses: pide ? [{ name: 'Read', input: {} }] : [],
+        stopReason: pide ? ('tool_use' as const) : ('end_turn' as const),
         usage: { ...USO, model: e.model },
       }
     })
@@ -5054,13 +5078,17 @@ describe('flujo en el panel', () => {
 
   test('rediseño B: botones en una fila arriba y límites, contexto y sesión separados por reglas', async ($, on) => {
     preparar(on)
+    // Un subagente sigue trabajando (su respuesta pide herramienta) hasta que se le da su respuesta final.
+    const terminan = new Set<string>()
     on('turn.step', async function* (_$, e) {
+      const pide = e.agentId !== undefined && !terminan.has(e.agentId)
+
       return {
         turnId: e.turnId,
         index: e.index,
         answer: 'ok',
-        toolUses: [],
-        stopReason: 'end_turn' as const,
+        toolUses: pide ? [{ name: 'Read', input: {} }] : [],
+        stopReason: pide ? ('tool_use' as const) : ('end_turn' as const),
         usage: { ...USO, model: e.model },
       }
     })
@@ -5121,13 +5149,17 @@ describe('flujo en el panel', () => {
 
   test('pestañas: cada pestaña dibuja solo su contenido', async ($, on) => {
     preparar(on)
+    // Un subagente sigue trabajando (su respuesta pide herramienta) hasta que se le da su respuesta final.
+    const terminan = new Set<string>()
     on('turn.step', async function* (_$, e) {
+      const pide = e.agentId !== undefined && !terminan.has(e.agentId)
+
       return {
         turnId: e.turnId,
         index: e.index,
         answer: 'ok',
-        toolUses: [],
-        stopReason: 'end_turn' as const,
+        toolUses: pide ? [{ name: 'Read', input: {} }] : [],
+        stopReason: pide ? ('tool_use' as const) : ('end_turn' as const),
         usage: { ...USO, model: e.model },
       }
     })
@@ -5525,13 +5557,17 @@ describe('flujo en el panel', () => {
   /** Un flujo en Exploración con el ancho dado y cada `turn.step` gastando USO. */
   async function enExploracion($: Engine, on: On, pane: typeof PANE | typeof PANE_ANCHO) {
     const motor = preparar(on)
+    // Un subagente sigue trabajando (su respuesta pide herramienta) hasta que se le da su respuesta final.
+    const terminan = new Set<string>()
     on('turn.step', async function* (_$, e) {
+      const pide = e.agentId !== undefined && !terminan.has(e.agentId)
+
       return {
         turnId: e.turnId,
         index: e.index,
         answer: 'ok',
-        toolUses: [],
-        stopReason: 'end_turn' as const,
+        toolUses: pide ? [{ name: 'Read', input: {} }] : [],
+        stopReason: pide ? ('tool_use' as const) : ('end_turn' as const),
         usage: { ...USO, model: e.model },
       }
     })
@@ -5799,9 +5835,9 @@ describe('flujo en el panel', () => {
   const FILA_EXPLORADOR = 'Haiku 5.5 high'
 
   /**
-   * Los `color` de todos los ■ seguidos que siguen a la etiqueta de la fila, en orden (el del principal
-   * primero si la fila lo tiene), y si tras ellos viene la cifra de total. La etiqueta se compara sin el
-   * relleno final; principal y subagente van unidos en una fila, así que es única.
+   * Los `color` de los ■ seguidos que siguen a la etiqueta de la fila (uno solo), su sufijo « xN» y si tras
+   * ellos viene la cifra de total. La etiqueta se compara sin el relleno final; principal y subagente
+   * van unidos en una fila, así que es única.
    */
   const cuadradosDe = async (ui: Ui, etiqueta: string) => {
     const arbol = await ui.findAll({})
@@ -5809,8 +5845,28 @@ describe('flujo en el panel', () => {
     const colores: unknown[] = []
     let j = i + 1
     while (i !== -1 && arbol[j]?.type === 'Text' && arbol[j]?.text === ' ■') colores.push(arbol[j++]?.props.color)
+    const x = /^ x\d+$/.test(arbol[j]?.text ?? '') ? arbol[j++]?.text : undefined
 
-    return { colores, total: /^ *\d/.test(arbol[j]?.text ?? ''), juntos: arbol.some(n => n.type === 'Text' && n.text === '■■■') }
+    return { colores, x, total: /^ *\d/.test(arbol[j]?.text ?? '') }
+  }
+
+  /**
+   * Anota como subagentes (agent.spawn con el mismo `tool_use_id` de su llamada retenida y un `agentId`
+   * `agente-<descripción>`) los agentes lanzados antes con `agente($, tipo, descripción)`.
+   */
+  async function anotarLanzados($: Engine, motor: Pick<ReturnType<typeof motorFlujo>, 'agentIds' | 'idsDeLlamada'>, descripciones: string[], tipo: string) {
+    for (const d of descripciones) {
+      motor.agentIds.set(d, `agente-${d}`)
+      await $.agent.spawn({ tool_use_id: motor.idsDeLlamada.get(d) ?? `tu-${d}`, prompt: 'prueba', description: d, subagentType: tipo })
+    }
+  }
+
+  /** La respuesta final (sin herramientas) de esos subagentes: ahí se cierran como `listo`. */
+  async function finales($: Engine, modelo: ReturnType<typeof motorControlado>, nombres: string[], m = HAIKU) {
+    for (const n of nombres) {
+      modelo.pidenHerramienta.delete(`agente-${n}`)
+      await paso($, m, 'high', `agente-${n}`)
+    }
   }
 
   /**
@@ -5840,67 +5896,75 @@ describe('flujo en el panel', () => {
     const abrir = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
     const vuelos = { A: agente($, 'explorador', 'A'), B: agente($, 'explorador', 'B'), C: agente($, 'explorador', 'C') }
     await esperar()
+    // Cada explorador queda anotado y, con su primera respuesta, ya tiene modelo·esfuerzo y cuenta en el « xN».
+    await anotarLanzados($, motor, ['A', 'B', 'C'], 'explorador')
+    for (const n of ['A', 'B', 'C']) modelo.pidenHerramienta.add(`agente-${n}`)
     await paso($, HAIKU, 'high', 'agente-A')
+    await paso($, HAIKU, 'high', 'agente-B')
+    await paso($, HAIKU, 'high', 'agente-C')
 
     return { ui, motor, modelo, abrir, vuelos }
   }
 
-  test('la fila de los exploradores lleva un ■ por explorador en vuelo y vuelve a uno', async ($, on) => {
+  test('la fila de los exploradores lleva un solo ■ con « xN» por explorador en curso y baja a x0', async ($, on) => {
     const { ui, modelo, abrir, vuelos } = await explorando($, on)
     await paso($, HAIKU, 'high')
 
-    // Fila unida: el ■ del principal (uno) y luego los de los tres exploradores.
+    // Fila unida: un solo ■ gris y « x3» (los tres exploradores en curso), antes de las cifras.
     let fila = await cuadradosDe(ui, FILA_EXPLORADOR)
-    expect(fila.colores).toEqual(['subtle', 'subtle', 'subtle', 'subtle'])
-    expect(fila.total).toBe(true)
-    expect(fila.juntos).toBe(false)
+    expect(fila).toEqual({ colores: ['warning'], x: ' x3', total: true })
 
-    // Otra petición del subagente en vuelo: solo un ■ de los tres exploradores va en verde (uno por petición en vuelo), el resto en amarillo; el del principal no cambia.
+    // Otra petición del subagente en vuelo: el ■ único va en verde y la cuenta sigue en x3.
     const abrirPeticion = modelo.detener('agente-A')
     const peticion = paso($, HAIKU, 'high', 'agente-A')
     await esperar()
     fila = await cuadradosDe(ui, FILA_EXPLORADOR)
-    expect(fila.colores).toEqual(['subtle', 'success', 'warning', 'warning'])
+    expect(fila).toEqual({ colores: ['success'], x: ' x3', total: true })
 
     abrir.B()
     await vuelos.B
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toEqual(['subtle', 'success', 'warning'])
+    await finales($, modelo, ['B'])
+    expect(await cuadradosDe(ui, FILA_EXPLORADOR)).toMatchObject({ colores: ['success'], x: ' x2' })
 
+    // La cuenta baja a x0 con las respuestas finales: la de C y la petición en vuelo de A.
     abrir.A()
     abrir.C()
     await Promise.all([vuelos.A, vuelos.C])
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toEqual(['subtle', 'success'])
+    modelo.pidenHerramienta.delete('agente-A')
+    await finales($, modelo, ['C'])
+    expect(await cuadradosDe(ui, FILA_EXPLORADOR)).toMatchObject({ colores: ['success'], x: ' x1' })
 
     abrirPeticion()
     await peticion
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toEqual(['subtle', 'subtle'])
+    expect(await cuadradosDe(ui, FILA_EXPLORADOR)).toMatchObject({ colores: ['subtle'], x: ' x0' })
     await ui.unmount()
   })
 
-  test('la fila unida conserva el ■ del principal y los de los exploradores, cada uno con su estado', async ($, on) => {
+  test('la fila unida lleva un solo ■ con el estado del conjunto: activo gana a espera', async ($, on) => {
     const { ui, modelo, abrir, vuelos } = await explorando($, on)
     await paso($, HAIKU, 'high')
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toEqual(['subtle', 'subtle', 'subtle', 'subtle'])
+    expect(await cuadradosDe(ui, FILA_EXPLORADOR)).toMatchObject({ colores: ['warning'], x: ' x3' })
 
-    // El principal en vuelo: su ■ (el primero) en success; los tres de los exploradores siguen grises.
+    // El principal en vuelo: el ■ único en success.
     const abrirPrincipal = modelo.detener('principal')
     const enCurso = paso($, HAIKU, 'high')
     await esperar()
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toEqual(['success', 'subtle', 'subtle', 'subtle'])
+    expect(await cuadradosDe(ui, FILA_EXPLORADOR)).toMatchObject({ colores: ['success'], x: ' x3' })
     abrirPrincipal()
     await enCurso
 
-    // El principal pide una herramienta (warning) mientras un explorador sigue en vuelo (success).
+    // El principal pide una herramienta (espera) mientras un explorador sigue en vuelo: un ■ verde, no dos.
     modelo.pidenHerramienta.add('principal')
     await paso($, HAIKU, 'high')
     const abrirSub = modelo.detener('agente-A')
     const sub = paso($, HAIKU, 'high', 'agente-A')
     await esperar()
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toEqual(['warning', 'success', 'warning', 'warning'])
+    expect(await cuadradosDe(ui, FILA_EXPLORADOR)).toMatchObject({ colores: ['success'], x: ' x3' })
 
+    // Al acabar el subagente queda la espera del principal.
     abrirSub()
     await sub
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toEqual(['warning', 'subtle', 'subtle', 'subtle'])
+    expect(await cuadradosDe(ui, FILA_EXPLORADOR)).toMatchObject({ colores: ['warning'], x: ' x3' })
 
     abrir.A()
     abrir.B()
@@ -5909,7 +5973,7 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('■: con 3 exploradores y 1 petición en vuelo, 1 verde y 2 amarillos', async ($, on) => {
+  test('■: con 3 exploradores y 1 petición en vuelo, un solo ■ en success en toda la sesión', async ($, on) => {
     const { ui, modelo, abrir, vuelos } = await explorando($, on)
     await paso($, HAIKU, 'high')
 
@@ -5917,10 +5981,8 @@ describe('flujo en el panel', () => {
     const peticion = paso($, HAIKU, 'high', 'agente-A')
     await esperar()
 
-    // El primero es el del principal (inactivo); los tres siguientes, los exploradores.
-    const exploradores = (await cuadradosDe(ui, FILA_EXPLORADOR)).colores.slice(1)
-    expect(exploradores.filter(c => c === 'success')).toHaveLength(1)
-    expect(exploradores.filter(c => c === 'warning')).toHaveLength(2)
+    expect((await ui.findAll({ type: 'Text' })).filter(t => t.text === ' ■').map(t => t.props.color)).toEqual(['success'])
+    expect(await cuadradosDe(ui, FILA_EXPLORADOR)).toMatchObject({ x: ' x3' })
 
     abrirPeticion()
     await peticion
@@ -5939,13 +6001,17 @@ describe('flujo en el panel', () => {
    */
   async function preparandoRevision($: Engine, on: On) {
     const motor = preparar(on)
+    // Un subagente sigue trabajando (su respuesta pide herramienta) hasta que se le da su respuesta final.
+    const terminan = new Set<string>()
     on('turn.step', async function* (_$, e) {
+      const pide = e.agentId !== undefined && !terminan.has(e.agentId)
+
       return {
         turnId: e.turnId,
         index: e.index,
         answer: 'ok',
-        toolUses: [],
-        stopReason: 'end_turn' as const,
+        toolUses: pide ? [{ name: 'Read', input: {} }] : [],
+        stopReason: pide ? ('tool_use' as const) : ('end_turn' as const),
         usage: { ...USO, model: e.model },
       }
     })
@@ -5959,7 +6025,7 @@ describe('flujo en el panel', () => {
     await $.skill.prompt({ skill: 'impl', text: '' })
     await bash($, 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs')
 
-    return { motor, ui: await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' }) }
+    return { motor, terminan, ui: await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' }) }
   }
 
   /** Lleva el flujo a Verificación final (`estado --base` → ejecutor → revisor de la subtarea → `verificar`) y lanza tres revisores retenidos (R1, R2 y R3). */
@@ -5972,36 +6038,49 @@ describe('flujo en el panel', () => {
     const abrir = { R1: motor.detener('R1'), R2: motor.detener('R2'), R3: motor.detener('R3') }
     const vuelos = { R1: agente($, 'revisor', 'R1'), R2: agente($, 'revisor', 'R2'), R3: agente($, 'revisor', 'R3') }
     await esperar()
+    await anotarLanzados($, motor, ['R1', 'R2', 'R3'], 'revisor')
 
     return { abrir, vuelos }
   }
 
-  test('la fila de los revisores lleva un ■ por revisor en vuelo en la revisión integral y vuelve a uno', async ($, on) => {
-    const { motor, ui } = await preparandoRevision($, on)
+  /** La primera respuesta de cada revisor: desde ahí tienen modelo·esfuerzo y cuentan en el « xN» de su fila. */
+  async function respondenRevisores($: Engine, modelo: string) {
+    await paso($, modelo, 'high', 'agente-R1')
+    await paso($, modelo, 'high', 'agente-R2')
+    await paso($, modelo, 'high', 'agente-R3')
+  }
+
+  test('la fila de los revisores lleva « xN» por revisor en curso en la revisión integral y vuelve a x0', async ($, on) => {
+    const { motor, ui, terminan } = await preparandoRevision($, on)
     const { abrir, vuelos } = await lanzandoRevisores($, motor)
 
-    // El paso de un revisor llega tras los tres lanzamientos y crea la fila anotada.
+    // Un revisor recién lanzado no cuenta hasta su primera respuesta (sin modelo todavía).
     await paso($, HAIKU, 'high', 'agente-R1')
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x1')
+    await paso($, HAIKU, 'high', 'agente-R2')
+    await paso($, HAIKU, 'high', 'agente-R3')
+    expect(await cuadradosDe(ui, FILA_EXPLORADOR)).toMatchObject({ colores: ['warning'], x: ' x3' })
 
     abrir.R1()
     await vuelos.R1
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(2)
+    await terminar($, terminan, ['agente-R1'])
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x2')
 
     abrir.R2()
     abrir.R3()
     await Promise.all([vuelos.R2, vuelos.R3])
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(1)
+    await terminar($, terminan, ['agente-R2', 'agente-R3'])
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x0')
     await ui.unmount()
   })
 
   test('un revisor que falla también baja la cuenta', async ($, on) => {
-    const { motor, ui } = await preparandoRevision($, on)
+    const { motor, ui, terminan } = await preparandoRevision($, on)
     const { abrir, vuelos } = await lanzandoRevisores($, motor)
-    await paso($, HAIKU, 'high', 'agente-R1')
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    await respondenRevisores($, HAIKU)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
-    // El revisor cae: el error llega intacto y su ■ se va igual.
+    // El revisor cae: el error llega intacto y su cuenta baja igual.
     motor.fallan.add('R1')
     abrir.R1()
     const error = await vuelos.R1.then(
@@ -6010,36 +6089,41 @@ describe('flujo en el panel', () => {
     )
     expect(error).toBeInstanceOf(Error)
     expect((error as Error).message).not.toMatch(/panel/)
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(2)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x2')
 
     abrir.R2()
     abrir.R3()
     await Promise.all([vuelos.R2, vuelos.R3])
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(1)
+    await terminar($, terminan, ['agente-R2', 'agente-R3'])
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x0')
     await ui.unmount()
   })
 
-  test('en la revisión integral la fila de los exploradores no lleva los ■ de los revisores', async ($, on) => {
-    const { motor, ui } = await preparandoRevision($, on)
+  test('en la revisión integral cada fila cuenta solo los agentes de su modelo·esfuerzo', async ($, on) => {
+    const { motor, ui, terminan } = await preparandoRevision($, on)
 
     // La exploración con Haiku anota su fila.
     const abrirExp = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
     const exploradores = { A: agente($, 'explorador', 'A'), B: agente($, 'explorador', 'B'), C: agente($, 'explorador', 'C') }
     await esperar()
+    await anotarLanzados($, motor, ['A', 'B', 'C'], 'explorador')
     await paso($, HAIKU, 'high', 'agente-A')
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    await paso($, HAIKU, 'high', 'agente-B')
+    await paso($, HAIKU, 'high', 'agente-C')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
     abrirExp.A()
     abrirExp.B()
     abrirExp.C()
     await Promise.all(Object.values(exploradores))
+    await terminar($, terminan, ['agente-A', 'agente-B', 'agente-C'])
 
-    // Tres revisores con otro modelo: abren su propia tanda y no heredan la marca de la fila de Haiku.
+    // Tres revisores con otro modelo: su fila cuenta tres y la de Haiku, ya sin exploradores en curso, vuelve a x0.
     const { abrir, vuelos } = await lanzandoRevisores($, motor)
-    await paso($, SONNET, 'high', 'agente-R1')
+    await respondenRevisores($, SONNET)
     // Con dos modelos las etiquetas salen alineadas en columnas.
-    expect((await cuadradosDe(ui, 'Sonnet 5.5 high')).colores).toHaveLength(3)
-    expect((await cuadradosDe(ui, 'Haiku  5.5 high')).colores).toHaveLength(1)
+    expect((await cuadradosDe(ui, 'Sonnet 5.5 high')).x).toBe(' x3')
+    expect((await cuadradosDe(ui, 'Haiku  5.5 high')).x).toBe(' x0')
 
     abrir.R1()
     abrir.R2()
@@ -6048,20 +6132,24 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('con cinco exploradores en vuelo la fila lleva cinco ■, y con más de cinco, cinco', async ($, on) => {
-    const { ui, motor, abrir, vuelos } = await explorando($, on)
+  test('sin tope de cinco: con cinco y con seis exploradores en curso la fila dice x5 y x6', async ($, on) => {
+    const { ui, motor, modelo, abrir, vuelos } = await explorando($, on)
+    for (const n of ['D', 'E', 'F']) modelo.pidenHerramienta.add(`agente-${n}`)
     const abrirD = motor.detener('D')
     const abrirE = motor.detener('E')
     const extra = [agente($, 'explorador', 'D'), agente($, 'explorador', 'E')]
     await esperar()
-
-    // Fila solo de subagente: un ■ por explorador, con la etiqueta entera a 49 columnas.
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(5)
+    await anotarLanzados($, motor, ['D', 'E'], 'explorador')
+    await paso($, HAIKU, 'high', 'agente-D')
+    await paso($, HAIKU, 'high', 'agente-E')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x5')
 
     const abrirF = motor.detener('F')
     extra.push(agente($, 'explorador', 'F'))
     await esperar()
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(5)
+    await anotarLanzados($, motor, ['F'], 'explorador')
+    await paso($, HAIKU, 'high', 'agente-F')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x6')
 
     abrirD()
     abrirE()
@@ -6073,17 +6161,17 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('los ■ de más sobreviven a session.start y se van con session.end', async ($, on) => {
+  test('la cuenta « xN» sobrevive a session.start y a un session.end que no es /clear', async ($, on) => {
     const { ui, abrir, vuelos } = await explorando($, on)
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
-    // Un /reload-plugins a mitad de la exploración repite session.start: el flujo y las marcas siguen.
+    // Un /reload-plugins a mitad de la exploración repite session.start: los agentes anotados siguen.
     await $.session.start({ cwd: 'D:\\GitHub-Personal\\mods-claude' })
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
-    // session.end borra el flujo y las marcas.
+    // session.end sin /clear no vacía los agentes (la lista es la misma que ve la pestaña «Agentes»).
     await $.session.end({ reason: 'other', sessionId: 's1', resume: { id: 's1' } })
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(1)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
     abrir.A()
     abrir.B()
@@ -6092,9 +6180,10 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('un flujo nuevo no hereda las filas: con exploradores en vuelo la fila vuelve a uno hasta que se la vea de nuevo', async ($, on) => {
-    const { ui, motor, abrir, vuelos } = await explorando($, on)
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+  test('un flujo nuevo no cambia la cuenta: los lanzados sin modelo no suman hasta su primera respuesta', async ($, on) => {
+    const { ui, motor, modelo, abrir, vuelos } = await explorando($, on)
+    modelo.pidenHerramienta.add('agente-D')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
     await $.skill.prompt({ skill: 'impl', text: '' })
     await bash($, 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs')
@@ -6103,10 +6192,11 @@ describe('flujo en el panel', () => {
     const d = agente($, 'explorador', 'D')
     const e = agente($, 'explorador', 'E')
     await esperar()
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(1)
+    await anotarLanzados($, motor, ['D', 'E'], 'explorador')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
-    await paso($, HAIKU, 'high', 'agente-A')
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(2)
+    await paso($, HAIKU, 'high', 'agente-D')
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x4')
 
     abrirD()
     abrirE()
@@ -6117,17 +6207,17 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('skill.prompt de /impl con RELEVO abre flujo nuevo y vacía las filas', async ($, on) => {
+  test('skill.prompt de /impl con RELEVO abre flujo nuevo y no toca los agentes en curso', async ($, on) => {
     const { ui, abrir, vuelos } = await explorando($, on)
     expect(await desdeResumen(ui, 1)).toEqual(['/impl · Exploración · 0 s'])
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
-    // Ya no hay relevo: una marca RELEVO es un pedido más, el flujo empieza de nuevo y las filas se vacían.
+    // Ya no hay relevo: una marca RELEVO es un pedido más y el flujo empieza de nuevo; los agentes siguen en curso.
     await $.skill.prompt({ skill: 'impl', text: '**Pedido:** RELEVO · inicio\nPEDIDO: x' })
 
     const [resumen] = await desdeResumen(ui, 1)
     expect(resumen).toBe('/impl · Preflight · 0 s')
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(1)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
     abrir.A()
     abrir.B()
@@ -6156,12 +6246,12 @@ describe('flujo en el panel', () => {
     await ui.unmount()
   })
 
-  test('si el flujo termina con exploradores en vuelo, la fila vuelve a uno', async ($, on) => {
+  test('si el flujo termina con exploradores en vuelo, la fila sigue contándolos', async ($, on) => {
     const { ui, abrir, vuelos } = await explorando($, on)
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(3)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
     await $.turn.complete(respuesta('CIERRE · x — COMPLETO'))
-    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).colores).toHaveLength(1)
+    expect((await cuadradosDe(ui, FILA_EXPLORADOR)).x).toBe(' x3')
 
     abrir.A()
     abrir.B()
@@ -6176,13 +6266,17 @@ describe('flujo en el panel', () => {
    */
   async function alineando($: Engine, on: On, pane: typeof PANE | typeof PANE_ANCHO) {
     const motor = preparar(on)
+    // Un subagente sigue trabajando (su respuesta pide herramienta) hasta que se le da su respuesta final.
+    const terminan = new Set<string>()
     on('turn.step', async function* (_$, e) {
+      const pide = e.agentId !== undefined && !terminan.has(e.agentId)
+
       return {
         turnId: e.turnId,
         index: e.index,
         answer: 'ok',
-        toolUses: [],
-        stopReason: 'end_turn' as const,
+        toolUses: pide ? [{ name: 'Read', input: {} }] : [],
+        stopReason: pide ? ('tool_use' as const) : ('end_turn' as const),
         usage: { ...USO, model: e.model },
       }
     })
@@ -6200,13 +6294,24 @@ describe('flujo en el panel', () => {
     const abrir = { A: motor.detener('A'), B: motor.detener('B'), C: motor.detener('C') }
     const vuelos = { A: agente($, 'explorador', 'A'), B: agente($, 'explorador', 'B'), C: agente($, 'explorador', 'C') }
     await esperar()
+    await anotarLanzados($, motor, ['A', 'B', 'C'], 'explorador')
     await paso($, 'claude-haiku-5-5', 'high', 'agente-A')
+    await paso($, 'claude-haiku-5-5', 'high', 'agente-B')
+    await paso($, 'claude-haiku-5-5', 'high', 'agente-C')
     await paso($, 'claude-sonnet-5-5', 'high')
 
-    return { ui, abrir, vuelos }
+    return { ui, abrir, vuelos, terminan }
   }
 
-  /** Cada fila de «Esta sesión»: su etiqueta, cuántos ■ lleva, si tras ellos viene el total y el color de su barra. */
+  /** La respuesta final de esos subagentes (los de `preparandoRevision` y `alineando`), con el modelo dado. */
+  async function terminar($: Engine, terminan: Set<string>, ids: string[], m = HAIKU) {
+    for (const id of ids) {
+      terminan.add(id)
+      await paso($, m, 'high', id)
+    }
+  }
+
+  /** Cada fila de «Esta sesión»: su etiqueta, cuántos ■ lleva, su « xN», si tras ellos viene el total y el color de su barra. */
   const filasDeSesion = async (ui: Ui) => {
     const arbol = await ui.findAll({})
     const ses = arbol.findIndex(n => n.type === 'Text' && n.text === 'SESIÓN  ')
@@ -6218,11 +6323,14 @@ describe('flujo en el panel', () => {
 
       let j = i + 1
       while (dentro[j]?.type === 'Text' && dentro[j]?.text === ' ■') j++
+      const cuadrados = j - i - 1
+      const x = /^ x\d+$/.test(dentro[j]?.text ?? '') ? dentro[j++]?.text : undefined
 
       return [
         {
           etiqueta: n.text ?? '',
-          cuadrados: j - i - 1,
+          cuadrados,
+          x,
           total: /^ *\d/.test(dentro[j]?.text ?? ''),
           barra: dentro.slice(j).find(esBarraDeFila)?.props.color,
         },
@@ -6231,26 +6339,27 @@ describe('flujo en el panel', () => {
   }
 
   test('Esta sesión alinea las filas y los ■ empiezan en la misma columna', async ($, on) => {
-    const { ui, abrir, vuelos } = await alineando($, on, PANE_ANCHO)
+    const { ui, abrir, vuelos, terminan } = await alineando($, on, PANE_ANCHO)
 
-    // Con 3 exploradores en vuelo: la fila de subagente lleva 3 ■ y la principal 1, tras etiquetas del mismo largo.
+    // Con 3 exploradores en curso: cada fila lleva un solo ■; la de subagente dice x3 y la principal x0, tras etiquetas del mismo largo.
     let filas = await filasDeSesion(ui)
     expect(filas.map(f => f.etiqueta).sort()).toEqual(['Haiku  5.5 high', 'Sonnet 5.5 high'])
     expect(filas.map(f => f.etiqueta.length)).toEqual([15, 15])
-    expect(filas.map(f => f.cuadrados).sort()).toEqual([1, 3])
+    expect(filas.map(f => f.cuadrados)).toEqual([1, 1])
     expect(filas.every(f => f.total)).toBe(true)
-    expect(filas.find(f => f.etiqueta === 'Haiku  5.5 high')?.cuadrados).toBe(3)
-    expect(filas.find(f => f.etiqueta === 'Sonnet 5.5 high')?.cuadrados).toBe(1)
+    expect(filas.find(f => f.etiqueta === 'Haiku  5.5 high')?.x).toBe(' x3')
+    expect(filas.find(f => f.etiqueta === 'Sonnet 5.5 high')?.x).toBe(' x0')
 
-    // Sin exploradores en vuelo: una sola ■ en cada fila y las mismas etiquetas.
+    // Sin exploradores en curso: x0 en cada fila y las mismas etiquetas.
     abrir.A()
     abrir.B()
     abrir.C()
     await Promise.all(Object.values(vuelos))
+    await terminar($, terminan, ['agente-A', 'agente-B', 'agente-C'], 'claude-haiku-5-5')
     filas = await filasDeSesion(ui)
     expect(filas.map(f => f.etiqueta).sort()).toEqual(['Haiku  5.5 high', 'Sonnet 5.5 high'])
     expect(filas.map(f => f.etiqueta.length)).toEqual([15, 15])
-    expect(filas.map(f => f.cuadrados)).toEqual([1, 1])
+    expect(filas.map(f => f.x)).toEqual([' x0', ' x0'])
     await ui.unmount()
   })
 
@@ -6260,10 +6369,11 @@ describe('flujo en el panel', () => {
 
     const filas = await filasDeSesion(ui)
     const haiku = filas.filter(f => f.etiqueta === 'Haiku  5.5 high')
-    // Una sola etiqueta y una sola fila: 1 ■ del principal y 3 de los exploradores.
+    // Una sola etiqueta y una sola fila: un solo ■ con x3 (los tres exploradores en curso).
     expect(filas.filter(f => f.etiqueta.startsWith('Haiku'))).toHaveLength(1)
     expect(haiku).toHaveLength(1)
-    expect(haiku[0]?.cuadrados).toBe(4)
+    expect(haiku[0]?.cuadrados).toBe(1)
+    expect(haiku[0]?.x).toBe(' x3')
     // El hilo principal responde con el flujo en curso: su tramo es `cyan_FOR_SUBAGENTS_ONLY` (el del orquestador), antes que el de subagentes.
     expect(haiku[0]?.barra).toBe('cyan_FOR_SUBAGENTS_ONLY')
     expect(filas.some(f => f.etiqueta.includes('sub'))).toBe(false)
@@ -6279,10 +6389,10 @@ describe('flujo en el panel', () => {
   test('con 32 columnas las etiquetas se acortan al presupuesto y las cifras de total siguen apareciendo', async ($, on) => {
     const { ui, abrir, vuelos } = await alineando($, on, PANE)
 
-    // Presupuesto: 32 − 14 de cifras − 2 × 3 ■ = 12 columnas para la etiqueta.
+    // Presupuesto: 32 − 14 de cifras − 5 del sufijo « ■ x3» = 13 columnas para la etiqueta.
     const filas = await filasDeSesion(ui)
-    expect(filas.map(f => f.etiqueta).sort()).toEqual(['Haiku  5.5… ', 'Sonnet 5.5… '])
-    expect(filas.map(f => f.etiqueta.length)).toEqual([12, 12])
+    expect(filas.map(f => f.etiqueta).sort()).toEqual(['Haiku  5.5 h…', 'Sonnet 5.5 h…'])
+    expect(filas.map(f => f.etiqueta.length)).toEqual([13, 13])
     expect(filas.every(f => f.total)).toBe(true)
     const textos = await textosDe(ui)
     expect(textos.slice(0, textos.indexOf('Esta semana'))).toContain('   100k')
@@ -7755,6 +7865,32 @@ describe('agentes (puro)', () => {
     expect(base).toHaveLength(1)
   })
 
+  test('agentesEnCurso: cuenta solo los que corren con ese modelo·esfuerzo', () => {
+    const agente = (id: string, extra: Partial<AgenteVisto> = {}): AgenteVisto => ({
+      id,
+      tipo: 'impl:qcc-ejecutor',
+      descripcion: 'trabajo',
+      desde: 1_000,
+      estado: 'corriendo',
+      herramientas: 0,
+      ...extra,
+    })
+    const lista = congelar([
+      agente('a1', { modelo: 'Sonnet 5.5 high' }),
+      agente('a2', { modelo: 'Sonnet 5.5 high' }),
+      agente('a3', { modelo: 'Sonnet 5.5 high', estado: 'listo', fin: 2_000 }),
+      agente('a4', { modelo: 'Sonnet 5.5 high', estado: 'fallo', fin: 2_000 }),
+      agente('a5', { modelo: 'Haiku 5.5 high' }),
+      agente('a6', { modelo: 'Sonnet 5.5 medium' }),
+      agente('a7'),
+    ])
+
+    expect(agentesEnCurso(lista, 'Sonnet 5.5 high')).toBe(2)
+    expect(agentesEnCurso(lista, 'Haiku 5.5 high')).toBe(1)
+    expect(agentesEnCurso(lista, 'Opus 5.5 high')).toBe(0)
+    expect(agentesEnCurso([], 'Sonnet 5.5 high')).toBe(0)
+  })
+
   test('anotarAgente: con más de 40 se cae el terminado más viejo; sin terminados, el más viejo de todos', () => {
     expect(TOPE_AGENTES).toBe(40)
     let l: AgenteVisto[] = []
@@ -7916,7 +8052,7 @@ describe('agentes en el panel', () => {
     const compuertas = new Map<string, Promise<void>>()
     const fallan = new Set<string>()
     const agentIds = new Map<string, string>()
-    const resultados = new Map<string, { agentId: string; totalDurationMs: number }>()
+    const resultados = new Map<string, { agentId: string; totalDurationMs?: number; isAsync?: boolean; status?: string; description?: string }>()
     on('clock.now', () => ({ value: reloj.t }))
     on('clock.every', () => ({ value: undefined }))
     on('clock.after', () => ({ value: undefined }))
@@ -7994,6 +8130,7 @@ describe('agentes en el panel', () => {
 
   test('spawn, herramientas del agente y vuelta dibujan la pestaña: resumen, líneas y archivos tocados', async ($, on) => {
     const m = motor(on)
+    motorResponde(on, 'claude-haiku-5-5')
     m.agentIds.set('Editar API', 'ag-1')
     m.agentIds.set('Buscar usos', 'ag-2')
     await $.session.measure(MEDIDA)
@@ -8024,7 +8161,8 @@ describe('agentes en el panel', () => {
       ' ×2 · ejecutor',
     ])
 
-    // Vuelve bien: queda ✓ con el tiempo fijo, aunque el reloj siga.
+    // Da su respuesta final y vuelve bien: queda ✓ con el tiempo fijo, aunque el reloj siga.
+    await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
     abrir()
     await vuelo
     m.reloj.t += 60_000
@@ -8054,22 +8192,88 @@ describe('agentes en el panel', () => {
     await ui.unmount()
   })
 
-  test('un Agent que vuelve sin agentId se cierra por su tool_use_id', async ($, on) => {
+  test('un Agent que falla sin agentId se cierra como fallo por su tool_use_id; si sale bien, no lo cierra', async ($, on) => {
     const m = motor(on)
     m.agentIds.set('Sin id', 'ag-1')
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
 
-    const abrir = m.detener('Sin id')
-    const vuelo = lanzarAgente($, 'Sin id', 'impl:qcc-revisor', 'tu-9')
+    // Vuelve bien: sigue en curso (lo cierra su respuesta final).
+    await spawn($, 'Sin id', 'impl:qcc-revisor', 'tu-8')
+    await lanzarAgente($, 'Sin id', 'impl:qcc-revisor', 'tu-8')
+    await ui.press({ key: 'pestana-agentes' })
+    expect((await deAgentes(ui))[0]).toBe('1 agente · 1 corriendo · 0 herramientas')
+
+    // Falla sin `agentId` en el resultado: se cierra por su `tool_use_id`.
+    m.agentIds.set('Falla', 'ag-2')
+    m.fallan.add('Falla')
+    const abrir = m.detener('Falla')
+    const vuelo = lanzarAgente($, 'Falla', 'impl:qcc-revisor', 'tu-9').catch((err: unknown) => err)
     await esperar()
-    await spawn($, 'Sin id', 'impl:qcc-revisor', 'tu-9')
+    await spawn($, 'Falla', 'impl:qcc-revisor', 'tu-9')
     m.reloj.t += 3_000
     abrir()
-    expect(await vuelo).toEqual({ result: 'listo' })
+    expect(await vuelo).toBeInstanceOf(Error)
+    expect((await deAgentes(ui)).slice(0, 5)).toEqual(['2 agentes · 1 corriendo · 0 herramientas', '✗ ', 'revisor', ' 3 s · 0 herr.', '  Falla'])
+    await ui.unmount()
+  })
+
+  test('un Agent en segundo plano sigue en curso al volver y lo cierra su respuesta final', async ($, on) => {
+    const m = motor(on)
+    const modelo = motorControlado(on, 'claude-haiku-5-5')
+    m.agentIds.set('Fondo', 'ag-1')
+    m.resultados.set('Fondo', { agentId: 'ag-1', isAsync: true, status: 'async_launched' })
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+
+    const abrir = m.detener('Fondo')
+    const vuelo = lanzarAgente($, 'Fondo', 'Explore', 'tu-1')
+    await esperar()
+    await spawn($, 'Fondo', 'Explore', 'tu-1')
+    abrir()
+    await vuelo
+    // Una respuesta que pide herramienta no es la final: sigue en curso y ya cuenta en « x1».
+    modelo.pidenHerramienta.add('ag-1')
+    await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
+    expect(await textosDe(ui)).toContain(' x1')
 
     await ui.press({ key: 'pestana-agentes' })
-    expect((await deAgentes(ui)).slice(0, 5)).toEqual(['1 agente · 0 corriendo · 0 herramientas', '✓ ', 'revisor', ' 3 s · 0 herr.', '  Sin id'])
+    expect((await deAgentes(ui))[0]).toBe('1 agente · 1 corriendo · 0 herramientas')
+
+    // La respuesta sin herramientas es la final: lo cierra.
+    modelo.pidenHerramienta.delete('ag-1')
+    await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
+    expect((await deAgentes(ui)).slice(0, 2)).toEqual(['1 agente · 0 corriendo · 0 herramientas', '✓ '])
+    await ui.unmount()
+  })
+
+  test('un agente que lanzó una tarea en segundo plano y termina su turno sigue en curso (amarillo) hasta su respuesta final', async ($, on) => {
+    const m = motor(on)
+    const modelo = motorControlado(on, 'claude-haiku-5-5')
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+    m.agentIds.set('Espera', 'ag-1')
+    await $.session.measure(MEDIDA)
+    const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+    await spawn($, 'Espera', 'Explore', 'tu-1')
+
+    // Lanza su tarea en segundo plano y responde que la espera: no es la final.
+    modelo.pidenHerramienta.add('ag-1')
+    await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
+    await $.tool.call({ tool: 'Bash', command: 'sleep 60', run_in_background: true, agentId: 'ag-1' })
+    modelo.pidenHerramienta.delete('ag-1')
+    await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
+    expect(await textosDe(ui)).toContain(' x1')
+    expect(await coloresDe(ui, 'Haiku 5.5 low')).toEqual(['warning'])
+
+    // Termina el turno del hilo principal: el agente sigue esperando su tarea y su ■ no vuelve a gris.
+    await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 10, isAborted: false, turnId: 't' })
+    expect(await coloresDe(ui, 'Haiku 5.5 low')).toEqual(['warning'])
+
+    // Al despertar, su respuesta sin herramientas sí es la final.
+    await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
+    expect(await textosDe(ui)).toContain(' x0')
+    await ui.press({ key: 'pestana-agentes' })
+    expect((await deAgentes(ui)).slice(0, 2)).toEqual(['1 agente · 0 corriendo · 1 herramienta', '✓ '])
     await ui.unmount()
   })
 
@@ -8170,7 +8374,8 @@ describe('agentes en el panel', () => {
 
   test('un turn.step con agentId suma salida y total al agente y muestra su modelo·esfuerzo bajo la descripción', async ($, on) => {
     const m = motor(on)
-    motorResponde(on, 'claude-sonnet-5-5')
+    const modelo = motorControlado(on, 'claude-sonnet-5-5')
+    modelo.pidenHerramienta.add('ag-1')
     m.agentIds.set('Editar API', 'ag-1')
     await $.session.measure(MEDIDA)
     const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
@@ -8192,6 +8397,11 @@ describe('agentes en el panel', () => {
 
     await paso($, 'claude-sonnet-5-5', 'high', 'ag-1')
     expect((await deAgentes(ui)).slice(4)).toEqual(['  Editar API', '  sal 4k · total 200k · Sonnet 5.5 high'])
+
+    // La respuesta sin herramientas es la final: lo cierra como listo.
+    modelo.pidenHerramienta.delete('ag-1')
+    await paso($, 'claude-sonnet-5-5', 'high', 'ag-1')
+    expect((await deAgentes(ui)).slice(0, 2)).toEqual(['1 agente · 0 corriendo · 0 herramientas', '✓ '])
     await ui.unmount()
   })
 

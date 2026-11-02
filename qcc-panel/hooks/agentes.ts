@@ -139,6 +139,40 @@ export function cerrarAgente(
   return actual.map((a, i) => (i === indice ? { ...a, estado: bien ? ('listo' as const) : ('fallo' as const), fin: t } : a))
 }
 
+/** Marca que el agente `id` lanzó una tarea en segundo plano. Un agente desconocido (o un `id` que no es texto) deja la lista como estaba. Nunca muta `lista`. */
+export function anotarFondo(lista: readonly AgenteVisto[] | undefined, id: unknown): AgenteVisto[] {
+  const actual = lista ?? []
+
+  if (typeof id !== 'string' || !actual.some(a => a.id === id)) return [...actual]
+
+  return actual.map(a => (a.id === id ? { ...a, fondo: true as const } : a))
+}
+
+/** Si el agente `id` espera una tarea suya en segundo plano. */
+export function esperaFondo(lista: readonly AgenteVisto[] | undefined, id: string): boolean {
+  return (lista ?? []).some(a => a.id === id && a.estado === 'corriendo' && a.fondo === true)
+}
+
+/** El agente `id` terminó su turno esperando su tarea de fondo: quita `fondo` (su siguiente turno sin herramientas ya es el final) y anota `espera` con su fila `fila`. Nunca muta `lista`. */
+export function pasarAEspera(lista: readonly AgenteVisto[] | undefined, id: string, fila: string): AgenteVisto[] {
+  return (lista ?? []).map(a => {
+    if (a.id !== id || a.fondo !== true) return a
+    const { fondo: _fondo, ...resto } = a
+
+    return { ...resto, espera: fila }
+  })
+}
+
+/** Las filas de actividad de los agentes en curso que esperan su tarea de fondo. */
+export function filasEnEspera(lista: readonly AgenteVisto[] | undefined): string[] {
+  return (lista ?? []).flatMap(a => (a.estado === 'corriendo' && a.espera !== undefined ? [a.espera] : []))
+}
+
+/** Cuántos agentes siguen `corriendo` con el modelo·esfuerzo `config` («Sonnet 5.5 high»); los sin `modelo` aún no cuentan. */
+export function agentesEnCurso(lista: readonly AgenteVisto[], config: string): number {
+  return lista.filter(a => a.estado === 'corriendo' && a.modelo === config).length
+}
+
 /**
  * Anota una edición de `ruta` por el agente de rol `agente` (`principal` para el hilo principal) a la hora `t`. El archivo pasa a ser el más
  * reciente y suma una edición. Una `ruta` que no es un texto no vacío deja la lista como estaba. Con más de `TOPE_ARCHIVOS` se cae el más viejo.

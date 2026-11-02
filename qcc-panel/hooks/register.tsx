@@ -1,8 +1,20 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
 
-import type { Actividad, Esfuerzo, Flujo, Medida, Pestana, Semana } from '../types'
-import { anotarAgente, anotarArchivo, anotarGasto, anotarHerramienta, cerrarAgente, resumenAgentes } from './agentes'
+import type { Actividad, Esfuerzo, FilaSemana, Flujo, Medida, Pestana, Semana } from '../types'
+import {
+  agentesEnCurso,
+  anotarAgente,
+  anotarArchivo,
+  anotarGasto,
+  anotarHerramienta,
+  cerrarAgente,
+  anotarFondo,
+  esperaFondo,
+  pasarAEspera,
+  filasEnEspera,
+  resumenAgentes,
+} from './agentes'
 import { anotarCache, decidirAvisoContexto, restante, tasaAciertos, TTL_CACHE_MS } from './cache'
 import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
@@ -19,7 +31,6 @@ import {
   cerrarEspera,
   cerrarExploradorSinId,
   congelarConsumo,
-  cuadradosDeFila,
   datosDeExplorador,
   iniciarFlujo,
   marcarAgente,
@@ -70,7 +81,7 @@ import {
   anotar,
   clave,
   comoRegistro,
-  estadosDeCuadros,
+  estadoDeFila,
   etiquetaDia,
   familia,
   idFila,
@@ -431,9 +442,13 @@ async function vaciarAlAbrirTanda($: EngineInterface, s: Senal) {
 }
 
 /** Suma una herramienta al subagente que la llama (un agente desconocido no cambia nada). Nunca rechaza: no puede frenar una herramienta. */
-async function contarHerramienta($: EngineInterface, agentId: string | null | undefined) {
+async function contarHerramienta($: EngineInterface, agentId: string | null | undefined, enFondo = false) {
   try {
-    if (typeof agentId === 'string') await update($, agentes, antes => anotarHerramienta(antes ?? [], agentId))
+    if (typeof agentId === 'string') {
+      await update($, agentes, antes => anotarHerramienta(antes ?? [], agentId))
+      // Una tarea en segundo plano suya: su próximo turno sin herramientas será una espera.
+      if (enFondo) await update($, agentes, antes => anotarFondo(antes ?? [], agentId))
+    }
   } catch {
     // Sin la cuenta, la línea del agente queda con una herramienta menos.
   }
@@ -458,8 +473,27 @@ async function registrarGastoAgente(
   }
 }
 
+/** Pasa a un subagente de «lanzó su tarea de fondo» a «espera su tarea» (en la fila `fila`). Nunca rechaza: no puede frenar una petición. */
+async function soltarEspera($: EngineInterface, agentId: string, fila: string) {
+  try {
+    await update($, agentes, antes => pasarAEspera(antes ?? [], agentId, fila))
+  } catch {
+    // Sin soltarla, su próxima respuesta sin herramientas volvería a ser una espera.
+  }
+}
+
+/** Cierra como `listo` al subagente que dio su respuesta final. Nunca rechaza: no puede frenar una petición. */
+async function cerrarAlResponder($: EngineInterface, agentId: string) {
+  try {
+    const t = await $.clock.now()
+    await update($, agentes, antes => cerrarAgente(antes ?? [], { id: agentId }, true, t))
+  } catch {
+    // Sin cerrarlo, sigue contando en « xN» hasta /clear.
+  }
+}
+
 /**
- * Lo que anota una herramienta al volver: un `Agent` cierra a su subagente (`listo` si volvió bien, `fallo` si falló), y un `Edit`, `Write` o
+ * Lo que anota una herramienta al volver: un `Agent` que falló cierra a su subagente como `fallo` (si salió bien lo cierra su respuesta final), y un `Edit`, `Write` o
  * `NotebookEdit` que salió bien anota su archivo con el rol de quien lo tocó. `resultado` es lo que devolvió `next` (sin él si falló).
  * Nunca rechaza: no puede cambiar el resultado ni el error de la herramienta.
  */
@@ -475,8 +509,11 @@ async function anotarAlVolver(
     const t = await $.clock.now()
 
     if (e.tool === 'Agent') {
-      const id = objeto(resultado)?.agentId
-      await update($, agentes, antes => cerrarAgente(antes ?? [], { id, llamada: e.tool_use_id }, bien, t))
+      // Si salió bien, el agente (en primer o segundo plano) lo cierra su respuesta final (`turn.step`); aquí solo se cierra un fallo.
+      if (!bien) {
+        const r = objeto(resultado)
+        await update($, agentes, antes => cerrarAgente(antes ?? [], { id: r?.agentId, llamada: e.tool_use_id }, false, t))
+      }
 
       return
     }
@@ -817,11 +854,18 @@ export const register: Register = on => {
     if (e.agentId !== undefined) await marcarExplorador($, id)
 
     let pideHerramienta = false
+    // Un subagente sin herramientas que espera una tarea suya en segundo plano no terminó: sigue en curso, esperando (amarillo).
+    let esperando = false
     let r: TurnStepResult
     try {
       r = yield* next(e)
       try {
         pideHerramienta = r.toolUses.length > 0 || r.stopReason === 'tool_use'
+        if (!pideHerramienta && e.agentId !== undefined) {
+          const id = e.agentId
+          esperando = esperaFondo(await read($, agentes), id)
+          pideHerramienta = esperando
+        }
       } catch {
         // Sin saberlo, la fila queda inactiva.
       }
@@ -834,6 +878,9 @@ export const register: Register = on => {
     const agentId = e.agentId
     if (agentId !== undefined) {
       await marcarFlujo($, f => anotarConfig(f, agentId, nombreOrquestador(r.usage?.model || e.model, e.effort)))
+      // Una respuesta sin herramientas es la final: cierra al agente, en primer o segundo plano; si esperaba su tarea de fondo, solo suelta la marca.
+      if (esperando) await soltarEspera($, agentId, id)
+      else if (!pideHerramienta) await cerrarAlResponder($, agentId)
     }
 
     if (r.usage !== null) {
@@ -867,7 +914,9 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined) {
       try {
-        await update($, actividad, limpiarPendientes)
+        // Los subagentes que esperan su tarea de fondo siguen esperando: su ■ no vuelve a gris.
+        const filas = filasEnEspera(await read($, agentes))
+        await update($, actividad, a => limpiarPendientes(a, filas))
       } catch {
         // La espera caduca sola a los 30 min.
       }
@@ -909,7 +958,7 @@ export const register: Register = on => {
   // Solo observa: la herramienta corre y su resultado vuelve tal cual (un error de `next` no se traga).
   on('tool.call', async ($, e, siguiente) => {
     // La pestaña «Agentes» anota la herramienta antes y, al volver, su archivo o el cierre de su `Agent`; el resultado y el error de `siguiente` pasan intactos.
-    await contarHerramienta($, e.agentId)
+    await contarHerramienta($, e.agentId, (e as unknown as Record<string, unknown>).run_in_background === true)
     const next: typeof siguiente = async evento => {
       let r: Awaited<ReturnType<typeof siguiente>>
       try {
@@ -1017,7 +1066,6 @@ export const register: Register = on => {
     const ses = await read($, sesion)
     const act = await read($, actividad)
     const fl = await read($, flujo)
-    const filasExp = await read($, filasExploradores)
     // Atoms nuevos: tras un `/reload-plugins` el estado anterior puede no traerlos.
     const pestGuardada = (await read($, pestana)) ?? 'inicio'
     const his = (await read($, historial)) ?? null
@@ -1071,10 +1119,8 @@ export const register: Register = on => {
      * Tokens por modelo y esfuerzo: la misma tabla para la sesión y la semana.
      * Cada tabla alinea en columnas las etiquetas de sus propias filas (familia · versión · esfuerzo).
      * Bajo cada fila va su barra con el % de la sección (barra + % = ancho).
-     * Con `conActividad`, una fila unida lleva un ■ del principal y otro del subagente; el del subagente son
-     * 1 a 5 (uno por explorador o revisor en vuelo, separados) si es la fila anotada del flujo.
-     * Cada ■ lleva su propio color (`estadosDeCuadros`): verde si su petición está en vuelo, amarillo si
-     * espera con la actividad abierta, gris si la fila está inactiva.
+     * Con `conActividad`, cada fila lleva un solo ■ y « xN» (`agentesEnCurso`, x0 sin ninguno). El ■ lleva el color
+     * de la fila (`estadoDeFila`): verde si alguna petición está en vuelo, amarillo si espera, gris si está inactiva.
      * Con `conDesglose`, bajo la barra de cada fila con flujo o subagentes va su desglose (`desgloseTramos`).
      * Con `conDias`, tras las filas va el total de cada día («por día»).
      * El encabezado lleva el total y la salida.
@@ -1090,13 +1136,13 @@ export const register: Register = on => {
       cabecera: JSX.Element | null = null,
     ) => {
       const conSalida = s === null ? '' : totalConSalida(s.total, s.salida)
-      // Las etiquetas van en columnas y dejan sitio a las cifras y, con `conActividad`, a los ■ (2 celdas cada uno).
-      const maxCuadros =
-        conActividad && s !== null
-          ? Math.max(0, ...s.filas.map(f => idsDeActividad(f).reduce((n, id) => n + cuadradosDeFila(fl, filasExp, id), 0)))
-          : 0
+      // El « xN» de una fila: N = agentes en curso con su modelo·esfuerzo (x0 sin ninguno).
+      const enCurso = (f: FilaSemana) => agentesEnCurso(ags, `${f.modelo} ${f.esfuerzo}`)
+      // Las etiquetas van en columnas y dejan sitio a las cifras y, con `conActividad`, al sufijo « ■ xN».
+      const anchoSufijo =
+        conActividad && s !== null ? Math.max(0, ...s.filas.map(f => ' ■ x'.length + String(enCurso(f)).length)) : 0
       const etiquetas =
-        s !== null ? etiquetasAlineadas(s.filas, Math.max(1, e.props.bodyColumns - COLUMNAS_CIFRAS - 2 * maxCuadros)) : []
+        s !== null ? etiquetasAlineadas(s.filas, Math.max(1, e.props.bodyColumns - COLUMNAS_CIFRAS - anchoSufijo)) : []
 
       return (
         <Box key={`tabla-${prefijo}`} flexDirection="column" marginTop={prefijo === 'n' ? 0 : 1}>
@@ -1133,14 +1179,10 @@ export const register: Register = on => {
                     <Box>
                       <Box flexGrow={1}>
                         <Text wrap="truncate-end">{etiquetas[indice] ?? ''}</Text>
-                        {conActividad &&
-                          idsDeActividad(f).flatMap(id =>
-                            estadosDeCuadros(act, id, cuadradosDeFila(fl, filasExp, id), t).map((estado, i) => (
-                              <Text key={`cuadrado-${id}-${i}`} color={COLOR_ACTIVIDAD[estado]}>
-                                {' ■'}
-                              </Text>
-                            )),
-                          )}
+                        {conActividad && (
+                          <Text color={COLOR_ACTIVIDAD[estadoDeFila(act, idsDeActividad(f), t)]}>{' ■'}</Text>
+                        )}
+                        {conActividad && <Text dimColor>{` x${enCurso(f)}`}</Text>}
                       </Box>
                       <Text>{tokens(f.total).padStart(7)}</Text>
                       <Text dimColor>{tokens(f.salida).padStart(7)}</Text>

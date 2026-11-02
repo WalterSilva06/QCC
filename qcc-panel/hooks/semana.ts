@@ -276,9 +276,9 @@ export function terminarPeticion(a: Actividad, id: string, t: number, pideHerram
   return { ...a, [id]: { enVuelo: Math.max(0, (a[id]?.enVuelo ?? 0) - 1), pendiente: pideHerramienta, desde: t } }
 }
 
-/** Quita toda espera (el turno del hilo principal terminó); no toca lo que sigue en vuelo. */
-export function limpiarPendientes(a: Actividad): Actividad {
-  return Object.fromEntries(Object.entries(a).map(([id, f]) => [id, { ...f, pendiente: false }]))
+/** Quita toda espera (el turno del hilo principal terminó), salvo la de las filas `conservar`; no toca lo que sigue en vuelo. */
+export function limpiarPendientes(a: Actividad, conservar: readonly string[] = []): Actividad {
+  return Object.fromEntries(Object.entries(a).map(([id, f]) => [id, conservar.includes(id) ? f : { ...f, pendiente: false }]))
 }
 
 /**
@@ -294,13 +294,10 @@ export function estadoActividad(a: Actividad, id: string, ahora: number): 'activ
   return f.pendiente && ahora - f.desde <= ESPERA_MAX_MS ? 'espera' : 'inactivo'
 }
 
-/**
- * El estado de cada uno de los `n` ■ de una fila: los primeros `enVuelo` (peticiones en curso) van `activo`;
- * el resto, `espera` si la fila está activa, y si no el estado de la fila. Con `n = 1` es `[estadoActividad]`.
- */
-export function estadosDeCuadros(a: Actividad, id: string, n: number, ahora: number): ('activo' | 'espera' | 'inactivo')[] {
-  const base = estadoActividad(a, id, ahora)
-  const enVuelo = a[id]?.enVuelo ?? 0
+/** El estado del ■ único de una fila: `activo` si algún id lo está; si no, `espera` si alguno espera; si no, `inactivo`. */
+export function estadoDeFila(a: Actividad, ids: string[], ahora: number): 'activo' | 'espera' | 'inactivo' {
+  const estados = ids.map(id => estadoActividad(a, id, ahora))
+  if (estados.includes('activo')) return 'activo'
 
-  return Array.from({ length: n }, (_, i) => (i < enVuelo ? 'activo' : base === 'activo' ? 'espera' : base))
+  return estados.includes('espera') ? 'espera' : 'inactivo'
 }
