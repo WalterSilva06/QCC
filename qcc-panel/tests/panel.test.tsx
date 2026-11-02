@@ -6,9 +6,11 @@ import {
   agentesEnCurso,
   anotarAgente,
   anotarArchivo,
+  anotarFondo,
   anotarGasto,
   anotarHerramienta,
   cerrarAgente,
+  quitarFondo,
   resumenAgentes,
   TOPE_AGENTES,
   TOPE_ARCHIVOS,
@@ -2638,6 +2640,25 @@ describe('flujo (puro)', () => {
     expect(terminarFlujo(detenido, 'abort', undefined, T + 5_000)).toEqual(detenido)
     expect(terminarFlujo(detenido, 'answer', 'CIERRE · ok', T + 5_000)).toEqual(detenido)
     expect(doc(terminarFlujo(f, 'abort', undefined, T))).toBe('interrumpido:6')
+  })
+
+  test('terminarFlujo con agentes en vuelo sigue en curso salvo CIERRE o abort', async () => {
+    const f: Flujo = { nombre: 'impl', paso: 6, ejecuto: true, estado: 'en curso', inicio: 1_000, desde: 4_000, tiempos: {}, fin: null }
+    const T = 10_000
+    const cerrado = (estado: Flujo['estado']): Flujo => ({ ...f, estado, tiempos: { 6: 6_000 }, desde: T, fin: T })
+
+    // Turno sin `CIERRE ·` con agentes en vuelo: la misma referencia, sigue en curso.
+    expect(terminarFlujo(f, 'answer', 'Espero a los agentes', T, true)).toBe(f)
+    expect(terminarFlujo(f, 'answer', undefined, T, true)).toBe(f)
+    // Con `CIERRE ·` cierra como siempre.
+    expect(terminarFlujo(f, 'answer', 'CIERRE · todo listo', T, true)).toEqual(cerrado('completo'))
+    expect(terminarFlujo(f, 'answer', 'CIERRE · x — DETENIDO', T, true)).toEqual(cerrado('detenido'))
+    // Otra razón: interrumpido aunque haya agentes.
+    expect(terminarFlujo(f, 'abort', undefined, T, true)).toEqual(cerrado('interrumpido'))
+    expect(terminarFlujo(f, 'error', 'sin cierre', T, true)).toEqual(cerrado('interrumpido'))
+    // Sin agentes en vuelo (o sin el parámetro) queda como antes.
+    expect(terminarFlujo(f, 'answer', 'sin cierre', T, false)).toEqual(cerrado('interrumpido'))
+    expect(terminarFlujo(null, 'answer', 'x', T, true)).toBeNull()
   })
 
   test('avanzar y terminarFlujo: el tiempo se acumula por paso, también al volver', async () => {
@@ -7949,6 +7970,21 @@ describe('agentes (puro)', () => {
     expect(cerrarAgente(undefined, { id: 'a1' }, true, 9)).toEqual([])
   })
 
+  test('quitarFondo suelta la marca y no muta', () => {
+    const base = congelar(anotarFondo(anotarAgente(anotarAgente(undefined, nuevo('a1', 1)), nuevo('a2', 2)), 'a1'))
+    expect(base[0]?.fondo).toBe(true)
+
+    const suelto = quitarFondo(base, 'a1')
+    expect(suelto[0]).not.toHaveProperty('fondo')
+    expect(suelto[1]).toEqual(base[1])
+    expect(base[0]?.fondo).toBe(true)
+    expect(suelto).not.toBe(base)
+    // Sin marca o desconocido: copia sin cambios.
+    expect(quitarFondo(suelto, 'a1')).toEqual(suelto)
+    expect(quitarFondo(base, 'zzz')).toEqual(base)
+    expect(quitarFondo(undefined, 'a1')).toEqual([])
+  })
+
   test('anotarArchivo: ×N por archivo, el último tocado al final, tope de 10 y rutas inválidas ignoradas', () => {
     expect(TOPE_ARCHIVOS).toBe(10)
     let l: ArchivoTocado[] = []
@@ -8275,6 +8311,100 @@ describe('agentes en el panel', () => {
     await ui.press({ key: 'pestana-agentes' })
     expect((await deAgentes(ui)).slice(0, 2)).toEqual(['1 agente · 0 corriendo · 1 herramienta', '✓ '])
     await ui.unmount()
+  })
+
+  describe('el turno del hilo principal con agentes en vuelo', () => {
+    /** Flujo `/impl` y avisos: el `turn.complete` y el `skill.prompt` pasan tal cual y los toasts quedan en `avisos`. */
+    function conFlujo(on: On) {
+      const avisos: string[] = []
+      on('skill.prompt', (_$, e) => ({ text: e.text }))
+      on('turn.complete', (_$, e) => ({ text: e.answer }))
+      on('ui.toast', (_$, e) => {
+        avisos.push(e.text)
+
+        return { value: undefined }
+      })
+
+      return avisos
+    }
+    const turno = (answer: string) => ({ reason: 'answer' as const, answer, durationMs: 10, isAborted: false, turnId: 't' })
+
+    test('con un ejecutor corriendo, el turno sin CIERRE no termina el flujo ni avisa; con CIERRE avisa completo', async ($, on) => {
+      const m = motor(on)
+      const avisos = conFlujo(on)
+      m.agentIds.set('Fondo', 'ag-1')
+      await $.session.measure(MEDIDA)
+      await $.skill.prompt({ skill: 'impl', text: '' })
+      await spawn($, 'Fondo', 'impl:qcc-ejecutor', 'tu-1')
+
+      await $.turn.complete(turno('Espero a mi ejecutor en segundo plano.'))
+      expect(avisos).toEqual([])
+
+      // Sigue en curso: el cierre real, con el agente aún corriendo, lo termina y avisa.
+      await $.turn.complete(turno('CIERRE · x — COMPLETO'))
+      expect(avisos).toEqual(['Flujo terminado: completo'])
+    })
+
+    test('con el agente ya listo, el turno sin CIERRE sí queda interrumpido y avisa', async ($, on) => {
+      const m = motor(on)
+      const avisos = conFlujo(on)
+      motorControlado(on, 'claude-haiku-5-5')
+      m.agentIds.set('Listo', 'ag-1')
+      await $.session.measure(MEDIDA)
+      await $.skill.prompt({ skill: 'impl', text: '' })
+      await spawn($, 'Listo', 'impl:qcc-ejecutor', 'tu-1')
+      await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
+
+      await $.turn.complete(turno('Llegué al límite de uso.'))
+      expect(avisos).toEqual(['Flujo terminado: interrumpido'])
+    })
+
+    test('un Escape (reason aborted) con agentes en vuelo queda interrumpido', async ($, on) => {
+      const m = motor(on)
+      const avisos = conFlujo(on)
+      m.agentIds.set('Fondo', 'ag-1')
+      await $.session.measure(MEDIDA)
+      await $.skill.prompt({ skill: 'impl', text: '' })
+      await spawn($, 'Fondo', 'impl:qcc-ejecutor', 'tu-1')
+
+      await $.turn.complete({ ...turno(''), reason: 'aborted', isAborted: true })
+      expect(avisos).toEqual(['Flujo terminado: interrumpido'])
+    })
+
+    test('un agente de un flujo anterior que quedó corriendo no impide interrumpir el flujo nuevo', async ($, on) => {
+      const m = motor(on)
+      const avisos = conFlujo(on)
+      m.agentIds.set('Viejo', 'ag-1')
+      await $.session.measure(MEDIDA)
+      await spawn($, 'Viejo', 'impl:qcc-ejecutor', 'tu-1')
+      m.reloj.t += 5_000
+      await $.skill.prompt({ skill: 'impl', text: '' })
+
+      await $.turn.complete(turno('Llegué al límite de uso.'))
+      expect(avisos).toEqual(['Flujo terminado: interrumpido'])
+    })
+
+    test('un agente con una tarea de fondo que luego pide herramientas cierra ✓ con su respuesta sin herramientas', async ($, on) => {
+      const m = motor(on)
+      const modelo = motorControlado(on, 'claude-haiku-5-5')
+      m.agentIds.set('Fondo', 'ag-1')
+      await $.session.measure(MEDIDA)
+      const ui = await $.ui.mount({ ...PANE_ANCHO, surface: 'terminal' })
+      await spawn($, 'Fondo', 'Explore', 'tu-1')
+
+      modelo.pidenHerramienta.add('ag-1')
+      await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
+      await $.tool.call({ tool: 'Bash', command: 'sleep 60', run_in_background: true, agentId: 'ag-1' })
+      // Sigue trabajando con otra herramienta: ya no espera su tarea de fondo.
+      await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
+      modelo.pidenHerramienta.delete('ag-1')
+      await paso($, 'claude-haiku-5-5', 'low', 'ag-1')
+
+      expect(await textosDe(ui)).toContain(' x0')
+      await ui.press({ key: 'pestana-agentes' })
+      expect((await deAgentes(ui)).slice(0, 2)).toEqual(['1 agente · 0 corriendo · 1 herramienta', '✓ '])
+      await ui.unmount()
+    })
   })
 
   test('un Edit que falla sigue lanzando el mismo error y no anota el archivo', async ($, on) => {

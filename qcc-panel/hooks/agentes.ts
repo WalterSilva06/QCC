@@ -148,6 +148,16 @@ export function anotarFondo(lista: readonly AgenteVisto[] | undefined, id: unkno
   return actual.map(a => (a.id === id ? { ...a, fondo: true as const } : a))
 }
 
+/** Suelta la marca `fondo` del agente `id` (su tarea de fondo ya no cuenta). Sin marca o desconocido, deja la lista como estaba. Nunca muta `lista`. */
+export function quitarFondo(lista: readonly AgenteVisto[] | undefined, id: string): AgenteVisto[] {
+  return (lista ?? []).map(a => {
+    if (a.id !== id || a.fondo === undefined) return a
+    const { fondo: _fondo, ...resto } = a
+
+    return resto
+  })
+}
+
 /** Si el agente `id` espera una tarea suya en segundo plano. */
 export function esperaFondo(lista: readonly AgenteVisto[] | undefined, id: string): boolean {
   return (lista ?? []).some(a => a.id === id && a.estado === 'corriendo' && a.fondo === true)

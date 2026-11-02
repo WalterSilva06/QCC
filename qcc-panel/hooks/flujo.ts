@@ -388,9 +388,12 @@ export function cerrarEspera(actual: Flujo | null, t: number): Flujo | null {
  * Con `answer` y la respuesta con `CIERRE ·`, `detenido` si trae `CIERRE · … — DETENIDO` y `completo` si no.
  * Una respuesta sin `CIERRE ·` (un turno cortado, p. ej. por el límite de uso) o cualquier otra razón lo deja `interrumpido`,
  * que el orquestador puede retomar (ver `reanudar`). El paso no cambia. Un flujo ya terminado queda igual.
+ * Con `enVuelo` (hay subagentes del flujo corriendo) y `answer` sin `CIERRE ·`, el flujo sigue en curso y devuelve `actual`
+ * (la misma referencia): el turno acabó pero el trabajo no. Con `CIERRE ·` cierra igual y con otra razón (`abort`, `error`) queda `interrumpido`.
  */
-export function terminarFlujo(actual: Flujo | null, razon: string, respuesta?: string, t?: number): Flujo | null {
+export function terminarFlujo(actual: Flujo | null, razon: string, respuesta?: string, t?: number, enVuelo = false): Flujo | null {
   if (!actual || actual.estado !== 'en curso') return actual
+  if (enVuelo && razon === 'answer' && !(respuesta ?? '').includes('CIERRE ·')) return actual
 
   const f = completar(actual, t)
   const ahora = t ?? f.desde

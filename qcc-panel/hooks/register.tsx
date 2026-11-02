@@ -12,6 +12,7 @@ import {
   anotarFondo,
   esperaFondo,
   pasarAEspera,
+  quitarFondo,
   filasEnEspera,
   resumenAgentes,
 } from './agentes'
@@ -881,6 +882,14 @@ export const register: Register = on => {
       // Una respuesta sin herramientas es la final: cierra al agente, en primer o segundo plano; si esperaba su tarea de fondo, solo suelta la marca.
       if (esperando) await soltarEspera($, agentId, id)
       else if (!pideHerramienta) await cerrarAlResponder($, agentId)
+      else {
+        try {
+          // Si vuelve a pedir herramientas, ya no espera su tarea de fondo: su próxima respuesta sin herramientas es la final.
+          await update($, agentes, antes => quitarFondo(antes ?? [], agentId))
+        } catch {
+          // Sin soltarla, esa respuesta final se tomaría por otra espera.
+        }
+      }
     }
 
     if (r.usage !== null) {
@@ -925,9 +934,18 @@ export const register: Register = on => {
       // Si el flujo estaba en curso y este turno lo cierra; se decide dentro del callback, con el estado que `update` leyó.
       let terminoAhora = false
       let estadoFin = ''
+      // Los subagentes lanzados durante el flujo que aún corren: sin ellos el corte del turno sí lo interrumpe.
+      let vivos: { estado: string; desde: number }[] = []
+      try {
+        vivos = (await read($, agentes)) ?? []
+      } catch {
+        // Sin saberlo, el turno sin CIERRE interrumpe el flujo.
+      }
       await marcarFlujo($, (f, t) => {
-        const fin = terminarFlujo(f, e.reason, e.answer, t)
-        terminoAhora = f !== null && f.estado === 'en curso'
+        const enVuelo = f !== null && vivos.some(a => a.estado === 'corriendo' && a.desde >= f.inicio)
+        const fin = terminarFlujo(f, e.reason, e.answer, t, enVuelo)
+        // Con agentes en vuelo y sin cierre, `terminarFlujo` devuelve el mismo flujo: sigue en curso.
+        terminoAhora = f !== null && f.estado === 'en curso' && fin !== null && fin.estado !== 'en curso'
         estadoFin = fin === null ? '' : fin.estado
 
         return terminoAhora ? congelarConsumo(fin, ses) : fin
