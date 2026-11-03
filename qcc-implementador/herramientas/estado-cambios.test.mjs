@@ -311,6 +311,32 @@ test('cierre: con ondas, la siguiente foto en el tiempo cierra a cada subtarea, 
   ])
 })
 
+test('estado: corregir una subtarea vieja no marca FUERA lo de las posteriores', () => {
+  const { raiz } = repoConTresSubtareas()
+  assert.match(estadoEn(raiz, ['--base', '--sub', '1,2']).salida, /^LOTE=S1\+S2$/m)
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a1\n')
+  fs.writeFileSync(path.join(raiz, 'src/b.ts'), 'b1\n')
+  assert.match(estadoEn(raiz, ['--cambios', '--sub', '1,2']).salida, /ALCANCE: OK\s*$/)
+  // S3 llega después del lote y se mide sola.
+  assert.match(estadoEn(raiz, ['--base', '--sub', '3']).salida, /^BASE=\w+ DESDE=/m)
+  fs.writeFileSync(path.join(raiz, 'src/c.ts'), 'c1\n')
+  assert.match(estadoEn(raiz, ['--cambios', '--sub', '3']).salida, /ALCANCE: OK\s*$/)
+
+  // Corrección de S1: conserva la foto del lote (anterior a S3) y mide el lote; lo de S3 es suyo, no FUERA.
+  assert.match(estadoEn(raiz, ['--base', '--sub', '1']).salida, /^AVISO: S1 ya tenía foto/m)
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
+  const corregida = estadoEn(raiz, ['--cambios', '--sub', '1']).salida
+  assert.match(corregida, /^FOTO S1\+S2: .* · permitidos: 2 del plan \+ 0 ampliados \+ 1 de subtareas posteriores \(S3\)$/m)
+  assert.match(corregida, /ALCANCE: OK\s*$/)
+  assert.doesNotMatch(corregida, /FUERA DE ALCANCE/)
+
+  // Un archivo que no es de nadie sigue saliendo FUERA.
+  fs.writeFileSync(path.join(raiz, 'src/z.ts'), 'z\n')
+  const fuera = estadoEn(raiz, ['--cambios', '--sub', '1']).salida
+  assert.match(fuera, /^ {2}✗ [?A] src\/z\.ts {3}← FUERA DE ALCANCE$/m)
+  assert.match(fuera, /ALCANCE: FUERA \(1\)\s*$/)
+})
+
 test('estado: repetir el lote con menos miembros conserva la foto y abre otra fase en paralelo', () => {
   const { raiz, estadoJson } = repoConTresSubtareas()
   const f = /^BASE=(\w+) DESDE=(\S+)$/m.exec(estadoEn(raiz, ['--base', '--sub', '1,2,3']).salida)
@@ -513,6 +539,32 @@ test('estado: filaDelFlujo omite lo que falta y arma subtareas, calidad y uso', 
     { n: 3, critica: true },
   ])
   assert.deepEqual(fila.calidad, { final: [{ veredicto: 'APROBADO', items: [] }], negados: 2, alcanceFuera: [], inicial: 'RESULTADO: VERDE' })
+})
+
+test('cierre: COMPLETO avisa de las subtareas que terminaron BLOQUEADO o FALLA', () => {
+  const { raiz } = estadoCon({}, () => ['--paso', '0'])
+  const claude = transcriptDelFlujo(raiz)
+  const { inicio } = JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8'))
+  const subagentes = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'), 's1', 'subagents')
+  fs.mkdirSync(subagentes, { recursive: true })
+  const ts = new Date(Date.parse(inicio) + 1).toISOString()
+  const ejecutor = (n, estado) => {
+    fs.writeFileSync(path.join(subagentes, `agent-x${n}.meta.json`), JSON.stringify({ agentType: 'impl:qcc-ejecutor' }))
+    const filas = [
+      { type: 'user', timestamp: ts, message: { role: 'user', content: `SUBTAREA ${n}/3: x` } },
+      { type: 'assistant', timestamp: ts, message: { id: `m${n}`, model: 'claude-sonnet-5-5', usage: { output_tokens: 1 }, content: [{ type: 'text', text: `ESTADO: ${estado}` }] } },
+    ]
+    fs.writeFileSync(path.join(subagentes, `agent-x${n}.jsonl`), filas.map((f) => JSON.stringify(f)).join('\n') + '\n')
+  }
+  ejecutor(1, 'HECHO')
+  ejecutor(2, 'BLOQUEADO')
+  ejecutor(3, 'FALLA')
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+  const salida = estadoEn(raiz, ['--cambios', sha, '--paso', '7', '--resultado', 'COMPLETO'], { CLAUDE_CONFIG_DIR: claude }).salida
+  assert.doesNotMatch(salida, /AVISO: S1 /)
+  assert.match(salida, /^AVISO: S2 terminó BLOQUEADO y el cierre es COMPLETO: dilo en Riesgos pendientes$/m)
+  assert.match(salida, /^AVISO: S3 terminó FALLA y el cierre es COMPLETO: dilo en Riesgos pendientes$/m)
+  assert.equal(filasDeFlujos(raiz).at(-1).resultado, 'COMPLETO')
 })
 
 test('cierre: anota la fila v2, imprime CONTEXTO y archiva en historial', () => {

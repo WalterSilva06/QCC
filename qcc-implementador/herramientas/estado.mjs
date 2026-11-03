@@ -1550,6 +1550,11 @@ function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
     else console.log(`AVISO: --resultado ${resultado || '(vacío)'} no es COMPLETO ni DETENIDO:<0-7>; el flujo se anota sin él`)
   }
   anotarEstado({ cierre: t, resultado: valido })
+  if (valido === 'COMPLETO' && metricas) {
+    // `subtareas` [{ n, estado }] si la métrica lo trae; si no, los ejecutores por subtarea (`1`, `2`…; `final` y `?` no cuentan).
+    const lista = Array.isArray(metricas.subtareas) ? metricas.subtareas : Object.entries(metricas.ejecutores ?? {}).filter(([n]) => /^\d+$/.test(n)).map(([n, g]) => ({ n, estado: g?.estado }))
+    for (const s of lista) if (s?.estado && s.estado !== 'HECHO' && s.estado !== 'OMITIDA') console.log(`AVISO: S${s.n} terminó ${s.estado} y el cierre es COMPLETO: dilo en Riesgos pendientes`)
+  }
   let cambiosDeSubtareas = {}
   try {
     cambiosDeSubtareas = cambiosPorSubtarea(e)
@@ -1715,6 +1720,8 @@ function contextoDelFlujo({ base, desde, permitidos, sub, global }) {
   let etiqueta
   let inicio
   let previstos
+  let posteriores = []
+  let etiquetaPosteriores = ''
   if (global) {
     if (!e.base_global) throw new Error('sin BASE_GLOBAL en la carpeta del flujo: usa --cambios <BASE> --desde <DESDE> --permitidos "…"')
     etiqueta = 'GLOBAL'
@@ -1744,11 +1751,16 @@ function contextoDelFlujo({ base, desde, permitidos, sub, global }) {
     etiqueta = miembros.map((n) => `S${n}`).join('+')
     inicio = fotoDe(miembros[0])
     previstos = [...new Set(miembros.flatMap((n) => delPlan(subtareas.find((s) => Number(s?.n) === n))))]
+    // Las subtareas con foto posterior a la de la medición ya midieron lo suyo: una corrección vieja no las marca FUERA.
+    const delante = Object.keys(bases).map(Number).filter((n) => !miembros.includes(n) && Date.parse(bases[String(n)].desde) > Date.parse(inicio.desde)).sort((a, b) => a - b)
+    posteriores = delante.flatMap((n) => delPlan(subtareas.find((s) => Number(s?.n) === n))).filter((p) => !previstos.includes(p))
+    posteriores = [...new Set(posteriores)]
+    if (posteriores.length) etiquetaPosteriores = `${posteriores.length} de subtareas posteriores (${delante.map((n) => `S${n}`).join(', ')})`
   }
   const ampliados = [...new Set(permitidos)].filter((p) => !previstos.includes(p))
-  const unidos = [...previstos, ...ampliados]
+  const unidos = [...new Set([...previstos, ...ampliados, ...posteriores])]
   if (!unidos.length) throw new Error('sin plan guardado ni --permitidos: usa la forma explícita (--cambios <BASE> --desde <DESDE> --permitidos "…")')
-  console.log(`FOTO ${etiqueta}: BASE=${corto(inicio.base)} DESDE=${inicio.desde} · permitidos: ${previstos.length} del plan + ${ampliados.length} ampliados`)
+  console.log(`FOTO ${etiqueta}: BASE=${corto(inicio.base)} DESDE=${inicio.desde} · permitidos: ${previstos.length} del plan + ${ampliados.length} ampliados${etiquetaPosteriores ? ` + ${etiquetaPosteriores}` : ''}`)
   return { base: inicio.base, desde: inicio.desde, permitidos: unidos }
 }
 
