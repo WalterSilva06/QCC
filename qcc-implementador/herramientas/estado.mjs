@@ -643,9 +643,57 @@ export function decisionesDelPlan({ clasificacion = null, subtareas = [], pedido
 /** Las líneas de `decisiones` (de `decisionesDelPlan`) en el orden en que se imprimen. */
 const lineasDeDecisiones = (d) => [d.ciclos, d.critico, d.aspectos]
 
+/** Hallazgos de un informe de exploración: `[{ seccion, linea }]`, sin encabezados, renglones vacíos ni «ninguno». */
+export function hallazgosDe(texto) {
+  const hallazgos = []
+  let seccion = null
+  for (const linea of sinProsaFinal(texto)) {
+    const encabezado = RE_ENCABEZADO.exec(linea)
+    if (encabezado) seccion = encabezado[1]
+    else if (seccion && linea.trim() && !RE_NINGUNO.test(linea)) hallazgos.push({ seccion, linea: linea.trim().replace(/^[-*]\s+/, '') })
+  }
+  return hallazgos
+}
+
+/** ¿La ruta citada cae en `permitidos`? También abreviada, como la escribe el explorador: `billing/x.ts` calza con `src/billing/x.ts`. */
+const citaPermitido = (ruta, permitidos) => coincide(ruta, permitidos) || permitidos.some((p) => p.endsWith(`/${ruta}`))
+
+/** Los hallazgos que citan alguna ruta dentro de `permitidos`, como `- [SECCIÓN] …`: el CONTEXTO del ejecutor. Sin permitidos, ninguno. */
+export function contextoDe(hallazgos, permitidos) {
+  if (!permitidos.length) return []
+  return hallazgos.filter((h) => rutasDeTexto(h.linea).some((r) => citaPermitido(r, permitidos))).map((h) => `- [${h.seccion}] ${h.linea}`)
+}
+
+/**
+ * Rutas de ACOPLAMIENTOS (solo las que traen carpeta) que no caen en ningún permitido ni se nombran en «Fuera de alcance»
+ * (por ruta o por nombre de archivo): `pasos.md` pide que cada acoplado tenga uno de los dos.
+ */
+export function acopladosSinCubrir(hallazgos, permitidos, fueraDeAlcance) {
+  const fuera = String(fueraDeAlcance ?? '')
+  const rutas = hallazgos.filter((h) => h.seccion === 'ACOPLAMIENTOS').flatMap((h) => rutasDeTexto(h.linea)).filter((r) => r.includes('/'))
+  return [...new Set(rutas)].filter((r) => !citaPermitido(r, permitidos) && !fuera.includes(r) && !fuera.includes(path.posix.basename(r)))
+}
+
+const CAMPOS_APROBACION = ['Crítica', 'Depende de', 'Archivos permitidos', 'Cómo', 'Externo']
+
+/** Lo que el orquestador muestra para aprobar el plan: cabecera, por subtarea su título y CAMPOS_APROBACION, y el pie sin «Verificación final». */
+export function aprobacionDe({ cabecera, subtareas, pie }) {
+  const titulo = cabecera.find((l) => /^\s*(?:#{1,6}\s+)?(?:\*\*)?PLAN ·/i.test(l))
+  const bloques = (lineas, campos) => campos.map((c) => bloqueDe(lineas, c)).filter(Boolean)
+  return [
+    ...(titulo ? [titulo.trim()] : []),
+    ...bloques(cabecera, ['Clasificación', 'Objetivo', 'Fuera de alcance']),
+    ...subtareas.flatMap((s) => ['', s.lineas[0].trim(), ...bloques(s.lineas, CAMPOS_APROBACION)]),
+    '',
+    ...bloques(pie, ['Queda para ti', 'Costo']),
+  ].join('\n').trim()
+}
+
 /** Escribe un `S<n>.md` por subtarea, revisa campos y rutas críticas, anota el plan en el estado e imprime el resumen. */
 function resumirPlan(texto, destino) {
-  const { cabecera, subtareas } = partesDelPlan(texto)
+  const partes = partesDelPlan(texto)
+  const { cabecera, subtareas } = partes
+  const hallazgos = hallazgosDe(leerTexto(path.join(FLUJO, 'exploracion.md')) ?? '')
   const { criticos } = configDe(RAIZ)
   for (const f of fs.readdirSync(FLUJO)) if (/^S\d+\.md$/.test(f)) fs.rmSync(path.join(FLUJO, f), { force: true })
   const encabezado = cabecera.filter((l) => /^\s*(?:#{1,6}\s+)?(?:\*\*)?(PLAN ·|Objetivo|Fuera de alcance)/i.test(l))
@@ -661,9 +709,11 @@ function resumirPlan(texto, destino) {
   console.log(`PLAN: ${subtareas.length} subtarea(s) · Clasificación: ${clasificacion ?? '(falta)'}`)
   for (const s of subtareas) {
     const archivo = path.join(FLUJO, `S${s.n}.md`)
-    fs.writeFileSync(archivo, [...encabezado, '', ...s.lineas].join('\n').trim() + '\n')
     for (const c of CAMPOS_SUBTAREA) if (campoDe(s.lineas, c) === null) avisos.push(`S${s.n} · falta «${c}»`)
     const { permitidos, avisos: avisosPermitidos } = permitidosDeSubtarea(s.lineas, s.n)
+    const contexto = contextoDe(hallazgos, permitidos)
+    const conContexto = contexto.length ? ['', 'CONTEXTO (hallazgos de la exploración sobre tus permitidos):', ...contexto] : []
+    fs.writeFileSync(archivo, [...encabezado, '', ...s.lineas, ...conContexto].join('\n').trim() + '\n')
     avisos.push(...avisosPermitidos)
     const critica = campoDe(s.lineas, 'Crítica')
     const { depende, aviso } = dependeDe(campoDe(s.lineas, 'Depende de'), s.n, subtareas.map((x) => x.n))
@@ -686,7 +736,7 @@ function resumirPlan(texto, destino) {
     }
     resumen.push({ n: s.n, objetivo: s.objetivo, critica, permitidos, ...(depende ? { depende } : {}), ...(externo ? { externo } : {}) })
     paraDecidir.push({ n: s.n, critica, permitidos, fijos: [...fijos] })
-    console.log(`S${s.n} · ${s.objetivo} · Crítica: ${critica ?? '(falta)'} · permitidos: ${permitidos.join(', ') || '(faltan)'}${externo ? ` · Externo: ${externo.comando} (reversible: ${externo.reversible ? 'sí' : 'no'})` : ''} → ${archivo}`)
+    console.log(`S${s.n} · ${s.objetivo} · Crítica: ${critica ?? '(falta)'} · permitidos: ${permitidos.join(', ') || '(faltan)'}${externo ? ` · Externo: ${externo.comando} (reversible: ${externo.reversible ? 'sí' : 'no'})` : ''}${contexto.length ? ` · contexto: ${contexto.length}` : ''} → ${archivo}`)
   }
   const pedidos = [...porCriterio.keys()].sort((a, b) => a - b)
   if (!criticos.length) console.log(`RUTAS CRÍTICAS: el proyecto no declara «criticos» en ${configDe(RAIZ).nombre}`)
@@ -698,11 +748,17 @@ function resumirPlan(texto, destino) {
     else if (faltan.length) avisos.push(`Clasificación: no cita ${faltan.map((n) => `#${n} (${porCriterio.get(n)})`).join(', ')}`)
   }
   if (!subtareas.length) avisos.push('no encontré subtareas «S<n> · …»: despacha copiando los campos del plan')
+  for (const r of acopladosSinCubrir(hallazgos, resumen.flatMap((s) => s.permitidos), bloqueDe(cabecera, 'Fuera de alcance'))) {
+    avisos.push(`acoplado «${r}» (ACOPLAMIENTOS de la exploración) no está en ningún permitido ni en «Fuera de alcance»`)
+  }
   console.log(avisos.length ? `AVISOS:\n${avisos.map((a) => `  - ${a}`).join('\n')}` : 'AVISOS: ninguno')
   if (resumen.length) console.log(`LOTES: ${lotesDe(resumen).map((l) => l.map((n) => `S${n}`).join('+')).join(' | ')}`)
   const decisiones = decisionesDelPlan({ clasificacion, subtareas: paraDecidir, pedidos: pedidos.map((n) => ({ n, ruta: porCriterio.get(n) })) })
   console.log('DECISIONES (con los AVISOS resueltos a lo más estricto):')
   for (const l of lineasDeDecisiones(decisiones)) console.log(l)
+  const dudas = hallazgos.filter((h) => h.seccion === 'DUDAS')
+  if (dudas.length) console.log(`DUDAS DE LA EXPLORACIÓN (el plan no debe contradecirlas):\n${dudas.map((h) => `  - ${h.linea}`).join('\n')}`)
+  if (subtareas.length) console.log(`PARA APROBAR (cópialo tal cual en tu texto; el plan completo está en ${destino}):\n${aprobacionDe(partes)}\nFIN PARA APROBAR`)
   // Un re-plan que cambia el Externo de una subtarea aprobada la deja sin aprobar: se aprueba de nuevo con --externo.
   const previas = leerEstado().externos
   const externos = previas && typeof previas === 'object' && !Array.isArray(previas)
@@ -1670,18 +1726,22 @@ function cerrarParalelos() {
 /**
  * `--tanda <n>`: abre la fase en paralelo de una tanda de `n` ejecutores de correcciones (sin fotos por subtarea, así que no pasa por
  * `--base --sub`) e imprime `TANDA=<n> DESDE=<iso>`. Con `n` = 1 solo avisa: un ejecutor solo no corre en paralelo. Falla sin un flujo abierto.
+ * Siempre imprime además `BASE=<sha>`, la foto previa a las correcciones: el siguiente ciclo de la revisión final mira solo el diff desde ahí.
  */
 function abrirTanda(n) {
   if (n === null) throw new Error('--tanda necesita cuántos ejecutores tiene la tanda (un entero ≥ 1)')
   const e = leerEstado()
   if (!e.base_global || e.cierre) throw new Error('el flujo no está abierto: no hay dónde anotar la tanda (corre el preflight)')
+  const base = foto((Array.isArray(e.subtareas) ? e.subtareas : []).flatMap((s) => (Array.isArray(s?.permitidos) ? s.permitidos : [])))
   if (n < 2) {
     console.log(`AVISO: una tanda de ${n} no corre en paralelo; no se anota nada`)
+    console.log(`BASE=${base}`)
     return
   }
   const desde = new Date().toISOString()
   anotarEstado({ paralelos: [...paralelosDe(e), { tipo: 'tanda', n, desde }].slice(-TOPE_PARALELOS) })
   console.log(`TANDA=${n} DESDE=${desde}`)
+  console.log(`BASE=${base}`)
 }
 
 /**
@@ -1764,19 +1824,49 @@ function contextoDelFlujo({ base, desde, permitidos, sub, global }) {
   return { base: inicio.base, desde: inicio.desde, permitidos: unidos }
 }
 
+// Colores fijos para `--color-moved`: así la detección no depende de la configuración de color del usuario.
+const COLORES_MOVIDO = ['color.diff.oldMoved=magenta', 'color.diff.newMoved=cyan', 'color.diff.old=red', 'color.diff.new=green']
+const RE_MOVIDA = /^\x1b\[(35m-|36m\+)/
+const RE_ANSI = /\x1b\[[0-9;]*m/g
+const MIN_MOVIDAS = 4
+
+/**
+ * Colapsa las tiradas de `minimo` o más líneas que git marcó como movidas sin cambios (`--color-moved=plain` con los colores de
+ * `COLORES_MOVIDO`) en una sola línea `~ <n> líneas quitadas|agregadas aquí, movidas sin cambios…`, y quita los colores de las demás.
+ * Una línea movida y editada sale como diff normal. Devuelve `{ lineas, colapsadas }`.
+ */
+export function colapsarMovidos(crudas, minimo = MIN_MOVIDAS) {
+  const lineas = []
+  let colapsadas = 0
+  for (let i = 0; i < crudas.length; ) {
+    const signo = RE_MOVIDA.exec(crudas[i])?.[1]
+    let j = i + 1
+    if (signo) while (j < crudas.length && RE_MOVIDA.exec(crudas[j])?.[1] === signo) j++
+    if (signo && j - i >= minimo) {
+      lineas.push(signo.endsWith('-')
+        ? `~ ${j - i} líneas quitadas aquí, movidas sin cambios a otro lugar del diff`
+        : `~ ${j - i} líneas agregadas aquí, movidas sin cambios desde otro lugar del diff`)
+      colapsadas += j - i
+    } else for (let k = i; k < j; k++) lineas.push(crudas[k].replace(RE_ANSI, ''))
+    i = j
+  }
+  return { lineas, colapsadas }
+}
+
 function diff(base, permitidos, rutas) {
   const ahora = foto(permitidos)
   const filtro = ['--', ...rutas]
   const stat = git(['diff', '--stat=150', '--no-renames', base, ahora, ...filtro]).trimEnd()
-  const cuerpo = git(['diff', '--no-renames', '--no-color', base, ahora, ...filtro]).trimEnd()
+  const crudo = git([...COLORES_MOVIDO.flatMap((c) => ['-c', c]), 'diff', '--no-renames', '--color=always', '--color-moved=plain', '--color-moved-ws=no', base, ahora, ...filtro]).trimEnd()
   console.log(`DIFF ${corto(base)} → árbol actual${rutas.length ? ` (${rutas.join(', ')})` : ''}`)
-  if (!cuerpo) {
+  if (!crudo) {
     console.log('(sin cambios)')
     return
   }
   console.log(stat)
+  const { lineas, colapsadas } = colapsarMovidos(crudo.split('\n'))
+  if (colapsadas) console.log(`MOVIDO SIN CAMBIOS: ${colapsadas} líneas colapsadas en «~ …» (git --color-moved); para ver un bloque, lee el archivo`)
   console.log('')
-  const lineas = cuerpo.split('\n')
   console.log(lineas.slice(0, TOPE_DIFF).join('\n'))
   if (lineas.length > TOPE_DIFF) {
     console.log(`\n… recortado: ${lineas.length - TOPE_DIFF} líneas más. Pide por ruta: --diff ${corto(base)} --permitidos "…" -- <ruta>`)

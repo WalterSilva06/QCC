@@ -11,7 +11,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { flujoDe } from './guardia.mjs'
-import { listaPermitidos, opcionesDe, tokensDe, anotarFlujo, permitidosDe, mapaDelRepo, contextoDelProyecto } from './estado.mjs'
+import { listaPermitidos, opcionesDe, tokensDe, anotarFlujo, permitidosDe, mapaDelRepo, contextoDelProyecto, colapsarMovidos } from './estado.mjs'
 
 test('estado: --cambios y --diff', () => {
   const cambios = (sha) => ['--cambios', sha, '--permitidos', 'src/a.ts']
@@ -31,6 +31,31 @@ test('estado: --cambios y --diff', () => {
   const una = estadoCon({}, diffDe('--', 'src/a.ts'))
   assert.match(una.salida, /diff --git a\/src\/a\.ts/)
   assert.doesNotMatch(una.salida, /diff --git a\/dist\/x\.js/)
+})
+
+test('estado: --diff colapsa el código movido sin cambios y deja a la vista lo editado', () => {
+  const bloque = Array.from({ length: 12 }, (_, i) => `  const valor${i} = calcularAlgoLargo(${i})`)
+  const raiz = repo('movido', { 'src/a.ts': ['inicio', ...bloque, 'fin', ''].join('\n') })
+  temporales.push(raiz)
+  const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).stdout.trim()
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'inicio\nfin\n')
+  const movido = [...bloque]
+  movido[6] = '  const editada = 1'
+  fs.writeFileSync(path.join(raiz, 'src/b.ts'), movido.join('\n') + '\n')
+  const { salida } = estadoEn(raiz, ['--diff', sha, '--permitidos', 'src/a.ts,src/b.ts'])
+  assert.match(salida, /^MOVIDO SIN CAMBIOS: \d+ líneas colapsadas/m)
+  assert.match(salida, /^~ 6 líneas quitadas aquí, movidas sin cambios/m)
+  assert.match(salida, /^~ 6 líneas agregadas aquí, movidas sin cambios/m)
+  assert.match(salida, /^- {2}const valor6 = calcularAlgoLargo\(6\)$/m)
+  assert.match(salida, /^\+ {2}const editada = 1$/m)
+  assert.doesNotMatch(salida, /\x1b/)
+})
+
+test('estado: colapsarMovidos solo junta tiradas largas del mismo signo', () => {
+  const m = (s, t) => `\x1b[${s === '-' ? 35 : 36}m${s}${t}\x1b[m`
+  const { lineas, colapsadas } = colapsarMovidos([' ctx', m('-', 'a'), m('-', 'b'), m('+', 'c'), m('+', 'd'), m('+', 'e'), m('+', 'f'), '\x1b[31m-g\x1b[m'])
+  assert.deepEqual(lineas, [' ctx', '-a', '-b', '~ 4 líneas agregadas aquí, movidas sin cambios desde otro lugar del diff', '-g'])
+  assert.equal(colapsadas, 4)
 })
 
 test('estado: opciones y --paso', () => {

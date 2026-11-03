@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { flujoDe, regexDeExterno } from './guardia.mjs'
-import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, techoDeExploradores, topeDeLineas, avisosDeLargo, externoDe, parecenExternas, permitidosDeSubtarea, noPareceRuta } from './estado.mjs'
+import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, techoDeExploradores, topeDeLineas, avisosDeLargo, externoDe, parecenExternas, permitidosDeSubtarea, noPareceRuta, contextoDe, acopladosSinCubrir } from './estado.mjs'
 
 const PLAN = `PREGUNTAS: ¿algo?
 PLAN · Prueba
@@ -633,3 +633,49 @@ test('estado: --guardar exploracion dice si la exploración toca rutas críticas
 })
 
 test.after(() => limpiar())
+
+test('plan: CONTEXTO por subtarea, acoplados sin cubrir, DUDAS y bloque para aprobar', () => {
+  const exploracion = [
+    'ARCHIVOS', '- src/a.ts:3 — función x', '- src/b.ts:1 — función y',
+    'TESTS', '- ninguno',
+    'ACOPLAMIENTOS', '- src/a.ts:3 usa src/d.ts:9', '- src/b.ts:1 usa src/c.ts:2',
+    'DATOS', '- ninguno',
+    'DUDAS', '- ¿se borra z?',
+  ].join('\n')
+  const plan = [
+    'PLAN · Contexto', 'Clasificación: sin criterios', 'Objetivo: probar', 'Fuera de alcance: src/c.ts (no cambia)', '',
+    subtareaDePlan(1, 'src/a.ts', { extra: '- Cómo: src/a.ts:3, cambia x\n' }), '',
+    subtareaDePlan(2, 'src/b.ts'), '',
+    'Verificación final: test', 'Queda para ti: nada', 'Costo: 2 ejecutores · revisión final',
+  ].join('\n')
+  const entorno = { CLAUDE_CONFIG_DIR: transcripts({ plano: plan }) }
+  const raiz = repo('contexto', { 'src/a.ts': 'a\n', 'src/b.ts': 'b\n' })
+  temporales.push(raiz)
+  estadoEn(raiz, ['--paso', '0'], entorno)
+  fs.writeFileSync(path.join(flujoDe(raiz), 'exploracion.md'), exploracion)
+  const { salida } = estadoEn(raiz, ['--guardar', 'plano', 'plan'], entorno)
+  const s1 = fs.readFileSync(path.join(flujoDe(raiz), 'S1.md'), 'utf8')
+  const s2 = fs.readFileSync(path.join(flujoDe(raiz), 'S2.md'), 'utf8')
+  assert.match(s1, /^- \[ARCHIVOS\] src\/a\.ts:3 — función x$/m)
+  assert.match(s1, /^- \[ACOPLAMIENTOS\] src\/a\.ts:3 usa src\/d\.ts:9$/m)
+  assert.doesNotMatch(s1, /src\/b\.ts:1/)
+  assert.match(s2, /^- \[ACOPLAMIENTOS\] src\/b\.ts:1 usa src\/c\.ts:2$/m)
+  assert.match(salida, /^S1 · Tarea 1 · Crítica: no · permitidos: src\/a\.ts · contexto: 2 → /m)
+  assert.match(salida, /^ {2}- acoplado «src\/d\.ts» \(ACOPLAMIENTOS de la exploración\) no está/m)
+  assert.doesNotMatch(salida, /acoplado «src\/c\.ts»/)
+  assert.match(salida, /^DUDAS DE LA EXPLORACIÓN .*\n {2}- ¿se borra z\?$/m)
+  const aprobar = /^PARA APROBAR .*\n([\s\S]*?)\nFIN PARA APROBAR$/m.exec(salida)?.[1] ?? ''
+  assert.match(aprobar, /^PLAN · Contexto$/m)
+  assert.match(aprobar, /^Fuera de alcance: src\/c\.ts \(no cambia\)$/m)
+  assert.match(aprobar, /^- Cómo: src\/a\.ts:3, cambia x$/m)
+  assert.match(aprobar, /^Costo: 2 ejecutores/m)
+  assert.doesNotMatch(aprobar, /Hecho cuando|Reversión|Verificación final/)
+})
+
+test('plan: el CONTEXTO y los acoplados aceptan rutas abreviadas por el explorador', () => {
+  const hallazgos = [{ seccion: 'ARCHIVOS', linea: 'billing/x.ts:3 — corta' }, { seccion: 'ACOPLAMIENTOS', linea: 'billing/x.ts:3 usa otros/y.ts:1' }]
+  assert.deepEqual(contextoDe(hallazgos, ['src/billing/x.ts']), ['- [ARCHIVOS] billing/x.ts:3 — corta', '- [ACOPLAMIENTOS] billing/x.ts:3 usa otros/y.ts:1'])
+  assert.deepEqual(contextoDe(hallazgos, []), [])
+  assert.deepEqual(acopladosSinCubrir(hallazgos, ['src/billing/x.ts'], ''), ['otros/y.ts'])
+  assert.deepEqual(acopladosSinCubrir(hallazgos, ['src/billing/x.ts'], 'y.ts: no cambia'), [])
+})

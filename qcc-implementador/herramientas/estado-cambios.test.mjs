@@ -799,6 +799,7 @@ test('estado: --cambios marca FUERA lo que cambió durante verificar en una tand
   const { estadoJson, estado, verificar } = repoParalelo('paralelo-tanda', PASO_DE_OTRO)
   const t = estado('--tanda', '2', '--paso', '6')
   assert.match(t.salida, /^TANDA=2 DESDE=\S+$/m)
+  assert.match(t.salida, /^BASE=[0-9a-f]{40}$/m)
   assert.equal(t.codigo, 0)
   const [fase, ...resto] = estadoJson().paralelos
   assert.deepEqual([resto.length, fase.tipo, fase.n, typeof fase.desde, fase.hasta], [0, 'tanda', 2, 'string', undefined])
@@ -815,6 +816,7 @@ test('estado: --tanda de 1 solo avisa y sin flujo abierto falla', () => {
   const uno = estado('--tanda', '1', '--paso', '6')
   assert.match(uno.salida, /^AVISO: una tanda de 1 no corre en paralelo/m)
   assert.doesNotMatch(uno.salida, /TANDA=/)
+  assert.match(uno.salida, /^BASE=[0-9a-f]{40}$/m)
   assert.equal(uno.codigo, 0)
   assert.equal(estadoJson().paralelos, undefined)
   for (const valor of ['0', 'x']) {
