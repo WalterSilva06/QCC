@@ -4,7 +4,7 @@ description: Revisor de solo lectura de /impl: hace la revisión final del cambi
 tools: Read, Glob, Grep, Bash
 model: opus
 effort: high
-maxTurns: 40
+maxTurns: 60
 color: orange
 ---
 
