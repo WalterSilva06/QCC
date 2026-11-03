@@ -62,7 +62,7 @@ Un plugin de estilo (como Ponytail) puede pedir a los subagentes un resumen, lo 
 - **Cierre de los agentes:** explorador, planificador, ejecutor y revisor cierran en su última etiqueta del formato. Lo que una regla externa pida (resumen, lo omitido, riesgos) va dentro del formato: DUDAS, Riesgos o PREGUNTAS, BLOQUEOS, OBSERVACIONES o SIN EJECUTAR; nunca como prosa después.
 - **Exploración:** `estado.mjs` descarta la prosa tras un renglón vacío en la última sección, al fusionar exploraciones y al contar los avisos LARGO.
 - **Plan:** tras `Costo:` descarta toda línea que no sea un campo del pie.
-- **Veredicto:** `costos.mjs` acepta `**VEREDICTO**: X` y `**ESTADO**: X`, además de la forma sin negrita.
+- **Veredicto:** `costos.mjs` acepta `**VEREDICTO**: X` y `**ESTADO**: X`, además de la forma sin negrita. Anota un veredicto y sus problemas por cada informe, también si se retoma al mismo agente.
 - **Tests:** el plan (`plan.md` §3) pide un test por cada camino público, y el revisor rechaza un camino público nuevo o cambiado sin test. Un plugin que pida el cambio mínimo solo manda sobre el código, no sobre los tests.
 
 **Opcional con Ponytail:** para sacarlo solo del explorador, agrega al `env` del `settings.json` de tu carpeta de Claude Code (`CLAUDE_CONFIG_DIR` o `~/.claude`; este repo no lo edita):

@@ -249,6 +249,35 @@ test('costos: veredicto con negrita que cierra antes de los dos puntos', () => {
   assert.deepEqual(m.costo.veredictos.final, ['APROBADO', 'AJUSTAR', 'RECHAZADO'])
 })
 
+test('costos: un agente retomado anota un veredicto y sus problemas por cada informe', () => {
+  const raiz = path.join(os.tmpdir(), 'repo-metricas-retome')
+  const claude = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
+  temporales.push(claude)
+  const sesion = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  const subagentes = path.join(sesion, 's1', 'subagents')
+  fs.mkdirSync(subagentes, { recursive: true })
+  const inicio = Date.parse('2026-01-01T10:00:00.000Z')
+  const en = (s) => new Date(inicio + s * 1000).toISOString()
+  const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
+  const uso = { input_tokens: 10, cache_read_input_tokens: 1000, cache_creation_input_tokens: 500, output_tokens: 100 }
+  const turno = (id, s, texto) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-sonnet-5-5', usage: uso, content: [{ type: 'text', text: texto }] } })
+  const humano = (s, texto) => ({ type: 'user', timestamp: en(s), message: { role: 'user', content: texto } })
+  fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([humano(0, '<command-name>/impl</command-name>'), turno('o1', 60, 'x')]))
+  fs.writeFileSync(path.join(subagentes, 'agent-f.meta.json'), JSON.stringify({ agentType: 'impl:qcc-revisor' }))
+  // Un solo archivo: informe con rechazo, un texto intermedio sin veredicto, y el informe tras el retome.
+  fs.writeFileSync(path.join(subagentes, 'agent-f.jsonl'), jsonl([
+    humano(100, 'QUÉ REVISAR: cambio completo (1 subtarea(s))'),
+    turno('f1', 120, 'VEREDICTO: RECHAZADO\nPROBLEMAS:\n1. Falla X\n2. Falla Y\nOBSERVACIONES: ninguna'),
+    humano(140, 'RETOMA: corregido'),
+    turno('f2', 150, 'Reviso otra vez.'),
+    turno('f3', 160, 'VEREDICTO: APROBADO\nPROBLEMAS: ninguno'),
+  ]))
+
+  const m = metricasDelFlujo(raiz, en(0), { proyectos: path.join(claude, 'projects'), hasta: en(500), base: null })
+  assert.deepEqual(m.costo.veredictos, { final: ['RECHAZADO', 'APROBADO'] })
+  assert.deepEqual(m.problemas, { final: [{ veredicto: 'RECHAZADO', items: ['Falla X', 'Falla Y'] }, { veredicto: 'APROBADO', items: [] }] })
+})
+
 /** Corre costos.mjs con esos argumentos: `{ salida, codigo }`. */
 const costosCon = (...args) => {
   const r = spawnSync(process.execPath, [fileURLToPath(new URL('./costos.mjs', import.meta.url)), ...args], { encoding: 'utf8' })

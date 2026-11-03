@@ -110,12 +110,15 @@ export function usoDe(filas) {
 /** Qué línea de su informe trae el veredicto de cada rol; los demás (explorador, planificador) no dan uno. */
 const VEREDICTO_POR_ROL = { revisor: 'VEREDICTO', final: 'VEREDICTO', ejecutor: 'ESTADO' }
 
-/** Veredicto del último informe del agente (`APROBADO`, `AJUSTAR`, `HECHO`…), de una línea que empieza con él; null si no trae. */
-function veredictoDe(filas, rol) {
+/** Texto de cada mensaje del asistente de esas filas, en orden. */
+const textosDe = (filas) => filas.filter((f) => f?.type === 'assistant').flatMap((f) => (f.message?.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text))
+
+/** Los informes del agente que traen veredicto (`APROBADO`, `AJUSTAR`, `HECHO`…) en una línea que empieza con él, en orden: `[{ veredicto, texto }]`. Un agente retomado da varios. */
+function informesDe(filas, rol) {
   const campo = VEREDICTO_POR_ROL[rol]
-  if (!campo) return null
-  const textos = filas.filter((f) => f?.type === 'assistant').flatMap((f) => (f.message?.content ?? []).filter((c) => c?.type === 'text').map((c) => c.text))
-  return new RegExp(`^[\\s*_>\`-]*${campo}(?:\\*\\*)?:\\s*\\**\\s*([A-ZÁÉÍÓÚ]+)`, 'm').exec(textos.at(-1) ?? '')?.[1] ?? null
+  if (!campo) return []
+  const regex = new RegExp(`^[\\s*_>\`-]*${campo}(?:\\*\\*)?:\\s*\\**\\s*([A-ZÁÉÍÓÚ]+)`, 'm')
+  return textosDe(filas).map((texto) => ({ veredicto: regex.exec(texto)?.[1], texto })).filter((i) => i.veredicto)
 }
 
 /** Si la fila es el `/impl` (o `/impl:impl`) que el usuario escribió en el hilo principal. */
@@ -231,8 +234,8 @@ function costoDe({ sesion, hasta, principal, agentes }) {
     roles[rol].sinPrecio += u.sinPrecio
     for (const k of Object.keys(u.tokens)) roles[rol].tokens[k] += u.tokens[k]
     roles[rol].agentes++
-    const v = veredictoDe(filas, rol)
-    if (v) (veredictos[rol] ??= []).push(v)
+    const vs = informesDe(filas, rol).map((i) => i.veredicto)
+    if (vs.length) (veredictos[rol] ??= []).push(...vs)
   }
   const usd = Object.values(roles).reduce((s, r) => s + r.usd, 0)
   return { inicio: sesion.inicio, minutos: Math.max(0, Date.parse(hasta) - Date.parse(sesion.inicio)) / 60_000, usd, roles, veredictos }
@@ -264,7 +267,7 @@ export function fugaDe(archivo, cierre) {
 const bloquesDe = (f, tipo) => (Array.isArray(f?.message?.content) ? f.message.content.filter((c) => c?.type === tipo) : [])
 
 /** Texto del último mensaje del asistente de esas filas (su informe); '' si no hay. */
-const ultimoTexto = (filas) => filas.filter((f) => f?.type === 'assistant').flatMap((f) => bloquesDe(f, 'text').map((c) => c.text)).at(-1) ?? ''
+const ultimoTexto = (filas) => textosDe(filas).at(-1) ?? ''
 
 /**
  * Los ítems entre `PROBLEMAS:` y `OBSERVACIONES:` (o el final) de un informe, de a ≤ 200 caracteres. Cuentan los numerados
@@ -357,7 +360,7 @@ function ejecutoresDe(agentes, lanzamientos) {
     g.segundos += tiempos.length ? (Math.max(...tiempos) - Math.min(...tiempos)) / 1000 : 0
     if (a.prompt.includes('CORRECCIÓN')) g.correcciones++
     else g.base ??= a.prompt
-    g.estado = veredictoDe(a.filas, 'ejecutor')
+    g.estado = informesDe(a.filas, 'ejecutor').at(-1)?.veredicto ?? null
   }
   for (const g of Object.values(grupos)) {
     const inicio = g.base?.trim().slice(0, 60)
@@ -388,7 +391,11 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
   const pedido = bruto === null ? null : bruto.replace(/\s+/g, ' ').trim().slice(0, 120) || null
   const mensajes = [...mensajesDe(principal).values()]
   const contextoDe = (m) => (m ? (m.uso?.input_tokens ?? 0) + (m.uso?.cache_read_input_tokens ?? 0) + (m.uso?.cache_creation_input_tokens ?? 0) : null)
-  const informe = (a) => ({ veredicto: veredictoDe(a.filas, a.rol), items: problemasDe(ultimoTexto(a.filas)) })
+  // Una entrada por informe con veredicto; sin ninguno, la única de siempre.
+  const informes = (a) => {
+    const is = informesDe(a.filas, a.rol)
+    return is.length ? is.map((i) => ({ veredicto: i.veredicto, items: problemasDe(i.texto) })) : [{ veredicto: null, items: problemasDe(ultimoTexto(a.filas)) }]
+  }
   const exploradores = agentes.filter((a) => a.rol === 'explorador')
   const herramientasDe = (nombre) => exploradores.reduce((s, a) => s + a.filas.reduce((n, f) => n + bloquesDe(f, 'tool_use').filter((c) => c.name === nombre).length, 0), 0)
   const alcanceFuera = []
@@ -402,7 +409,7 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
     contexto: { primero: contextoDe(mensajes[0]), ultimo: contextoDe(mensajes.at(-1)) },
     tiempos: tiemposDe(principal, sesion.inicio),
     ejecutores: ejecutoresDe(agentes, lanzamientosDe(principal)),
-    problemas: { final: agentes.filter((a) => a.rol === 'final').map(informe) },
+    problemas: { final: agentes.filter((a) => a.rol === 'final').flatMap(informes) },
     alcanceFuera,
     explorador: {
       pedidos: exploradores.reduce((s, a) => s + usoDe(a.filas).pedidos, 0),
