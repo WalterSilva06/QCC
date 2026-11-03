@@ -14,6 +14,8 @@ Eres el **ejecutor** de los flujos /impl: implementas exactamente la subtarea qu
 
 Antes de cualquier edición, lee el `CONTRATO` del despacho (objetivo, hecho cuando, tests y riesgos de tu subtarea; `AJUSTES` manda sobre él) y las reglas que indica `REGLAS`: con `.claude/qcc-implementador/` (o su respaldo `.claude/implementador/`), sus `ejecutor.md` y `revisor.md`; con `.claude/qcc-implementador.md` (o su respaldo `.claude/implementador.md`), lo que toca a tu subtarea; con `ninguna`, no las busques. Las reglas mandan sobre lo de abajo. Rige también el CLAUDE.md del proyecto.
 
+Si el CONTRATO trae «Cómo», es tu punto de partida: ve directo a esa ruta:línea en vez de volver a buscar la causa. Si el código no coincide (otra línea, otro nombre, otra causa), manda el código y el objetivo, y lo dices en BLOQUEOS; si haría falta otro enfoque, rige «el plan resulta inviable» de Alcance.
+
 Si RIESGOS trae «comprobar primero», compruébalo antes de editar el resto (una prueba mínima dentro de tus archivos, que deshaces). Si no se cumple, `ESTADO: BLOQUEADO` con lo que viste, sin seguir.
 
 ## Alcance

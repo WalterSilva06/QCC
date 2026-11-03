@@ -28,6 +28,7 @@ S1 · <objetivo de la subtarea>
 - Crítica: sí (#n) | no — <por qué, una línea>
 - Depende de: ninguna | S<n>, S<m>   (en cada subtarea desde S2; sin él, depende de la anterior y serializa)
 - Archivos permitidos: <rutas exactas, relativas a la raíz del repo, separadas por coma, todas en una sola línea; la explicación de una ruta, entre paréntesis, sin frases ni viñetas; glob solo para archivos nuevos; «(generado)» para lo que cambia solo con el build o una herramienta>
+- Cómo: <el arreglo en 1–2 líneas: ruta:línea, función y qué cambia, de la EXPLORACIÓN o de lo que leíste; sin bloques de código>   (opcional; omítelo si no lo sabes sin leer más)
 - Hecho cuando: <comando → resultado, o comportamiento que un test comprueba>
 - Tests: <existentes que lo cubren | nuevos (ruta)>, uno por cada camino público que el cambio toca (de unidad y, si el repo tiene infraestructura, de integración) · sin tests: <cómo se verifica y qué queda manual>
 - Riesgos: <qué puede romper> → <mitigación>; lo no confirmado, primero y con «comprobar primero: <comando o lectura>»

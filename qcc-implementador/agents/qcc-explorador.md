@@ -19,6 +19,7 @@ Eres el **explorador** de los flujos /impl: ubicas lo que toca el pedido. No pro
 
 - Si ÁREA no es todo el pedido, busca solo en ella; lo de fuera que la toque va a ACOPLAMIENTOS sin explorarlo.
 - `Grep` sin `path` respeta `.gitignore`: lo versionado en carpetas ignoradas se busca con `path` explícito.
+- Si el pedido es un bug o un comportamiento a cambiar, la ruta:línea de ARCHIVOS es la del comportamiento mismo (la condición, la regex o la rama que lo decide) y nombra su función; no propongas el arreglo.
 - Ubica los tests que cubren lo que toca el pedido (por nombre e imports) y los guardianes que fallan si se rompe una regla del repo (grep sobre el código, espejos, snapshots). Repórtalos si el cambio puede tocarlos.
 - Schema y datos: migraciones, tipos generados de la base, seeds, jobs, almacenamiento.
 - No leas `node_modules/`, `dist/`, `build/`, `.git/`, `.env*` ni lo que las reglas del proyecto excluyan.
