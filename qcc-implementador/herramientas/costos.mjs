@@ -121,6 +121,15 @@ function veredictoDe(filas, rol) {
 /** Si la fila es el `/impl` (o `/impl:impl`) que el usuario escribió en el hilo principal. */
 const esComando = (f) => f?.type === 'user' && !f.isSidechain && f.timestamp && /<command-name>\/(?:[\w-]+:)?impl</.test(textoDe(f.message?.content))
 
+/** Si la fila es la skill `impl` cargada por el modelo (herramienta Skill): trae `Base directory for this skill: …/skills/impl`, no `skills/implementador`. */
+const esSkillImpl = (f) => f?.type === 'user' && !f.isSidechain && f.timestamp && /^Base directory for this skill: .*skills[\\/]impl(?![\w-])/.test(textoDe(f.message?.content))
+
+/** Las filas que abren un flujo: cada `/impl` escrito, y cada skill `impl` sin un `/impl` escrito en los 5 s anteriores (si lo hay, ese es el comienzo). */
+const comienzosDe = (filas) => {
+  const comandos = filas.filter(esComando).map((f) => Date.parse(f.timestamp))
+  return filas.filter((f) => esComando(f) || (esSkillImpl(f) && !comandos.some((c) => Date.parse(f.timestamp) - c >= 0 && Date.parse(f.timestamp) - c <= 5000)))
+}
+
 /** Rol corto de un agente: quita el prefijo `qcc-` (los transcripts viejos no lo tienen). */
 const rolCorto = (nombre) => (typeof nombre === 'string' ? nombre.replace(/^(?:[^:]+:)?qcc-/, '') : nombre)
 
@@ -155,14 +164,13 @@ export function sesionDelFlujo(raiz, desde, proyectos = proyectosDe(), base = nu
       if (!texto.includes(marca)) continue
       const filas = filasDe(archivo)
       const k = filas.findIndex((f) => JSON.stringify(f?.message?.content ?? '').includes(marca))
-      const comando = filas.slice(0, Math.max(k, 0)).reverse().find(esComando)
+      const comando = comienzosDe(filas.slice(0, Math.max(k, 0))).at(-1)
       return { archivo, inicio: comando?.timestamp ?? filas[k]?.timestamp ?? new Date(limite).toISOString() }
     }
   }
   let mejor = null
   for (const { archivo } of recientes) {
-    for (const f of filasDe(archivo)) {
-      if (!esComando(f)) continue
+    for (const f of comienzosDe(filasDe(archivo))) {
       const t = Date.parse(f.timestamp)
       if (t <= limite + 60_000 && t >= limite - 30 * 60_000 && (!mejor || t > Date.parse(mejor.inicio))) mejor = { archivo, inicio: f.timestamp }
     }
@@ -204,7 +212,7 @@ function leerTramo(sesion, hasta) {
       // Sin meta: rol desconocido.
     }
     const prompt = textoDe(filas.find((f) => f.type === 'user')?.message?.content)
-    const rol = tipo === 'revisor' && /QUÉ REVISAR: cambio completo|YA REVISADO|EJECUTORES:/.test(prompt) ? 'final' : tipo
+    const rol = tipo === 'revisor' ? 'final' : tipo
     agentes.push({ rol, tipo, prompt, filas, inicio })
   }
   agentes.sort((a, b) => Date.parse(a.inicio) - Date.parse(b.inicio))
@@ -246,7 +254,7 @@ export function costoDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = 
  */
 export function fugaDe(archivo, cierre) {
   if (!archivo || !fs.existsSync(archivo)) return null
-  const siguiente = filasDe(archivo).find((f) => esComando(f) && f.timestamp > cierre)?.timestamp
+  const siguiente = comienzosDe(filasDe(archivo)).find((f) => f.timestamp > cierre)?.timestamp
   const { principal, agentes } = leerTramo({ archivo, inicio: cierre }, siguiente ?? '9999-12-31T23:59:59.999Z')
   const usos = [usoDe(principal), ...agentes.map((a) => usoDe(a.filas))]
   return { usd: usos.reduce((s, u) => s + u.usd, 0), pedidos: usos.reduce((s, u) => s + u.pedidos, 0) }
@@ -269,7 +277,7 @@ export function problemasDe(texto) {
   const items = (patron) => [...cuerpo.matchAll(patron)].map((m) => m[1].trim().slice(0, 200)).filter(Boolean)
   const numerados = items(/^\s*\d+[.)]\s*(.+)$/gm)
   if (numerados.length) return numerados
-  return items(/^\s*(?:[-*•]\s+|(?=\S+:\d+\S*\s+[-–—]\s))(.+)$/gm).filter((t) => !/^ninguno\.?$/i.test(t))
+  return items(/^\s*(?:[-*•]\s+|(?=\S+:\d+\S*(?:\s+\+\s+\S+:\d+\S*)*\s+[-–—]\s))(.+)$/gm).filter((t) => !/^ninguno\.?$/i.test(t))
 }
 
 /** Prompt de las llamadas al `Agent` (o `Task`) del hilo principal: `[{ prompt, tipo, effort, t }]`. */
@@ -283,20 +291,32 @@ function lanzamientosDe(principal) {
   return lanzamientos
 }
 
+/** Si la fila user es un mensaje del humano: no meta, sin resultados de herramienta y sin las notificaciones del sistema. */
+const esHumano = (f) => f.type === 'user' && !f.isMeta && !bloquesDe(f, 'tool_result').length && !/^<(?:bash-stdout|bash-stderr|local-command-caveat|task-notification|system-reminder)>/.test(textoDe(f.message?.content).trim())
+
 /**
  * Tiempos del hilo principal en segundos: `fases` (pared de cada paso menos la espera que cae en él), `espera` (lo que
- * tardó el usuario en cada `AskUserQuestion`) y `activo` (el total menos la espera). Las marcas de fase son
- * `estado.mjs … --paso n`, el explorador (1) y el AskUserQuestion «Plan» (4).
+ * tardó el usuario en cada `AskUserQuestion` y en responder tras un turno que el asistente cerró con texto) y `activo`
+ * (el total menos la espera). Las marcas de fase son `estado.mjs … --paso n`, el explorador (1) y el AskUserQuestion «Plan» (4).
  */
 function tiemposDe(principal, inicio) {
   const t0 = Date.parse(inicio)
   const marcas = []
   const preguntas = new Map()
   const resultados = new Map()
+  const esperasTurno = []
+  let finTurno = null
   let fin = t0
   for (const f of principal) {
     const t = Date.parse(f.timestamp)
     if (t > fin) fin = t
+    if (f.type === 'assistant') {
+      if (bloquesDe(f, 'tool_use').length) finTurno = null
+      else if (bloquesDe(f, 'text').length) finTurno = t
+    } else if (finTurno !== null && esHumano(f)) {
+      esperasTurno.push([finTurno, t])
+      finTurno = null
+    }
     for (const c of bloquesDe(f, 'tool_use')) {
       const paso = c.name === 'Bash' ? /estado\.mjs\b[^\n]*?--paso\s+(\d+)/.exec(String(c.input?.command ?? ''))?.[1] : null
       if (paso) marcas.push({ t, n: paso })
@@ -310,7 +330,7 @@ function tiemposDe(principal, inicio) {
     }
     for (const c of bloquesDe(f, 'tool_result')) resultados.set(c.tool_use_id, t)
   }
-  const esperas = [...preguntas].map(([id, a]) => [a, Math.min(resultados.get(id) ?? fin, fin)]).filter(([a, b]) => b > a)
+  const esperas = [...[...preguntas].map(([id, a]) => [a, Math.min(resultados.get(id) ?? fin, fin)]), ...esperasTurno].filter(([a, b]) => b > a)
   const tramos = [{ t: t0, n: '0' }, ...marcas.sort((a, b) => a.t - b.t)]
   const fases = {}
   tramos.forEach(({ t, n }, i) => {
@@ -361,9 +381,11 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
   const lectura = leerFlujo(raiz, desde, proyectos, hasta, base)
   if (!lectura) return null
   const { sesion, todas, principal, agentes } = lectura
-  const comando = todas.find((f) => esComando(f) && f.timestamp === sesion.inicio)
+  const comando = comienzosDe(todas).find((f) => f.timestamp === sesion.inicio)
   const crudo = textoDe(comando?.message?.content)
-  const pedido = comando ? (/<command-args>([\s\S]*?)<\/command-args>/.exec(crudo)?.[1] ?? crudo.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 120) : null
+  // De la skill, el pedido es la línea `**Pedido:** …`.
+  const bruto = !comando ? null : esComando(comando) ? (/<command-args>([\s\S]*?)<\/command-args>/.exec(crudo)?.[1] ?? crudo.replace(/<[^>]*>/g, ' ')) : (/\*\*Pedido:\*\*[ \t]*(.*)/.exec(crudo)?.[1] ?? null)
+  const pedido = bruto === null ? null : bruto.replace(/\s+/g, ' ').trim().slice(0, 120) || null
   const mensajes = [...mensajesDe(principal).values()]
   const contextoDe = (m) => (m ? (m.uso?.input_tokens ?? 0) + (m.uso?.cache_read_input_tokens ?? 0) + (m.uso?.cache_creation_input_tokens ?? 0) : null)
   const informe = (a) => ({ veredicto: veredictoDe(a.filas, a.rol), items: problemasDe(ultimoTexto(a.filas)) })

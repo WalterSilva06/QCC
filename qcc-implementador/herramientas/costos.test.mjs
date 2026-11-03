@@ -340,12 +340,90 @@ test('costos: --anotar suma un defecto y --fuga mide lo gastado después del cie
   assert.match(listado, /2026-01-01 10:01 · repo · .* · HECHO · defectos: 2$/m)
 })
 
+/** Arma un repo con su carpeta de sesiones y los ayudantes de transcript de los tests de arriba. */
+function transcripts(nombre) {
+  const raiz = path.join(os.tmpdir(), nombre)
+  const claude = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
+  temporales.push(claude)
+  const sesion = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  const subagentes = path.join(sesion, 's1', 'subagents')
+  fs.mkdirSync(subagentes, { recursive: true })
+  const inicio = Date.parse('2026-01-01T10:00:00.000Z')
+  const en = (s) => new Date(inicio + s * 1000).toISOString()
+  const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
+  const turno = (id, s, bloques) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-sonnet-5-5', usage: { output_tokens: 100 }, content: bloques } })
+  const texto = (t) => ({ type: 'text', text: t })
+  const usuario = (s, contenido, extra = {}) => ({ type: 'user', timestamp: en(s), message: { role: 'user', content: contenido }, ...extra })
+  const escribir = (filas) => fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl(filas))
+  const agente = (nombre, tipo, prompt, desde, filas) => {
+    fs.writeFileSync(path.join(subagentes, `${nombre}.meta.json`), JSON.stringify({ agentType: tipo }))
+    fs.writeFileSync(path.join(subagentes, `${nombre}.jsonl`), jsonl([usuario(desde, prompt), ...filas]))
+  }
+  const opciones = (hasta) => ({ proyectos: path.join(claude, 'projects'), hasta: en(hasta), base: null })
+  return { raiz, en, turno, texto, usuario, escribir, agente, opciones }
+}
+
+test('costos: un /impl lanzado por la skill abre su propio flujo, y con /impl tecleado manda el comando', () => {
+  const { raiz, en, turno, texto, usuario, escribir, opciones } = transcripts('repo-metricas-skill')
+  const skill = (s, pedido) => usuario(s, [texto(`Base directory for this skill: D:\\GitHub-Personal\\QCC\\qcc-implementador\\skills\\impl\n\n# /impl\n\nEres el orquestador.\n\n**Pedido:** ${pedido}\n\nresto`)], { isMeta: true, isSidechain: false })
+  escribir([
+    usuario(0, '<command-name>/impl</command-name>\n<command-args> primero </command-args>'),
+    // Con /impl tecleado, la fila de la skill llega ms después: el comienzo sigue siendo el comando.
+    skill(0.05, 'primero'),
+    turno('o1', 100, [texto('uno')]),
+    skill(1000, '  segundo   pedido '),
+    turno('o2', 1100, [texto('dos')]),
+    // Otra skill con nombre parecido no abre flujo.
+    usuario(1500, [texto('Base directory for this skill: D:\\x\\skills\\implementador\n\n**Pedido:** no')], { isMeta: true, isSidechain: false }),
+    turno('o3', 1600, [texto('tres')]),
+  ])
+  const primero = metricasDelFlujo(raiz, en(0), opciones(500))
+  assert.equal(primero.costo.inicio, en(0))
+  assert.equal(primero.pedido, 'primero')
+  assert.equal(primero.costo.roles.orquestador.pedidos, 1)
+  const segundo = metricasDelFlujo(raiz, en(1000), opciones(2000))
+  assert.equal(segundo.costo.inicio, en(1000))
+  assert.equal(segundo.pedido, 'segundo pedido')
+  assert.equal(segundo.costo.roles.orquestador.pedidos, 2)
+})
+
+test('costos: la espera incluye al usuario que responde tras un turno cerrado con texto', () => {
+  const { raiz, en, turno, texto, usuario, escribir, opciones } = transcripts('repo-metricas-espera')
+  const bash = (id, comando) => ({ type: 'tool_use', id, name: 'Bash', input: { command: comando } })
+  const ESTADO = 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs'
+  escribir([
+    usuario(0, '<command-name>/impl</command-name>'),
+    turno('o1', 5, [bash('b0', `${ESTADO} --paso 0`)]),
+    // El turno termina con texto y el usuario pega comandos 1000 s después.
+    turno('o2', 100, [texto('Pega estos comandos con !')]),
+    usuario(1100, '<bash-input>node x</bash-input>'),
+    turno('o3', 1110, [bash('b5', `${ESTADO} --paso 5`)]),
+    turno('o4', 1120, [texto('listo')]),
+    // Una notificación del sistema no es el usuario: no corta la espera.
+    usuario(1200, '<task-notification>fin</task-notification>'),
+    usuario(1205, '<bash-stdout>ok</bash-stdout>'),
+    turno('o5', 1210, [bash('b7', `${ESTADO} --cambios abc --paso 7`)]),
+  ])
+  const m = metricasDelFlujo(raiz, en(0), opciones(1300))
+  assert.deepEqual(m.tiempos, { fases: { 0: 110, 5: 100, 7: 0 }, espera: 1000, activo: 210 })
+})
+
+test('costos: todo revisor es la revisión final y su veredicto entra en final', () => {
+  const { raiz, en, turno, texto, usuario, escribir, agente, opciones } = transcripts('repo-metricas-final')
+  escribir([usuario(0, '<command-name>/impl</command-name>'), turno('o1', 60, [texto('x')])])
+  agente('agent-f', 'impl:qcc-revisor', 'REVISIÓN FINAL · repo /x', 100, [turno('f1', 140, [texto('VEREDICTO: RECHAZADO\nPROBLEMAS:\n1. Falla X\nOBSERVACIONES: ninguna')])])
+  const m = metricasDelFlujo(raiz, en(0), opciones(500))
+  assert.deepEqual(m.costo.veredictos, { final: ['RECHAZADO'] })
+  assert.deepEqual(m.problemas, { final: [{ veredicto: 'RECHAZADO', items: ['Falla X'] }] })
+})
+
 test('costos: problemasDe acepta viñetas y ruta:línea sin numeración', () => {
   assert.deepEqual(problemasDe('VEREDICTO: RECHAZADO\nPROBLEMAS:\n1. uno\n2) dos\nOBSERVACIONES: x'), ['uno', 'dos'])
   assert.deepEqual(problemasDe('PROBLEMAS:\n- a falla\n* b falla\n• c falla\nOBSERVACIONES:\n- no cuenta'), ['a falla', 'b falla', 'c falla'])
   assert.deepEqual(problemasDe('PROBLEMAS:\nsrc/a.ts:12 — mal\nsrc/b.ts:3-5 – peor\n- src/c.ts:9 - otro\n\nOBSERVACIONES: nada'), ['src/a.ts:12 — mal', 'src/b.ts:3-5 – peor', 'src/c.ts:9 - otro'])
   // Con numerados presentes, sus sub-viñetas no se cuentan aparte.
   assert.deepEqual(problemasDe('PROBLEMAS:\n1. src/a.ts:1 — mal\n   - detalle\n   - otro detalle\n2. dos\nOBSERVACIONES: x'), ['src/a.ts:1 — mal', 'dos'])
+  assert.deepEqual(problemasDe('PROBLEMAS:\nsrc/main.js:45,61 + src/texturas.js:153-174 — texto\nOBSERVACIONES: x'), ['src/main.js:45,61 + src/texturas.js:153-174 — texto'])
   assert.deepEqual(problemasDe('PROBLEMAS: ninguno\nOBSERVACIONES: - algo'), [])
   assert.deepEqual(problemasDe('PROBLEMAS:\n- ninguno'), [])
   assert.deepEqual(problemasDe('sin sección'), [])
