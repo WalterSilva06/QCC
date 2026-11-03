@@ -26,7 +26,7 @@ qcc-implementador/                plugin impl
   instalar.mjs                    archiva (--limpiar) las copias viejas de /impl y /commit en ~/.claude
   skills/impl/SKILL.md            /impl
   agents/qcc-*.md                 explorador, planificador, ejecutor, revisor (sin hooks:, que se ignoran)
-  herramientas/                   estado (con --guia), verificar, guardia, costos, sus tests (guardia.test, estado.test, estado-fotos.test, estado-cambios.test, costos.test, verificar.test) y pruebas-comun, comun.md, plan.md, pasos.md, config.ejemplo.md
+  herramientas/                   estado (con --guia), verificar, guardia, costos, mover (bloques de líneas para el ejecutor), sus tests (guardia.test, estado.test, estado-fotos.test, estado-cambios.test, costos.test, verificar.test, mover.test) y pruebas-comun, comun.md, plan.md, pasos.md, config.ejemplo.md
 qcc-commit/                       plugin commit
   .claude-plugin/plugin.json      manifiesto
   hooks/hooks.json                solo-git.mjs en PreToolUse (Bash, PowerShell)

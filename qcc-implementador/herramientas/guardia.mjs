@@ -774,15 +774,22 @@ function motivoArchivoScript(args, ctx) {
 /** Opciones de `estado.mjs` que escriben el estado del flujo: son del orquestador, no de un ejecutor. */
 const ESTADO_ESCRIBE = /^--(externo|base|cambios|guardar|cancelar)(=|$)/
 
+/** Índice (en `args`, de `node`) del script que corre; -1 si corre código en línea (`-e`…) o ninguno. */
+function indiceScript(args) {
+  for (let k = 0; k < args.length; k++) {
+    if (NODE_CODIGO.has(args[k])) return -1
+    if (NODE_OPC_CON_VALOR.has(args[k])) k++
+    else if (!args[k].startsWith('-')) return k
+  }
+  return -1
+}
+
+const nombreScript = (args, k) => (k < 0 ? '' : args[k].split(/[\\/]/).pop().toLowerCase())
+
 /** Motivo si `args` (de `node`) corre `estado.mjs` con una opción que escribe estado; `null` si no. */
 function motivoEstadoEscribe(args) {
-  let k = 0
-  for (; k < args.length; k++) {
-    if (NODE_CODIGO.has(args[k])) return null
-    if (NODE_OPC_CON_VALOR.has(args[k])) k++
-    else if (!args[k].startsWith('-')) break
-  }
-  if (k >= args.length || args[k].split(/[\\/]/).pop().toLowerCase() !== 'estado.mjs') return null
+  const k = indiceScript(args)
+  if (nombreScript(args, k) !== 'estado.mjs') return null
   const opcion = args.slice(k + 1).find((a) => ESTADO_ESCRIBE.test(a))
   return opcion ? `estado.mjs ${opcion.split('=')[0]} escribe el estado del flujo (aprobaciones, fotos, cierre): solo el orquestador` : null
 }
@@ -792,6 +799,7 @@ function evaluarNode(args, ctx) {
     const m = motivoEstadoEscribe(args)
     if (m) return m
   }
+  if (ctx.rol === 'revisor' && nombreScript(args, indiceScript(args)) === 'mover.mjs') return 'mover.mjs escribe en el repo: el revisor no edita'
   if (args.some((a) => a.startsWith('--env-file'))) return 'node --env-file carga secretos y suele pegar a servicios vivos: queda para el usuario'
   if (args.some((a) => a === '--watch' || a.startsWith('--watch-path'))) return 'node --watch no termina'
   return motivoArchivoScript(args, ctx)
