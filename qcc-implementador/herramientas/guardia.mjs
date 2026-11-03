@@ -950,6 +950,17 @@ function primeroEsPlaywright(args) {
   return false
 }
 
+const NPX_OPCIONES_CON_VALOR = new Set(['--prefix', '-p', '--package', '-c', '--call', '--cache', '--registry', '--userconfig', '-w', '--workspace'])
+
+/** Índice del binario en los args de `npx` (-1 si no hay): salta las opciones y el valor aparte de las que lo llevan (`--prefix D:/x`). */
+function binDeNpx(args) {
+  for (let k = 0; k < args.length; k++) {
+    if (!args[k].startsWith('-')) return k
+    if (NPX_OPCIONES_CON_VALOR.has(args[k])) k++
+  }
+  return -1
+}
+
 /** Variables que cambian el paquete o el registro con que npx, `exec` o `dlx` bajan el binario. */
 const CONFIG_PAQUETES = /^(\$env:)?(npm_config_|pnpm_config_|bun_config_|yarn_)/i
 
@@ -1030,11 +1041,11 @@ function evaluarSimple(simple, ctx) {
   if (ctx.rol === 'ejecutor' && !ctx.configPaquetes && esPlaywright(prog, args)) return null
 
   if (prog === 'npx' && args.some((a) => a === '--no-install' || a === '--no')) {
-    const j = args.findIndex((a) => !a.startsWith('-'))
+    const j = binDeNpx(args)
     return j >= 0 ? evaluarBinario(nombreProg(args[j]), args.slice(j + 1), ctx) : null
   }
   if (prog === 'npx' && config.pm && config.externos.npx === EXTERNOS_BASE.npx) {
-    const bin = args.find((a) => !a.startsWith('-'))
+    const bin = args[binDeNpx(args)]
     return `npx puede descargar y ejecutar paquetes: usa \`${config.pm === 'npm' ? 'npm exec --no --' : `${config.pm} exec`} ${bin ?? '<bin>'}\``
   }
   if (Object.hasOwn(config.externos, prog)) return config.externos[prog]
@@ -1053,6 +1064,15 @@ function evaluarSimple(simple, ctx) {
   if (['dd', 'mkfs', 'format', 'shred', 'diskpart', 'cipher'].includes(prog)) return `${prog}: destructivo`
   if ((prog === 'chmod' || prog === 'chown') && args.some((a) => /^-[a-zA-Z]*R/.test(a))) return 'cambio de permisos recursivo'
   if (prog === 'find') {
+    // Se saltan las opciones iniciales (-H, -L, -P, -O<n>, -D <valor>); las rutas son los args hasta el primer `-`, `(` o `!`.
+    let ini = 0
+    while (ini < args.length && /^-([HLP]|O\d*|D)$/.test(args[ini])) ini += args[ini] === '-D' ? 2 : 1
+    const resto = args.slice(ini)
+    const fin = resto.findIndex((a) => /^[-(!]/.test(a))
+    const raices = fin < 0 ? resto : resto.slice(0, fin)
+    if (raices.map((a) => path.resolve(ctx.cwd, rutaNativa(a))).some((abs) => abs === path.parse(abs).root)) {
+      return 'find desde la raíz del disco: no en un subagente (busca dentro del repo)'
+    }
     const borra = args.some((a, j) => a === '-delete' || (['-exec', '-execdir', '-ok'].includes(a) && ['rm', 'rmdir', 'mv', 'shred'].includes(nombreProg(args[j + 1] ?? ''))))
     if (borra) return 'find que borra o mueve: no en un subagente'
   }
@@ -1069,7 +1089,9 @@ function evaluarSimple(simple, ctx) {
     return null
   }
   if (CON_DESTINO.has(prog) || COPIAN.has(prog) || ((prog === 'sed' || prog === 'perl') && args.some(EDITA_EN_SITIO))) {
-    for (const a of COPIAN.has(prog) ? destinosDe(prog, args, ctx) : args) {
+    // sed/perl: solo los archivos, no el script (`/a/,/b/c\…` parecería una ruta absoluta).
+    const rutas = COPIAN.has(prog) ? destinosDe(prog, args, ctx) : prog === 'sed' || prog === 'perl' ? archivosEnSitio(prog, args) : args
+    for (const a of rutas) {
       if (a.startsWith('-')) continue
       const m = motivoRuta(a, { raiz: ctx.raiz, base: ctx.cwd, permitirTemporal: true })
       if (m) return m

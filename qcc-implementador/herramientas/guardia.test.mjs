@@ -223,6 +223,40 @@ test('ejecutor: copias desde lo protegido, variables y temporales (casos de los 
   assert.match(evaluar(bash(R, 'npx astro build'), 'ejecutor', R).motivo, /usa `pnpm exec astro`/)
 })
 
+test('ejecutor: sed -i mira solo los archivos, no el script', () => {
+  const R = ESTRICTO
+  deja(bash(R, "sed -i '/a(1);/,/b(2);/c\\\\  x' src/server/citas.ts"))
+  deja(bash(R, "sed -i 's/a/b/' src/server/citas.ts"))
+  deja(bash(R, "perl -pi -e 's/a/b/' src/server/citas.ts"))
+  niega(bash(R, "sed -i 's/a/b/' /etc/hosts"))
+  niega(bash(R, "sed -i '/a/,/b/c\\\\  x' /etc/hosts"))
+})
+
+test('npx: la sugerencia salta el valor de las opciones que lo llevan aparte', () => {
+  const R = ESTRICTO
+  assert.match(evaluar(bash(R, 'npx --prefix D:/x tsx'), 'ejecutor', R).motivo, /usa `pnpm exec tsx`/)
+  assert.match(evaluar(bash(R, 'npx --registry=http://x tsx'), 'ejecutor', R).motivo, /usa `pnpm exec tsx`/)
+})
+
+test('subagentes: find desde la raíz del disco se niega', () => {
+  const R = ESTRICTO
+  for (const rol of ['ejecutor', 'revisor']) {
+    niega(bash(R, 'find / -maxdepth 6 -name x'), rol)
+    niega(bash(R, 'find / -maxdepth 6 -type d -name phaser -path "*node_modules*"'), rol)
+    niega(bash(R, 'find -L / -name x'), rol)
+    niega(bash(R, 'find -H / -name x'), rol)
+    niega(bash(R, 'find -O3 / -name x'), rol)
+    niega(bash(R, 'find -D tree / -name x'), rol)
+    deja(bash(R, 'find -L src -name x'), rol)
+    deja(bash(R, 'find src -name "*.ts"'), rol)
+    deja(bash(R, 'find . -name x'), rol)
+    if (WIN) {
+      niega(bash(R, 'find C:/ -name x'), rol)
+      niega(bash(R, 'find /c -maxdepth 3'), rol)
+    }
+  }
+})
+
 test('guardia: el ejecutor copia con cp desde el temporal a un archivo del repo', () => {
   const R = ESTRICTO
   const tmp = os.tmpdir().replace(/\\/g, '/')
