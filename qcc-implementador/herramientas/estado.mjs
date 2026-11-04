@@ -8,7 +8,7 @@
 //   node <plugin>/herramientas/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"] [--resultado COMPLETO|DETENIDO:<0-7>]
 //   node <plugin>/herramientas/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo
 //   node <plugin>/herramientas/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
-//   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s). La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección
+//   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s), avisa con SIN EXPLORAR y con LARGO solo en la primera corrida. La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección
 //   node <plugin>/herramientas/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan y la VERIFICACIÓN INICIAL)
 //   node <plugin>/herramientas/estado.mjs --cancelar [--paso <n>]  cierra un flujo abierto sin subtareas ejecutadas (resultado CANCELADO) y libera el candado
 //   node <plugin>/herramientas/estado.mjs --reglas                reglas del proyecto para el orquestador
@@ -655,6 +655,11 @@ export function hallazgosDe(texto) {
   return hallazgos
 }
 
+/** Avisos `SIN EXPLORAR: <línea>` de las DUDAS marcadas `no explorado:` (o `No exploradas:`, `**no explorado**:`, con viñeta o negrita). Solo DUDAS. */
+export function sinExplorarDe(hallazgos) {
+  return hallazgos.filter((h) => h.seccion === 'DUDAS' && /^[*_`\s]*no explorad[oa]s?\**\s*:/i.test(h.linea)).map((h) => `SIN EXPLORAR: ${h.linea}`)
+}
+
 /** ¿La ruta citada cae en `permitidos`? También abreviada, como la escribe el explorador: `billing/x.ts` calza con `src/billing/x.ts`. */
 const citaPermitido = (ruta, permitidos) => coincide(ruta, permitidos) || permitidos.some((p) => p.endsWith(`/${ruta}`))
 
@@ -936,13 +941,15 @@ function guardarInforme(id, tipo, ajuste) {
     const { texto: fusion, incompletos } = fusionarExploraciones(informes)
     const texto = pedidos.length === 1 ? informes[0].texto : fusion
     fs.writeFileSync(destino, texto + '\n')
+    const repetida = Boolean(leerEstado().exploracion)
     anotarEstado({ exploracion: destino })
     console.log(`GUARDADO: exploración → ${destino}`)
     for (const { id: agente, faltan } of incompletos) {
       console.log(`INCOMPLETO: agente ${agente} sin ${faltan.join(', ')}: relanza solo esa parte`)
     }
-    for (const aviso of avisosDeLargo(informes, topeDeLineas(pedidos.length))) console.log(aviso)
+    if (!repetida) for (const aviso of avisosDeLargo(informes, topeDeLineas(pedidos.length))) console.log(aviso)
     for (const aviso of avisosDeCortado(pedidos)) console.log(aviso)
+    for (const aviso of sinExplorarDe(hallazgosDe(texto))) console.log(aviso)
     console.log(`RUTAS CRÍTICAS EN LA EXPLORACIÓN: ${criticasDeExploracion(texto)}`)
     return
   }

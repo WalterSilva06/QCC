@@ -1307,7 +1307,7 @@ async function main() {
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
           permissionDecision: 'deny',
-          permissionDecisionReason: `Guardia /impl: contexto del explorador en ${excedido}k (tope ${TOPE_CONTEXTO_EXPLORADOR / 1000}k): reporta ya con lo que tienes; lo que falte va a DUDAS.`,
+          permissionDecisionReason: `Guardia /impl: contexto del explorador en ${excedido}k (tope ${TOPE_CONTEXTO_EXPLORADOR / 1000}k): reporta ya con lo que tienes; lo que falte va a DUDAS como \`no explorado: <ruta> — <por qué>\`.`,
         },
       }))
     }

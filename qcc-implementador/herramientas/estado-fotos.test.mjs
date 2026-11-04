@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { flujoDe, regexDeExterno } from './guardia.mjs'
-import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, techoDeExploradores, topeDeLineas, avisosDeLargo, externoDe, parecenExternas, permitidosDeSubtarea, noPareceRuta, contextoDe, acopladosSinCubrir } from './estado.mjs'
+import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, hallazgosDe, sinExplorarDe, techoDeExploradores, topeDeLineas, avisosDeLargo, externoDe, parecenExternas, permitidosDeSubtarea, noPareceRuta, contextoDe, acopladosSinCubrir } from './estado.mjs'
 
 const PLAN = `PREGUNTAS: ¿algo?
 PLAN · Prueba
@@ -587,28 +587,71 @@ test('--guardar avisa LARGO por exceso de hallazgos', () => {
     d2: informeDe(21, (i) => `- d/${i}.ts:${i} — igual`),
   })
   const entorno = { CLAUDE_CONFIG_DIR: claude }
-  const { raiz, salida } = estadoCon({}, () => ['--guardar', 'justo', 'exploracion', '--paso', '2'], {}, entorno)
-  const md = () => fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8')
+  // LARGO sale solo en la primera corrida de un flujo: cada caso usa un flujo nuevo.
+  const guardar = (ids) => {
+    const { raiz, salida } = estadoCon({}, () => ['--guardar', ids, 'exploracion', '--paso', '2'], {}, entorno)
+    return { salida, md: fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8'), raiz }
+  }
 
   // Con un explorador el tope es 25.
-  assert.doesNotMatch(salida, /LARGO/)
-  const largo = estadoEn(raiz, ['--guardar', 'largo', 'exploracion'], entorno).salida
-  assert.match(largo, /^LARGO: agente largo con 26 hallazgos \(tope 25\)$/m)
+  assert.doesNotMatch(guardar('justo').salida, /LARGO/)
+  const largo = guardar('largo')
+  assert.match(largo.salida, /^LARGO: agente largo con 26 hallazgos \(tope 25\)$/m)
   // El aviso no corta ni cambia lo guardado.
-  assert.equal(md(), informeDe(26) + '\n')
+  assert.equal(largo.md, informeDe(26) + '\n')
 
   // Con tres, el tope de cada uno es 16 (solo t1 lo pasa).
-  const tres = estadoEn(raiz, ['--guardar', 't1,t2,t3', 'exploracion'], entorno).salida
-  assert.match(tres, /^LARGO: agente t1 con 17 hallazgos \(tope 16\)$/m)
-  assert.doesNotMatch(tres, /LARGO: agente t[23]/)
-  assert.equal((tres.match(/^LARGO/gm) ?? []).length, 1)
-  assert.match(md(), /- a\/17\.ts:17 — uno/)
+  const tres = guardar('t1,t2,t3')
+  assert.match(tres.salida, /^LARGO: agente t1 con 17 hallazgos \(tope 16\)$/m)
+  assert.doesNotMatch(tres.salida, /LARGO: agente t[23]/)
+  assert.equal((tres.salida.match(/^LARGO/gm) ?? []).length, 1)
+  assert.match(tres.md, /- a\/17\.ts:17 — uno/)
 
   // Se cuenta antes de deduplicar: d2 repite todo lo de d1 y aun así pasa el tope de 20.
-  const dos = estadoEn(raiz, ['--guardar', 'd1,d2', 'exploracion'], entorno).salida
-  assert.match(dos, /^LARGO: agente d1 con 21 hallazgos \(tope 20\)$/m)
-  assert.match(dos, /^LARGO: agente d2 con 21 hallazgos \(tope 20\)$/m)
-  assert.equal(md().match(/d\/1\.ts:1\b/g).length, 1)
+  const dos = guardar('d1,d2')
+  assert.match(dos.salida, /^LARGO: agente d1 con 21 hallazgos \(tope 20\)$/m)
+  assert.match(dos.salida, /^LARGO: agente d2 con 21 hallazgos \(tope 20\)$/m)
+  assert.equal(dos.md.match(/d\/1\.ts:1\b/g).length, 1)
+
+  // En la segunda corrida del mismo flujo, aunque el informe pase el tope, no vuelve a avisar.
+  const otra = estadoEn(tres.raiz, ['--guardar', 'largo', 'exploracion'], entorno).salida
+  assert.match(otra, /^GUARDADO: exploración/m)
+  assert.doesNotMatch(otra, /LARGO/)
+})
+
+test('estado: sinExplorarDe marca las DUDAS no explorado: (pura)', () => {
+  const informe = (dudas) => `ARCHIVOS\n- a.ts:1 — uno\nTESTS\n- ninguno\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\nDUDAS\n${dudas}`
+  const avisos = (texto) => sinExplorarDe(hallazgosDe(texto))
+
+  assert.deepEqual(avisos(informe('- no explorado: src/x.ts — corte por contexto')), ['SIN EXPLORAR: no explorado: src/x.ts — corte por contexto'])
+  // Otras formas de escribirlo.
+  assert.deepEqual(avisos(informe('* No explorados: carpeta z')), ['SIN EXPLORAR: No explorados: carpeta z'])
+  assert.deepEqual(avisos(informe('- **no explorado:** z')), ['SIN EXPLORAR: **no explorado:** z'])
+  assert.deepEqual(avisos(informe('- **no explorado**: a')), ['SIN EXPLORAR: **no explorado**: a'])
+  assert.deepEqual(avisos(informe('- no explorada: a')), ['SIN EXPLORAR: no explorada: a'])
+  assert.deepEqual(avisos(informe('- No exploradas: a')), ['SIN EXPLORAR: No exploradas: a'])
+  assert.deepEqual(avisos(informe('- `no explorado: a`')), ['SIN EXPLORAR: `no explorado: a`'])
+  // Fuera de DUDAS, o una DUDA normal, no avisan.
+  assert.deepEqual(avisos(informe('- ¿algo?')), [])
+  assert.deepEqual(avisos(informe('- ninguno')), [])
+  assert.deepEqual(avisos(informe('- ¿se ha no explorado: algo?')), [])
+  assert.deepEqual(avisos('ARCHIVOS\n- no explorado: x.ts — nada\nTESTS\nACOPLAMIENTOS\n- no explorado: y.ts — nada\nDATOS\nDUDAS\n- ninguno'), [])
+})
+
+test('--guardar avisa SIN EXPLORAR una vez por DUDA marcada', () => {
+  const informe = (dudas) => `ARCHIVOS\n- a.ts:1 — uno\nTESTS\n- ninguno\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\nDUDAS\n${dudas}`
+  const marca = '- no explorado: src/x.ts — corte por contexto'
+  const claude = transcripts({ a: informe(marca), b: informe(marca).replace('a.ts', 'b.ts'), c: informe('- ¿algo?') })
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+
+  const dos = estadoCon({}, () => ['--guardar', 'a,b', 'exploracion', '--paso', '2'], {}, entorno).salida
+  assert.equal((dos.match(/^SIN EXPLORAR: no explorado: src\/x\.ts — corte por contexto$/gm) ?? []).length, 1)
+  assert.doesNotMatch(estadoCon({}, () => ['--guardar', 'c', 'exploracion', '--paso', '2'], {}, entorno).salida, /SIN EXPLORAR/)
+  // Con un solo id también.
+  assert.match(estadoCon({}, () => ['--guardar', 'a', 'exploracion', '--paso', '2'], {}, entorno).salida, /^SIN EXPLORAR: no explorado: src\/x\.ts/m)
+  // Con la negrita antes de los dos puntos.
+  const negrita = transcripts({ n: informe('- **no explorado**: x') })
+  assert.match(estadoCon({}, () => ['--guardar', 'n', 'exploracion', '--paso', '2'], {}, { CLAUDE_CONFIG_DIR: negrita }).salida, /^SIN EXPLORAR: \*\*no explorado\*\*: x$/m)
 })
 
 test('--guardar avisa LARGO por líneas de más de 160 caracteres', () => {
@@ -619,9 +662,8 @@ test('--guardar avisa LARGO por líneas de más de 160 caracteres', () => {
     pasada: informeDe(3, (i) => (i === 3 ? `- src/b.ts:${i} — ok` : ancha(161 + i))),
   })
   const entorno = { CLAUDE_CONFIG_DIR: claude }
-  const { raiz, salida } = estadoCon({}, () => ['--guardar', 'justa', 'exploracion', '--paso', '2'], {}, entorno)
-  assert.doesNotMatch(salida, /LARGO/)
-  const pasada = estadoEn(raiz, ['--guardar', 'pasada', 'exploracion'], entorno).salida
+  assert.doesNotMatch(estadoCon({}, () => ['--guardar', 'justa', 'exploracion', '--paso', '2'], {}, entorno).salida, /LARGO/)
+  const { raiz, salida: pasada } = estadoCon({}, () => ['--guardar', 'pasada', 'exploracion', '--paso', '2'], {}, entorno)
   assert.match(pasada, /^LARGO: agente pasada con 2 líneas de más de 160 caracteres$/m)
   assert.doesNotMatch(pasada, /hallazgos \(tope/)
   assert.match(fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8'), /x{100}/)
