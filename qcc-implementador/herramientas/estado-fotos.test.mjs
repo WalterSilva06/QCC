@@ -1,6 +1,6 @@
 // Casos de estado.mjs (preflight, planes, fotos, cierre), de la config del flujo y de instalar.mjs.
 
-import { repo, temporales, estadoEn, estadoCon, limpiar, transcripts, subtareaDePlan, repoConPlanGuardado } from './pruebas-comun.mjs'
+import { repo, temporales, estadoEn, estadoCon, limpiar, transcripts, subtareaDePlan, repoConPlanGuardado, ev, hook, transcriptConLineas, turnoConUso } from './pruebas-comun.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -519,9 +519,9 @@ test('estado: --guardar con varios exploradores escribe un solo exploracion.md',
 test('techo de exploradores por tamaño del repo', () => {
   assert.equal(techoDeExploradores(0), 2)
   assert.equal(techoDeExploradores(149), 2)
-  assert.equal(techoDeExploradores(150), 3)
-  assert.equal(techoDeExploradores(800), 3)
-  assert.equal(techoDeExploradores(801), 5)
+  assert.equal(techoDeExploradores(150), 4)
+  assert.equal(techoDeExploradores(800), 4)
+  assert.equal(techoDeExploradores(801), 6)
   // Sin MAPA (null) o sin dato, el mínimo.
   assert.equal(techoDeExploradores(null), 2)
   assert.equal(techoDeExploradores(undefined), 2)
@@ -532,7 +532,7 @@ test('techo de exploradores por tamaño del repo', () => {
   const { raiz, salida } = estadoCon(config, () => ['--paso', '0'], grande)
   const archivos = /^MAPA: .*mapa\.md \((\d+) archivos\)$/m.exec(salida)?.[1]
   assert.ok(Number(archivos) >= 150, salida)
-  assert.match(salida, /^MAPA: .*\n^EXPLORADORES: hasta 3 \(repo de \d+ archivos\)$/m)
+  assert.match(salida, /^MAPA: .*\n^EXPLORADORES: hasta 4 \(repo de \d+ archivos\)$/m)
   assert.equal(/^EXPLORADORES: hasta \d+ \(repo de (\d+) archivos\)$/m.exec(salida)?.[1], archivos)
   const chico = estadoCon(config, () => ['--paso', '0']).salida
   assert.match(chico, /^MAPA: .*\n^EXPLORADORES: hasta 2 \(repo de \d+ archivos\)$/m)
@@ -543,10 +543,33 @@ test('techo de exploradores por tamaño del repo', () => {
 })
 
 test('tope de líneas por número de exploradores', () => {
-  assert.deepEqual([1, 2, 3, 4, 5].map(topeDeLineas), [25, 20, 16, 15, 14])
-  // Fuera de 1–5 se acota.
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map(topeDeLineas), [25, 20, 16, 15, 14, 13])
+  // Fuera de 1–6 se acota.
   assert.equal(topeDeLineas(0), 25)
-  assert.equal(topeDeLineas(9), 14)
+  assert.equal(topeDeLineas(9), 13)
+})
+
+test('--guardar avisa CORTADO del explorador que la guardia dejó sin leer por contexto', () => {
+  const informe = 'ARCHIVOS\n- a.ts:1 — uno\nTESTS\n- ninguno\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\nDUDAS\n- ninguno'
+  const claude = transcripts({ c1: informe, c2: informe.replace('a.ts', 'b.ts') })
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+  const { raiz, salida: preflight } = estadoCon({ verificar: [{ nombre: 'test', cmd: 'echo x' }] }, () => ['--paso', '0'], {}, entorno)
+  assert.match(preflight, /^MAPA: /m)
+  const leer = (id, tokens) => hook(raiz, 'explorador', { ...ev(raiz, 'Read', { file_path: path.join(raiz, 'src', 'a.ts') }), agent_id: id, transcript_path: transcriptConLineas(id, [turnoConUso(tokens)]) })
+
+  // Sin negados no hay ningún CORTADO.
+  assert.equal(leer('c2', 50_000).stdout, '')
+  const sin = estadoEn(raiz, ['--guardar', 'c1,c2', 'exploracion', '--paso', '2'], entorno).salida
+  assert.match(sin, /^GUARDADO: exploración/m)
+  assert.doesNotMatch(sin, /CORTADO/)
+
+  // La fila que produce la guardia real marca solo al agente negado, también al volver a guardar con más ids.
+  assert.equal(JSON.parse(leer('c1', 90_000).stdout).hookSpecificOutput.permissionDecision, 'deny')
+  const con = estadoEn(raiz, ['--guardar', 'c1,c2', 'exploracion', '--paso', '2'], entorno).salida
+  assert.match(con, /^CORTADO: agente c1 por contexto \(90k\)$/m)
+  assert.equal((con.match(/^CORTADO/gm) ?? []).length, 1)
+  assert.match(estadoEn(raiz, ['--guardar', 'c1', 'exploracion'], entorno).salida, /^CORTADO: agente c1 por contexto \(90k\)$/m)
+  assert.doesNotMatch(estadoEn(raiz, ['--guardar', 'c2', 'exploracion'], entorno).salida, /CORTADO/)
 })
 
 /** Informe de explorador con `n` hallazgos en ARCHIVOS y los otros 4 encabezados vacíos. */

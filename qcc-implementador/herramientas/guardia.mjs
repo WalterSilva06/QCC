@@ -11,8 +11,8 @@
 // protegidos (en `.claude/`, solo settings y agentes); y al revisor, escribir fuera de los temporales— y deja
 // cada llamada en el registro del proyecto (`registros/<proyecto>-<hash>.jsonl`), que `estado.mjs --cambios`
 // cruza con el árbol para el chequeo de alcance (cubre rutas que git ignora).
-// `explorador` y `planificador` (solo lectura) solo anotan sus Read, Glob y Grep
-// con decision `lectura`: nunca niegan ni imprimen nada.
+// `explorador` y `planificador` (solo lectura) anotan sus Read, Glob y Grep con decision `lectura`; solo
+// al explorador, con el contexto de su subagente sobre 85k, se los niega para que reporte ya.
 //
 // Lo propio de cada proyecto va en `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, el
 // nombre viejo `.claude/implementador.json`), clave `guardia` (ver `config.ejemplo.md`).
@@ -36,6 +36,9 @@ import { fileURLToPath } from 'node:url'
 /** Carpeta de Claude Code del usuario (`CLAUDE_CONFIG_DIR` o `~/.claude`). */
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const TOPE_REGISTRO = 2 * 1024 * 1024
+/** Contexto del explorador (tokens) desde el que se le niegan Read, Glob y Grep. */
+export const TOPE_CONTEXTO_EXPLORADOR = 85_000
+const COLA_TRANSCRIPT = 256 * 1024
 const WIN = process.platform === 'win32'
 
 // ── Proyecto ────────────────────────────────────────────────────────────────
@@ -1177,7 +1180,7 @@ export function evaluar(evento, rol, raiz = RAIZ) {
   return { motivo: null, objetivo: null }
 }
 
-/** Roles de solo lectura: la guardia solo anota lo que leen, nunca niega. */
+/** Roles de solo lectura: la guardia anota lo que leen (y solo al explorador le pone el tope de contexto). */
 export const ROLES_LECTURA = ['explorador', 'planificador']
 
 /** Los agentes de /impl y su rol. */
@@ -1214,6 +1217,39 @@ export function lecturaDe(evento, raiz = RAIZ) {
   return null
 }
 
+/**
+ * Contexto (tokens) del subagente del evento, según el `usage` de su último mensaje del asistente en
+ * `<transcript_path sin .jsonl>/subagents/agent-<id>.jsonl`. Lee solo la cola. `null` si falta algo o no se entiende.
+ */
+export function contextoDelAgente(evento) {
+  const id = String(evento?.agent_id ?? '')
+  const sesion = String(evento?.transcript_path ?? '')
+  if (!/^[\w-]+$/.test(id) || !sesion.endsWith('.jsonl')) return null
+  const archivo = path.join(sesion.slice(0, -'.jsonl'.length), 'subagents', `agent-${id}.jsonl`)
+  let fd
+  try {
+    fd = fs.openSync(archivo, 'r')
+    const { size } = fs.fstatSync(fd)
+    const desde = Math.max(0, size - COLA_TRANSCRIPT)
+    const buf = Buffer.alloc(size - desde)
+    fs.readSync(fd, buf, 0, buf.length, desde)
+    const lineas = buf.toString('utf8').split('\n')
+    // Si la lectura empezó a mitad del archivo, la primera línea puede venir cortada.
+    if (desde > 0) lineas.shift()
+    for (let i = lineas.length - 1; i >= 0; i--) {
+      if (!lineas[i].trim()) continue
+      const f = JSON.parse(lineas[i])
+      const u = f?.type === 'assistant' ? f.message?.usage : null
+      if (u) return (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+    }
+  } catch {
+    // Sin transcript o con una línea rota: no se sabe, así que no se niega.
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd)
+  }
+  return null
+}
+
 function registrar(raiz, fila) {
   const registro = registroDe(raiz)
   try {
@@ -1244,10 +1280,13 @@ async function main() {
   const lectura = ROLES_LECTURA.includes(rol)
   const raiz = raizDe(process.env.CLAUDE_PROJECT_DIR || evento?.cwd || process.cwd())
   if (lectura) {
-    // Solo anota: nunca imprime ni niega, y se traga cualquier error.
+    // Anota; solo niega al explorador que pasó el tope de contexto. Cualquier error deja pasar.
+    let excedido = null
     try {
       const l = lecturaDe(evento, raiz)
       if (!l) return
+      const contexto = rol === 'explorador' ? contextoDelAgente(evento) : null
+      excedido = contexto !== null && contexto > TOPE_CONTEXTO_EXPLORADOR ? Math.round(contexto / 1000) : null
       registrar(raiz, {
         t: new Date().toISOString(),
         rol,
@@ -1255,10 +1294,19 @@ async function main() {
         esfuerzo: evento.effort?.level ?? evento.effort ?? null,
         herramienta: evento.tool_name,
         objetivo: l.objetivo,
-        decision: 'lectura',
+        ...(excedido !== null ? { decision: 'negado', motivo: `contexto ${excedido}k` } : { decision: 'lectura' }),
       })
     } catch {
       // Una lectura nunca se frena.
+    }
+    if (excedido !== null) {
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: `Guardia /impl: contexto del explorador en ${excedido}k (tope ${TOPE_CONTEXTO_EXPLORADOR / 1000}k): reporta ya con lo que tienes; lo que falte va a DUDAS.`,
+        },
+      }))
     }
     return
   }

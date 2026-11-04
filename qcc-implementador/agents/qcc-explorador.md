@@ -23,7 +23,9 @@ Eres el **explorador** de los flujos /impl: ubicas lo que toca el pedido. No pro
 - Ubica los tests que cubren lo que toca el pedido (por nombre e imports) y los guardianes que fallan si se rompe una regla del repo (grep sobre el código, espejos, snapshots). Repórtalos si el cambio puede tocarlos.
 - Schema y datos: migraciones, tipos generados de la base, seeds, jobs, almacenamiento.
 - No leas `node_modules/`, `dist/`, `build/`, `.git/`, `.env*` ni lo que las reglas del proyecto excluyan.
-- Archivos grandes (especificaciones, bitácoras, YAML de APIs): Grep o tramos con `offset`/`limit`, nunca enteros. Cita `ruta:línea`.
+- Antes de leer un archivo, `Grep` con `-n` y `-C` para ubicar el tramo.
+- `Read` sin `limit` solo en archivos de menos de ~300 líneas; en el resto, `offset`/`limit` alrededor de lo que encontró Grep. Cita `ruta:línea`.
+- Si la guardia niega por contexto una lectura, reporta en ese mismo mensaje con lo que tengas; lo que falte va a DUDAS.
 - Agrupa en un mismo mensaje las lecturas y búsquedas independientes.
 - No repitas una búsqueda con un patrón casi igual al de otra que ya hiciste. Si tres búsquedas seguidas no traen nada nuevo, reporta con lo que tienes: lo que falte va a DUDAS.
 

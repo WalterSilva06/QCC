@@ -6,7 +6,7 @@
 // (pnpm, migraciones inmutables, scripts negados, secretos) y uno npm sin config, para
 // comprobar los valores por defecto.
 
-import { repo, temporales, ev, GUARDIA, hook, filasDe, borrarRegistro, limpiar } from './pruebas-comun.mjs'
+import { repo, temporales, ev, GUARDIA, hook, filasDe, borrarRegistro, limpiar, transcriptConLineas, turnoConUso } from './pruebas-comun.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -603,6 +603,42 @@ test('guardia: roles de lectura registran sin bloquear', () => {
     assert.equal(rota.stdout, '')
     assert.equal(rota.status, 0)
     assert.equal(filasDe(raiz).length, antes)
+  } finally {
+    borrarRegistro(raiz)
+  }
+})
+
+test('guardia: el explorador con más de 85k de contexto no lee más; los demás casos pasan', () => {
+  const raiz = repo('tope-contexto', { 'src/a.ts': 'a\n' })
+  temporales.push(raiz)
+  try {
+    const leer = (rol, id, transcript_path) => hook(raiz, rol, { ...ev(raiz, 'Read', { file_path: path.join(raiz, 'src', 'a.ts') }), agent_id: id, transcript_path })
+
+    const alto = leer('explorador', 'ex-alto', transcriptConLineas('ex-alto', [{ type: 'user' }, turnoConUso(10_000), turnoConUso(90_000)]))
+    const razon = JSON.parse(alto.stdout).hookSpecificOutput
+    assert.equal(razon.permissionDecision, 'deny')
+    assert.ok(razon.permissionDecisionReason.includes('contexto del explorador en 90k (tope 85k)'))
+    assert.ok(!razon.permissionDecisionReason.includes('BLOQUEOS'))
+    assert.equal(filasDe(raiz).at(-1).decision, 'negado')
+    assert.equal(filasDe(raiz).at(-1).motivo, 'contexto 90k')
+
+    // También Glob y Grep.
+    const grep = hook(raiz, 'explorador', { ...ev(raiz, 'Grep', { pattern: 'x' }), agent_id: 'ex-alto', transcript_path: transcriptConLineas('ex-alto', [turnoConUso(90_000)]) })
+    assert.equal(JSON.parse(grep.stdout).hookSpecificOutput.permissionDecision, 'deny')
+
+    const bajo = leer('explorador', 'ex-bajo', transcriptConLineas('ex-bajo', [turnoConUso(50_000)]))
+    assert.equal(bajo.stdout, '')
+    assert.equal(filasDe(raiz).at(-1).decision, 'lectura')
+
+    assert.equal(leer('explorador', 'ex-sin', path.join(os.tmpdir(), 'no-existe', 'sesion.jsonl')).stdout, '', 'sin transcript')
+    assert.equal(leer('explorador', 'ex-roto', transcriptConLineas('ex-roto', [turnoConUso(90_000), '{no es json'])).stdout, '', 'JSON roto en la cola')
+    assert.equal(leer('explorador', '../x', transcriptConLineas('ex-alto', [turnoConUso(90_000)])).stdout, '', 'agent_id inválido')
+    assert.equal(leer('planificador', 'pl-alto', transcriptConLineas('pl-alto', [turnoConUso(90_000)])).stdout, '', 'el planificador no tiene tope')
+
+    // Un transcript grande (la cola no empieza en una línea entera) sigue leyéndose.
+    const relleno = 'x'.repeat(1000)
+    const grande = transcriptConLineas('ex-grande', [...Array.from({ length: 400 }, () => ({ type: 'user', message: { content: relleno } })), turnoConUso(95_000)])
+    assert.match(JSON.parse(leer('explorador', 'ex-grande', grande).stdout).hookSpecificOutput.permissionDecisionReason, /en 95k/)
   } finally {
     borrarRegistro(raiz)
   }

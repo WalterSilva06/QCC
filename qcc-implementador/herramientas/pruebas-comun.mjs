@@ -103,6 +103,22 @@ export function transcripts(agentes) {
   return dir
 }
 
+/**
+ * Sesión falsa con el transcript del subagente `id` y `lineas` (objetos o texto crudo) tal cual. Devuelve el `transcript_path`
+ * de la sesión principal (donde el hook lo busca: `<sesión>/subagents/agent-<id>.jsonl`).
+ */
+export function transcriptConLineas(id, lineas) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-sesion-'))
+  temporales.push(dir)
+  const sub = path.join(dir, 'sesion-1', 'subagents')
+  fs.mkdirSync(sub, { recursive: true })
+  fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), lineas.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n') + '\n')
+  return path.join(dir, 'sesion-1.jsonl')
+}
+
+/** Mensaje del asistente con `usage` de `tokens` de contexto (todo como input_tokens). */
+export const turnoConUso = (tokens) => ({ type: 'assistant', message: { id: 'm', usage: { input_tokens: tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 10 } } })
+
 /** Una subtarea de plan con `extra` (líneas `- Campo: …\n`) antes de «Hecho cuando» y ese texto como «Hecho cuando». */
 export const subtareaDePlan = (n, permitidos, { extra = '', hecho = 'x' } = {}) =>
   `S${n} · Tarea ${n}\n- Crítica: no\n- Archivos permitidos: ${permitidos}\n${extra}- Hecho cuando: ${hecho}\n- Tests: t\n- Riesgos: r\n- Reversión: v`

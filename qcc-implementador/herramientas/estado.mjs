@@ -798,8 +798,8 @@ const SECCIONES_EXPLORACION = ['ARCHIVOS', 'TESTS', 'ACOPLAMIENTOS', 'DATOS', 'D
 const RE_ENCABEZADO = /^\s*(?:#{1,6}\s*)?(?:\*\*)?(ARCHIVOS|TESTS|ACOPLAMIENTOS|DATOS|DUDAS)(?:\*\*)?\s*:?\s*$/
 const RE_NINGUNO = /^\s*(?:[-*]\s*)?ninguno\.?\s*$/i
 
-/** Tope de líneas de hallazgos por explorador según cuántos van en paralelo (1–5); el informe suma ~25 en total. */
-const TOPE_POR_EXPLORADORES = { 1: 25, 2: 20, 3: 16, 4: 15, 5: 14 }
+/** Tope de líneas de hallazgos por explorador según cuántos van en paralelo (1–6); el informe suma ~25 en total. */
+const TOPE_POR_EXPLORADORES = { 1: 25, 2: 20, 3: 16, 4: 15, 5: 14, 6: 13 }
 const MAX_LINEA_EXPLORACION = 160
 const RE_RUTA_LINEA = /[^\s`—]+:\d+/
 
@@ -816,15 +816,15 @@ function sinProsaFinal(texto) {
   })
 }
 
-/** Cuántos exploradores como máximo según los archivos del repo (MAPA): <150 → 2, 150–800 → 3, >800 → 5; sin dato, 2. */
+/** Cuántos exploradores como máximo según los archivos del repo (MAPA): <150 → 2, 150–800 → 4, >800 → 6; sin dato, 2. */
 export function techoDeExploradores(archivos) {
   if (!Number.isFinite(archivos)) return 2
-  return archivos > 800 ? 5 : archivos >= 150 ? 3 : 2
+  return archivos > 800 ? 6 : archivos >= 150 ? 4 : 2
 }
 
-/** Tope de líneas de hallazgos de cada explorador cuando van `n` (fuera de 1–5 se acota). */
+/** Tope de líneas de hallazgos de cada explorador cuando van `n` (fuera de 1–6 se acota). */
 export function topeDeLineas(n) {
-  return TOPE_POR_EXPLORADORES[Math.min(5, Math.max(1, Math.trunc(Number(n)) || 1))]
+  return TOPE_POR_EXPLORADORES[Math.min(6,Math.max(1, Math.trunc(Number(n)) || 1))]
 }
 
 /** Líneas `LARGO:` de los informes `[{ id, texto }]` que pasan de `tope` hallazgos (líneas no vacías sin los 5 encabezados) o traen líneas de más de 160 caracteres. */
@@ -879,6 +879,25 @@ export function fusionarExploraciones(informes) {
   return { texto: bloques.join('\n\n'), incompletos }
 }
 
+/** Líneas `CORTADO:` de los exploradores `ids` que la guardia dejó sin leer por contexto (filas `negado` con motivo `contexto <N>k` desde el inicio del flujo). */
+function avisosDeCortado(ids) {
+  const e = leerEstado()
+  const desde = e.desde_global ?? e.inicio
+  if (!desde) return []
+  let filas
+  try {
+    filas = leerRegistro(desde)
+  } catch {
+    return []
+  }
+  const avisos = []
+  for (const id of ids) {
+    const fila = filas.find((f) => f.agente === id && f.decision === 'negado' && /^contexto \d+k$/.test(f.motivo ?? ''))
+    if (fila) avisos.push(`CORTADO: agente ${id} por contexto (${fila.motivo.slice('contexto '.length)})`)
+  }
+  return avisos
+}
+
 /** Ids de `--guardar` separados por coma: recortados y sin repetir (si no queda ninguno, el valor tal cual). */
 function idsDe(id) {
   const lista = [...new Set(String(id ?? '').split(',').map((s) => s.trim()).filter(Boolean))]
@@ -923,6 +942,7 @@ function guardarInforme(id, tipo, ajuste) {
       console.log(`INCOMPLETO: agente ${agente} sin ${faltan.join(', ')}: relanza solo esa parte`)
     }
     for (const aviso of avisosDeLargo(informes, topeDeLineas(pedidos.length))) console.log(aviso)
+    for (const aviso of avisosDeCortado(pedidos)) console.log(aviso)
     console.log(`RUTAS CRÍTICAS EN LA EXPLORACIÓN: ${criticasDeExploracion(texto)}`)
     return
   }
