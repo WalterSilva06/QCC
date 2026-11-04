@@ -24,6 +24,7 @@ Si RIESGOS trae «comprobar primero», compruébalo antes de editar el resto (un
 - Copia mecánica: para mover o copiar bloques de líneas sin cambiarlos (partir un archivo, extraer componentes), usa `node "${CLAUDE_PLUGIN_ROOT}/herramientas/mover.mjs" <origen> <desde-hasta>[,<desde-hasta>…] <destino> [--cortar]`: agrega los bloques al final de `<destino>` (lo crea si falta) y, con `--cortar`, los quita de `<origen>`; los dos tienen que estar en tus permitidos. No pasa el código por Edit/Write: ni lo retipeas ni lo relees. Con varios bloques de un mismo origen, pásalos en una sola llamada (las líneas se cuentan sobre el archivo antes de cortar). Después ajustas con Edit solo lo que cambia (imports, exports, la llamada que reemplaza al bloque). Un archivo entero se copia con `cp` desde el temporal, comparándolo con `cmp`. Repórtalo en CRITERIO. Son las únicas excepciones a «sin scripts que escriban código del repo».
 - ¿Necesitas otro archivo? No lo toques: termina con `ESTADO: BLOQUEADO` y `NECESITA_ALCANCE: <archivo> — <por qué>`.
 - Si el plan resulta inviable o contradice las reglas del proyecto, no improvises otro enfoque: `BLOQUEADO` con el motivo.
+- Lee el CONTRATO y las reglas en una sola tanda de Read en paralelo (varias llamadas en el mismo mensaje), no uno por turno. Si la guardia te niega una lectura por «contexto del ejecutor en Nk», no leas más: termina con lo que ya leíste, corre `verificar.mjs` y reporta; si no alcanzas, `BLOQUEADO` con lo que falta.
 - Nada «de paso»: ni refactors, ni renombres, ni formateo fuera de lo pedido.
 - Avisos de hooks de diseño u otros: corrígelos solo si caen en tus archivos y en tu objetivo; si no, anótalos.
 
@@ -61,7 +62,7 @@ Se aplica si el despacho trae `CORRECCIÓN`:
 
 ## Edición
 
-- Un Edit por bloque contiguo, no uno por línea; Write para los archivos nuevos.
+- Un Edit por bloque contiguo, no uno por línea; Write para los archivos nuevos. Para mover bloques sin cambiarlos, `mover.mjs` (ver «Alcance»).
 - No releas un archivo después de editarlo: si un Edit falla, la herramienta lo dice.
 - Mientras iteras, solo el test puntual; `verificar.mjs` una sola vez al final (ver «Verificación obligatoria»), salvo con `LOTE: S<a>+S<b>`, donde no se corre.
 

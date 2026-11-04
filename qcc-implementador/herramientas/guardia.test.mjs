@@ -644,6 +644,36 @@ test('guardia: el explorador con más de 85k de contexto no lee más; los demás
   }
 })
 
+test('guardia: el ejecutor con más de 85k no lee más', () => {
+  const raiz = repo('tope-contexto-ejecutor', { 'src/a.ts': 'a\n' })
+  temporales.push(raiz)
+  try {
+    const con = (e, id, transcript_path) => ({ ...e, agent_id: id, transcript_path })
+    const leer = (id, transcript_path) => hook(raiz, 'ejecutor', con(ev(raiz, 'Read', { file_path: path.join(raiz, 'src', 'a.ts') }), id, transcript_path))
+
+    const alto = leer('ej-alto', transcriptConLineas('ej-alto', [{ type: 'user' }, turnoConUso(10_000), turnoConUso(90_000)]))
+    const razon = JSON.parse(alto.stdout).hookSpecificOutput
+    assert.equal(razon.permissionDecision, 'deny')
+    assert.ok(razon.permissionDecisionReason.includes('contexto del ejecutor en 90k (tope 85k)'))
+    assert.equal(filasDe(raiz).at(-1).decision, 'negado')
+    assert.equal(filasDe(raiz).at(-1).motivo, 'contexto 90k')
+
+    const grep = hook(raiz, 'ejecutor', con(ev(raiz, 'Grep', { pattern: 'x' }), 'ej-alto', transcriptConLineas('ej-alto', [turnoConUso(90_000)])))
+    assert.equal(JSON.parse(grep.stdout).hookSpecificOutput.permissionDecision, 'deny')
+
+    const antes = filasDe(raiz).length
+    assert.equal(leer('ej-bajo', transcriptConLineas('ej-bajo', [turnoConUso(50_000)])).stdout, '')
+    assert.equal(filasDe(raiz).length, antes, 'una lectura del ejecutor bajo el tope no se anota')
+
+    const edita90 = hook(raiz, 'ejecutor', con(edita(raiz, path.join(raiz, 'src', 'a.ts')), 'ej-alto', transcriptConLineas('ej-alto', [turnoConUso(90_000)])))
+    assert.equal(edita90.stdout, '', 'el tope no niega ediciones')
+
+    assert.equal(leer('ej-sin', path.join(os.tmpdir(), 'no-existe', 'sesion.jsonl')).stdout, '', 'sin transcript')
+  } finally {
+    borrarRegistro(raiz)
+  }
+})
+
 test('guardia como hook: niega y anota por el agent_type; la sesión principal y otros agentes pasan sin tocar el registro', () => {
   const raiz = repo('agent-type', { 'src/a.ts': 'a\n' })
   temporales.push(raiz)

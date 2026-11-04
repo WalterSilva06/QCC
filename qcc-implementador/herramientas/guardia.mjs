@@ -12,7 +12,8 @@
 // cada llamada en el registro del proyecto (`registros/<proyecto>-<hash>.jsonl`), que `estado.mjs --cambios`
 // cruza con el árbol para el chequeo de alcance (cubre rutas que git ignora).
 // `explorador` y `planificador` (solo lectura) anotan sus Read, Glob y Grep con decision `lectura`; solo
-// al explorador, con el contexto de su subagente sobre 85k, se los niega para que reporte ya.
+// al explorador, con el contexto de su subagente sobre 85k, se los niega para que reporte ya. Al ejecutor,
+// con su contexto sobre 85k, también se le niegan Read, Glob y Grep (sin anotar las que pasan) para que termine.
 //
 // Lo propio de cada proyecto va en `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, el
 // nombre viejo `.claude/implementador.json`), clave `guardia` (ver `config.ejemplo.md`).
@@ -38,6 +39,8 @@ const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude
 const TOPE_REGISTRO = 2 * 1024 * 1024
 /** Contexto del explorador (tokens) desde el que se le niegan Read, Glob y Grep. */
 export const TOPE_CONTEXTO_EXPLORADOR = 85_000
+/** Contexto del ejecutor (tokens) desde el que se le niegan Read, Glob y Grep. */
+export const TOPE_CONTEXTO_EJECUTOR = 85_000
 const COLA_TRANSCRIPT = 256 * 1024
 const WIN = process.platform === 'win32'
 
@@ -1180,7 +1183,7 @@ export function evaluar(evento, rol, raiz = RAIZ) {
   return { motivo: null, objetivo: null }
 }
 
-/** Roles de solo lectura: la guardia anota lo que leen (y solo al explorador le pone el tope de contexto). */
+/** Roles de solo lectura: la guardia anota lo que leen (y solo al explorador le pone el tope de contexto; el ejecutor tiene el suyo aparte). */
 export const ROLES_LECTURA = ['explorador', 'planificador']
 
 /** Los agentes de /impl y su rol. */
@@ -1309,6 +1312,38 @@ async function main() {
       }))
     }
     return
+  }
+  if (rol === 'ejecutor' && ['Read', 'Glob', 'Grep'].includes(evento?.tool_name)) {
+    // Con el contexto sobre el tope se le niegan las lecturas para que termine. Cualquier error deja pasar.
+    let excedido = null
+    try {
+      const contexto = contextoDelAgente(evento)
+      excedido = contexto !== null && contexto > TOPE_CONTEXTO_EJECUTOR ? Math.round(contexto / 1000) : null
+      if (excedido !== null) {
+        registrar(raiz, {
+          t: new Date().toISOString(),
+          rol,
+          agente: evento.agent_id ?? null,
+          esfuerzo: evento.effort?.level ?? evento.effort ?? null,
+          herramienta: evento.tool_name,
+          objetivo: lecturaDe(evento, raiz)?.objetivo ?? null,
+          decision: 'negado',
+          motivo: `contexto ${excedido}k`,
+        })
+      }
+    } catch {
+      // Una lectura nunca se frena por un error al medir.
+    }
+    if (excedido !== null) {
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: `Guardia /impl: contexto del ejecutor en ${excedido}k (tope ${TOPE_CONTEXTO_EJECUTOR / 1000}k): no leas más; termina con lo que ya leíste, corre verificar.mjs y reporta; si no alcanzas, BLOQUEADO con lo que falta.`,
+        },
+      }))
+      return
+    }
   }
   let resultado
   try {
