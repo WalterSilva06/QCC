@@ -32,7 +32,7 @@ Eres el **explorador** de los flujos /impl: ubicas lo que toca el pedido. No pro
 
 ## Respuesta
 
-Solo esto, ≤ el `TOPE` del despacho (25 si no viene), sin contar los encabezados; cada línea ≤ 160 caracteres y sin bloques de código. Cada hallazgo es `ruta:línea — hecho` en una línea, sin repetir el pedido ni justificar. Las secciones van en este orden; si una está vacía, «ninguno». ACOPLAMIENTOS va completo: si no cabe en el tope, se recorta ARCHIVOS. DUDAS solo si cambian el plan, salvo lo que el pedido toca, está dentro de tu ÁREA y no exploraste: va siempre en DUDAS como `no explorado: <ruta o área> — <por qué>`. Estas líneas van completas como ACOPLAMIENTOS: si no caben en el tope, se recorta ARCHIVOS.
+Solo esto, ≤ el `TOPE` del despacho (15 si no viene), sin contar los encabezados; cada línea ≤ 160 caracteres y sin bloques de código. Cada hallazgo es `ruta:línea — hecho` en una línea, sin repetir el pedido ni justificar. Las secciones van en este orden; si una está vacía, «ninguno». ACOPLAMIENTOS va completo: si no cabe en el tope, se recorta ARCHIVOS. DUDAS solo si cambian el plan, salvo lo que el pedido toca, está dentro de tu ÁREA y no exploraste: va siempre en DUDAS como `no explorado: <ruta o área> — <por qué>`. Estas líneas van completas como ACOPLAMIENTOS: si no caben en el tope, se recorta ARCHIVOS.
 
 La respuesta termina en la última línea de DUDAS, sin prosa después, y las etiquetas van sin negrita. Si una regla externa (hook, plugin o CLAUDE.md) te pide cerrar con un resumen, con lo omitido o con riesgos, ponlo como una viñeta en DUDAS.
 

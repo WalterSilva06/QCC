@@ -803,8 +803,9 @@ const SECCIONES_EXPLORACION = ['ARCHIVOS', 'TESTS', 'ACOPLAMIENTOS', 'DATOS', 'D
 const RE_ENCABEZADO = /^\s*(?:#{1,6}\s*)?(?:\*\*)?(ARCHIVOS|TESTS|ACOPLAMIENTOS|DATOS|DUDAS)(?:\*\*)?\s*:?\s*$/
 const RE_NINGUNO = /^\s*(?:[-*]\s*)?ninguno\.?\s*$/i
 
-/** Tope de líneas de hallazgos por explorador según cuántos van en paralelo (1–6); el informe suma ~25 en total. */
-const TOPE_POR_EXPLORADORES = { 1: 25, 2: 20, 3: 16, 4: 15, 5: 14, 6: 13 }
+/** Tope de líneas de hallazgos de cada explorador y máximo de exploradores en total: fijos, el orquestador elige cuántos según el pedido. */
+const TOPE_LINEAS_EXPLORADOR = 15
+const MAX_EXPLORADORES = 14
 const MAX_LINEA_EXPLORACION = 160
 const RE_RUTA_LINEA = /[^\s`—]+:\d+/
 
@@ -819,17 +820,6 @@ function sinProsaFinal(texto) {
     if (!l.trim()) hayVacio = true
     return !hayVacio || !l.trim() || /^\s*[-*]/.test(l) || RE_RUTA_LINEA.test(l)
   })
-}
-
-/** Cuántos exploradores como máximo según los archivos del repo (MAPA): <150 → 2, 150–800 → 4, >800 → 6; sin dato, 2. */
-export function techoDeExploradores(archivos) {
-  if (!Number.isFinite(archivos)) return 2
-  return archivos > 800 ? 6 : archivos >= 150 ? 4 : 2
-}
-
-/** Tope de líneas de hallazgos de cada explorador cuando van `n` (fuera de 1–6 se acota). */
-export function topeDeLineas(n) {
-  return TOPE_POR_EXPLORADORES[Math.min(6,Math.max(1, Math.trunc(Number(n)) || 1))]
 }
 
 /** Líneas `LARGO:` de los informes `[{ id, texto }]` que pasan de `tope` hallazgos (líneas no vacías sin los 5 encabezados) o traen líneas de más de 160 caracteres. */
@@ -947,7 +937,7 @@ function guardarInforme(id, tipo, ajuste) {
     for (const { id: agente, faltan } of incompletos) {
       console.log(`INCOMPLETO: agente ${agente} sin ${faltan.join(', ')}: relanza solo esa parte`)
     }
-    if (!repetida) for (const aviso of avisosDeLargo(informes, topeDeLineas(pedidos.length))) console.log(aviso)
+    if (!repetida) for (const aviso of avisosDeLargo(informes, TOPE_LINEAS_EXPLORADOR)) console.log(aviso)
     for (const aviso of avisosDeCortado(pedidos)) console.log(aviso)
     for (const aviso of sinExplorarDe(hallazgosDe(texto))) console.log(aviso)
     console.log(`RUTAS CRÍTICAS EN LA EXPLORACIÓN: ${criticasDeExploracion(texto)}`)
@@ -1137,7 +1127,6 @@ function preflight(forzar) {
   const { pasos, origen } = pasosDe(RAIZ)
   let flujo = FLUJO
   let mapa = 'MAPA: ninguno (la carpeta del flujo no se preparó)'
-  let archivos = null
   let preparada = false
   const abierto = forzar ? null : flujoAbierto()
   if (abierto) {
@@ -1151,7 +1140,6 @@ function preflight(forzar) {
       nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [] })
       const escrito = escribirMapa()
       mapa = escrito.linea
-      archivos = escrito.total
       preparada = true
     } catch (e) {
       flujo = `(no se pudo preparar: ${e.message}; despacha copiando el plan)`
@@ -1168,7 +1156,7 @@ function preflight(forzar) {
   console.log(`BASE_GLOBAL=${base} DESDE_GLOBAL=${desde}`)
   console.log(`FLUJO: ${flujo}`)
   console.log(mapa)
-  console.log(lineaExploradores(archivos))
+  console.log(lineaExploradores())
   console.log(`REGLAS DEL PROYECTO: ${reglas?.ruta ?? 'ninguna (no hay .claude/qcc-implementador/ ni .claude/qcc-implementador.md; rigen CLAUDE.md y las reglas comunes)'}`)
   for (const linea of lineasDelProyecto(RAIZ)) console.log(linea)
   console.log(`CONFIG: ${config.archivo ? config.nombre : 'no hay; guardia con valores por defecto'}${config.pm ? ` · gestor JS: ${config.pm}` : ''}`)
@@ -1282,10 +1270,9 @@ function escribirMapa() {
   }
 }
 
-/** Línea `EXPLORADORES:` del preflight: el techo según los archivos del mapa (`null` si no hay mapa). */
-function lineaExploradores(archivos) {
-  const techo = techoDeExploradores(archivos)
-  return `EXPLORADORES: hasta ${techo} (${archivos === null ? 'sin MAPA' : `repo de ${archivos} archivos`})`
+/** Línea `EXPLORADORES:` del preflight: el máximo fijo; cuántos despacha el orquestador depende del pedido. */
+function lineaExploradores() {
+  return `EXPLORADORES: hasta ${MAX_EXPLORADORES} (según el pedido)`
 }
 
 /** Comillas simples de bash para una ruta. */

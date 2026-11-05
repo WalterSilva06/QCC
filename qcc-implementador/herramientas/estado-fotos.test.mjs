@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { flujoDe, regexDeExterno } from './guardia.mjs'
-import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, hallazgosDe, sinExplorarDe, techoDeExploradores, topeDeLineas, avisosDeLargo, externoDe, parecenExternas, permitidosDeSubtarea, noPareceRuta, contextoDe, acopladosSinCubrir } from './estado.mjs'
+import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, hallazgosDe, sinExplorarDe, avisosDeLargo, externoDe, parecenExternas, permitidosDeSubtarea, noPareceRuta, contextoDe, acopladosSinCubrir } from './estado.mjs'
 
 const PLAN = `PREGUNTAS: ¿algo?
 PLAN · Prueba
@@ -516,37 +516,17 @@ test('estado: --guardar con varios exploradores escribe un solo exploracion.md',
   )
 })
 
-test('techo de exploradores por tamaño del repo', () => {
-  assert.equal(techoDeExploradores(0), 2)
-  assert.equal(techoDeExploradores(149), 2)
-  assert.equal(techoDeExploradores(150), 4)
-  assert.equal(techoDeExploradores(800), 4)
-  assert.equal(techoDeExploradores(801), 6)
-  // Sin MAPA (null) o sin dato, el mínimo.
-  assert.equal(techoDeExploradores(null), 2)
-  assert.equal(techoDeExploradores(undefined), 2)
-
-  // El preflight lo imprime junto a MAPA, con el mismo conteo de archivos.
+test('el preflight imprime EXPLORADORES: hasta 14 sin importar el repo', () => {
   const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
   const grande = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [`lote/f${i}.txt`, 'x\n']))
   const { raiz, salida } = estadoCon(config, () => ['--paso', '0'], grande)
-  const archivos = /^MAPA: .*mapa\.md \((\d+) archivos\)$/m.exec(salida)?.[1]
-  assert.ok(Number(archivos) >= 150, salida)
-  assert.match(salida, /^MAPA: .*\n^EXPLORADORES: hasta 4 \(repo de \d+ archivos\)$/m)
-  assert.equal(/^EXPLORADORES: hasta \d+ \(repo de (\d+) archivos\)$/m.exec(salida)?.[1], archivos)
+  assert.match(salida, /^MAPA: .*\n^EXPLORADORES: hasta 14 \(según el pedido\)$/m)
   const chico = estadoCon(config, () => ['--paso', '0']).salida
-  assert.match(chico, /^MAPA: .*\n^EXPLORADORES: hasta 2 \(repo de \d+ archivos\)$/m)
+  assert.match(chico, /^MAPA: .*\n^EXPLORADORES: hasta 14 \(según el pedido\)$/m)
 
-  // Con el flujo ocupado no hay MAPA.
+  // Con el flujo ocupado no hay MAPA y el tope es el mismo.
   fs.writeFileSync(path.join(raiz, 'nuevo.ts'), 'n\n')
-  assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^MAPA: ninguno.*\n^EXPLORADORES: hasta 2 \(sin MAPA\)$/m)
-})
-
-test('tope de líneas por número de exploradores', () => {
-  assert.deepEqual([1, 2, 3, 4, 5, 6].map(topeDeLineas), [25, 20, 16, 15, 14, 13])
-  // Fuera de 1–6 se acota.
-  assert.equal(topeDeLineas(0), 25)
-  assert.equal(topeDeLineas(9), 13)
+  assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^MAPA: ninguno.*\n^EXPLORADORES: hasta 14 \(según el pedido\)$/m)
 })
 
 test('--guardar avisa CORTADO del explorador que la guardia dejó sin leer por contexto', () => {
@@ -578,13 +558,13 @@ const informeDe = (n, linea = (i) => `- src/f${i}.ts:${i} — hecho`) =>
 
 test('--guardar avisa LARGO por exceso de hallazgos', () => {
   const claude = transcripts({
-    justo: informeDe(25),
-    largo: informeDe(26),
-    t1: informeDe(17, (i) => `- a/${i}.ts:${i} — uno`),
-    t2: informeDe(16, (i) => `- b/${i}.ts:${i} — dos`),
+    justo: informeDe(15),
+    largo: informeDe(16),
+    t1: informeDe(16, (i) => `- a/${i}.ts:${i} — uno`),
+    t2: informeDe(15, (i) => `- b/${i}.ts:${i} — dos`),
     t3: informeDe(3, (i) => `- c/${i}.ts:${i} — tres`),
-    d1: informeDe(21, (i) => `- d/${i}.ts:${i} — igual`),
-    d2: informeDe(21, (i) => `- d/${i}.ts:${i} — igual`),
+    d1: informeDe(16, (i) => `- d/${i}.ts:${i} — igual`),
+    d2: informeDe(16, (i) => `- d/${i}.ts:${i} — igual`),
   })
   const entorno = { CLAUDE_CONFIG_DIR: claude }
   // LARGO sale solo en la primera corrida de un flujo: cada caso usa un flujo nuevo.
@@ -593,24 +573,24 @@ test('--guardar avisa LARGO por exceso de hallazgos', () => {
     return { salida, md: fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8'), raiz }
   }
 
-  // Con un explorador el tope es 25.
+  // El tope es 15 con un explorador, justo en el tope no avisa.
   assert.doesNotMatch(guardar('justo').salida, /LARGO/)
   const largo = guardar('largo')
-  assert.match(largo.salida, /^LARGO: agente largo con 26 hallazgos \(tope 25\)$/m)
+  assert.match(largo.salida, /^LARGO: agente largo con 16 hallazgos \(tope 15\)$/m)
   // El aviso no corta ni cambia lo guardado.
-  assert.equal(largo.md, informeDe(26) + '\n')
+  assert.equal(largo.md, informeDe(16) + '\n')
 
-  // Con tres, el tope de cada uno es 16 (solo t1 lo pasa).
+  // Con tres, el tope de cada uno sigue siendo 15 (solo t1 lo pasa).
   const tres = guardar('t1,t2,t3')
-  assert.match(tres.salida, /^LARGO: agente t1 con 17 hallazgos \(tope 16\)$/m)
+  assert.match(tres.salida, /^LARGO: agente t1 con 16 hallazgos \(tope 15\)$/m)
   assert.doesNotMatch(tres.salida, /LARGO: agente t[23]/)
   assert.equal((tres.salida.match(/^LARGO/gm) ?? []).length, 1)
-  assert.match(tres.md, /- a\/17\.ts:17 — uno/)
+  assert.match(tres.md, /- a\/16\.ts:16 — uno/)
 
-  // Se cuenta antes de deduplicar: d2 repite todo lo de d1 y aun así pasa el tope de 20.
+  // Se cuenta antes de deduplicar: d2 repite todo lo de d1 y aun así pasa el tope de 15.
   const dos = guardar('d1,d2')
-  assert.match(dos.salida, /^LARGO: agente d1 con 21 hallazgos \(tope 20\)$/m)
-  assert.match(dos.salida, /^LARGO: agente d2 con 21 hallazgos \(tope 20\)$/m)
+  assert.match(dos.salida, /^LARGO: agente d1 con 16 hallazgos \(tope 15\)$/m)
+  assert.match(dos.salida, /^LARGO: agente d2 con 16 hallazgos \(tope 15\)$/m)
   assert.equal(dos.md.match(/d\/1\.ts:1\b/g).length, 1)
 
   // En la segunda corrida del mismo flujo, aunque el informe pase el tope, no vuelve a avisar.
