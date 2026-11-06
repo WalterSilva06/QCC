@@ -20,7 +20,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { registroDe, RAIZ } from './guardia.mjs'
+import { carpetaGlobal, RAIZ } from './guardia.mjs'
 
 const WIN = process.platform === 'win32'
 const PRECIOS = {
@@ -222,8 +222,11 @@ function tramoReanudado(s, carpeta, base) {
  * transcript de la última. null si no se encuentra ninguna sesión.
  */
 function leerFlujo(raiz, desde, proyectos, hasta, base, sesiones = []) {
-  const primera = sesionDelFlujo(raiz, desde, proyectos, base)
   const carpeta = carpetaDe(raiz, proyectos)
+  let primera = sesionDelFlujo(raiz, desde, proyectos, base)
+  // Cierre desde otra cuenta: la búsqueda en esta carpeta da otra sesión (o ninguna); manda el transcript anotado de la primera.
+  const anotada = Array.isArray(sesiones) ? sesiones[0]?.transcript : null
+  if (anotada && fs.existsSync(anotada) && (!primera || path.resolve(primera.archivo) !== path.resolve(anotada))) primera = tramoReanudado(sesiones[0], carpeta, base) ?? primera
   const reanudadas = (Array.isArray(sesiones) ? sesiones.slice(1) : []).map((s) => tramoReanudado(s, carpeta, base)).filter(Boolean)
   const comienzos = [...(primera ? [primera] : []), ...reanudadas].sort((a, b) => Date.parse(a.inicio) - Date.parse(b.inicio))
   if (!comienzos.length) return null
@@ -622,7 +625,7 @@ function main() {
     return k >= 0 ? args[k + 1] : undefined
   }
   const n = Math.max(1, Number(valor('--ultimos') ?? 10) || 10)
-  const archivo = valor('--archivo') ?? path.join(path.dirname(registroDe(RAIZ)), 'flujos.jsonl')
+  const archivo = valor('--archivo') ?? path.join(carpetaGlobal(), 'flujos.jsonl')
   if (args.includes('--anotar')) {
     const texto = args[args.indexOf('--anotar') + 2]
     anotarDefecto(archivo, valor('--anotar'), ['--archivo', '--ultimos'].includes(texto) ? undefined : texto)

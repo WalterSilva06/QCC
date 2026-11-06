@@ -502,3 +502,44 @@ test('costos: problemasDe acepta viñetas y ruta:línea sin numeración', () => 
 })
 
 test.after(() => limpiar())
+
+test('costos: el cierre desde otra cuenta suma la primera sesión, que está en la cuenta de A', () => {
+  const { raiz, en, turno, texto, usuario, escribir, opciones } = transcripts('repo-metricas-otra-cuenta')
+  const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
+  const bash = (id, comando) => ({ type: 'tool_use', id, name: 'Bash', input: { command: comando } })
+  const ESTADO = 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs'
+  const base = 'abc123'
+  // Cuenta A: el /impl original (3 pedidos).
+  escribir([
+    usuario(0, '<command-name>/impl</command-name><command-args>pedido original entero</command-args>'),
+    turno('a1', 10, [bash('b0', `${ESTADO} --paso 0`)]),
+    turno('a2', 300, [bash('b5', `${ESTADO} --base --sub 1 --paso 5`)]),
+    turno('a3', 600, [texto('cortado')]),
+  ])
+  const archivoA = path.join(opciones(0).proyectos, path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'), 's1.jsonl')
+  // Cuenta B: otra carpeta projects/ con solo el transcript reanudado, que lleva la marca BASE_GLOBAL.
+  const claudeB = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-b-'))
+  temporales.push(claudeB)
+  const carpetaB = path.join(claudeB, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  fs.mkdirSync(carpetaB, { recursive: true })
+  const archivoB = path.join(carpetaB, 's2.jsonl')
+  fs.writeFileSync(archivoB, jsonl([
+    usuario(4200, '<command-name>/impl</command-name><command-args>reanudar</command-args>'),
+    usuario(4205, `<system-reminder>BASE_GLOBAL=${base}</system-reminder>`),
+    turno('b1', 4210, [bash('c0', `${ESTADO} --reanudar --paso 6`)]),
+    turno('b2', 4400, [bash('c7', `${ESTADO} --cambios --global --paso 7`)]),
+  ]))
+  const sesiones = [{ id: 's1', transcript: archivoA, desde: en(0) }, { id: 's2', transcript: archivoB, desde: en(4210) }]
+  const m = metricasDelFlujo(raiz, en(0), { ...opciones(4500), proyectos: path.join(claudeB, 'projects'), base, sesiones })
+  assert.equal(m.sesiones, 2)
+  assert.equal(m.pedido, 'pedido original entero')
+  assert.equal(m.sesion, archivoB)
+  assert.equal(m.costo.roles.orquestador.pedidos, 5)
+  assert.equal(m.costo.roles.orquestador.tokens.salida, 500)
+  assert.equal(m.tiempos.corte, 3600)
+
+  // Sin `transcript` en sesiones[0]: la búsqueda de siempre en la carpeta de B (solo ve la reanudada).
+  const sin = metricasDelFlujo(raiz, en(0), { ...opciones(4500), proyectos: path.join(claudeB, 'projects'), base, sesiones: [{ id: 's1', desde: en(0) }] })
+  assert.equal(sin.sesiones, 1)
+  assert.equal(sin.sesion, archivoB)
+})
