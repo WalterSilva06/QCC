@@ -411,6 +411,8 @@ async function main() {
     for (let intento = 0; intento < 20; intento++) {
       const previa = leerMarca(RAIZ)
       if (enCurso(previa, clave)) {
+        const hora = new Date(previa.inicio).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+        console.log(`(espera la corrida en curso de las ${hora})`)
         const fin = await esperarCorrida(RAIZ, previa, t0)
         if (fin === 'vencido') {
           console.log(`RESULTADO: EN CURSO (otra corrida con este árbol sigue tras ${ESPERA_SEG} s; repite verificar.mjs)`)
@@ -418,8 +420,6 @@ async function main() {
           return
         }
         if (fin) {
-          const hora = new Date(fin.inicio).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
-          console.log(`(esperó la corrida en curso de las ${hora})`)
           for (const l of Array.isArray(fin.salida) ? fin.salida : []) console.log(l)
           process.exitCode = fin.resultado === 'RESULTADO: VERDE' ? 0 : 1
           return

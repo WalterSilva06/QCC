@@ -268,11 +268,14 @@ test('verificar: pasosDe copia rutas solo si es un array no vacío de textos', (
   for (const mala of [[], 'panel/**', [1], ['ok', ''], null]) assert.deepEqual(de(mala), { nombre: 'a', cmd: 'x' })
 })
 
-/** Corre verificar.mjs en `raiz` sin bloquear: `{ salida, codigo }` al terminar. */
-const verificarAsync = (raiz) => new Promise((listo) => {
+/** Corre verificar.mjs en `raiz` sin bloquear: `{ salida, codigo }` al terminar. `alLeer(salida)` recibe la salida acumulada. */
+const verificarAsync = (raiz, alLeer) => new Promise((listo) => {
   const hijo = spawn(process.execPath, [VERIFICAR], { cwd: raiz, env: { ...process.env, CLAUDE_PROJECT_DIR: raiz } })
   let salida = ''
-  hijo.stdout.setEncoding('utf8').on('data', (d) => (salida += d))
+  hijo.stdout.setEncoding('utf8').on('data', (d) => {
+    salida += d
+    alLeer?.(salida)
+  })
   hijo.on('close', (codigo) => listo({ salida, codigo }))
 })
 
@@ -293,7 +296,7 @@ test('verificar: una segunda corrida con el mismo árbol espera la que está en 
     assert.equal(r.salida.trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
     assert.equal(r.codigo, 0)
   }
-  assert.equal([a, b].filter((r) => /^\(esperó la corrida en curso de las /m.test(r.salida)).length, 1)
+  assert.equal([a, b].filter((r) => /^\(espera la corrida en curso de las /m.test(r.salida)).length, 1)
   const marca = JSON.parse(fs.readFileSync(marcaDe(raiz), 'utf8'))
   assert.equal(marca.resultado, 'RESULTADO: VERDE')
   assert.ok(marca.fin)
@@ -307,7 +310,7 @@ test('verificar: una marca de un proceso muerto no se espera', async () => {
   fs.writeFileSync(marcaDe(raiz), JSON.stringify({ clave: claveDeRepo(raiz), pid: muerto, inicio: new Date().toISOString() }))
 
   const r = await verificarAsync(raiz)
-  assert.doesNotMatch(r.salida, /esperó/)
+  assert.doesNotMatch(r.salida, /espera la corrida/)
   assert.equal(r.salida.trimEnd().split('\n').at(-1), 'RESULTADO: VERDE')
   const marca = JSON.parse(fs.readFileSync(marcaDe(raiz), 'utf8'))
   assert.notEqual(marca.pid, muerto)
@@ -323,11 +326,14 @@ test('verificar: repite la salida y el código de la corrida que esperó', async
   fs.mkdirSync(path.dirname(marcaDe(raiz)), { recursive: true })
   fs.writeFileSync(marcaDe(raiz), JSON.stringify(marca))
 
-  const espera = verificarAsync(raiz)
-  await new Promise((listo) => setTimeout(listo, 1200))
-  fs.writeFileSync(marcaDe(raiz), JSON.stringify({ ...marca, fin: new Date().toISOString(), resultado: 'RESULTADO: ROJO (x)', salida: ['x          FALLÓ', 'RESULTADO: ROJO (x)'] }))
-  const r = await espera
-  assert.match(r.salida, /^\(esperó la corrida en curso de las /m)
+  // Termina la corrida ajena cuando verificar.mjs avisa que ya la espera, sin tiempos fijos.
+  let terminada = false
+  const r = await verificarAsync(raiz, (salida) => {
+    if (terminada || !/^\(espera la corrida/m.test(salida)) return
+    terminada = true
+    fs.writeFileSync(marcaDe(raiz), JSON.stringify({ ...marca, fin: new Date().toISOString(), resultado: 'RESULTADO: ROJO (x)', salida: ['x          FALLÓ', 'RESULTADO: ROJO (x)'] }))
+  })
+  assert.match(r.salida, /^\(espera la corrida en curso de las /m)
   assert.match(r.salida, /^x {10}FALLÓ$/m)
   assert.equal(r.salida.trimEnd().split('\n').at(-1), 'RESULTADO: ROJO (x)')
   assert.equal(r.codigo, 1)
