@@ -9,7 +9,7 @@
 // Al `ejecutor` y al `revisor` les niega lo que un subagente no hace nunca —git que modifica, servicios
 // externos y despliegues, dependencias, secretos, borrados recursivos, servidores que no terminan, archivos
 // protegidos (en `.claude/`, solo settings y agentes); y al revisor, escribir fuera de los temporales— y deja
-// cada llamada en el registro del proyecto (`registros/<proyecto>-<hash>.jsonl`), que `estado.mjs --cambios`
+// cada llamada en el registro del proyecto (`<git-dir>/qcc-impl/registro.jsonl`), que `estado.mjs --cambios`
 // cruza con el árbol para el chequeo de alcance (cubre rutas que git ignora).
 // `explorador` y `planificador` (solo lectura) anotan sus Read, Glob y Grep con decision `lectura`; solo
 // al explorador, con el contexto de su subagente sobre 90k (fijo: Haiku cobra 5× el pedido de más de 100k), se los niega para que reporte ya. Al ejecutor,
@@ -64,18 +64,47 @@ export function raizDe(dir) {
  */
 export const RAIZ = esPrincipal() ? '' : raizDe(process.env.CLAUDE_PROJECT_DIR || process.cwd())
 
-/**
- * Registro de llamadas de los subagentes, uno por proyecto. Junto a él viven la carpeta del flujo, la caché de
- * verificar y `flujos.jsonl`. Está en `<CLAUDE_CONFIG_DIR o ~/.claude>/flujos/registros`, fuera de la carpeta del plugin
- * (que cambia con cada versión) para que el historial sobreviva a las actualizaciones. `FLUJOS_REGISTROS` cambia la
- * carpeta (los tests la llevan a un temporal).
- */
-export function registroDe(raiz) {
+/** Nombre del proyecto en las rutas de los flujos: `<carpeta>-<hash de la ruta>`. */
+export function nombreDe(raiz) {
   const norma = path.resolve(raiz)
   const clave = WIN ? norma.toLowerCase() : norma
   const hash = crypto.createHash('sha1').update(clave).digest('hex').slice(0, 10)
   const nombre = (path.basename(norma) || 'raiz').replace(/[^\w.-]+/g, '_')
-  return path.join(process.env.FLUJOS_REGISTROS || path.join(CLAUDE, 'flujos', 'registros'), `${nombre}-${hash}.jsonl`)
+  return `${nombre}-${hash}`
+}
+
+/**
+ * Carpeta git de `raiz`, leída de `<raiz>/.git` sin lanzar `git`: la carpeta misma, o la que apunta el archivo
+ * `.git` de un worktree (línea `gitdir:`, relativa a `raiz`). Null si falta el `.git`, la línea o la carpeta.
+ */
+export function gitDirDe(raiz) {
+  try {
+    const punto = path.join(path.resolve(raiz), '.git')
+    if (fs.statSync(punto).isDirectory()) return punto
+    const linea = fs.readFileSync(punto, 'utf8').split(/\r?\n/).find((l) => l.startsWith('gitdir:'))
+    if (!linea) return null
+    const destino = path.resolve(path.resolve(raiz), linea.slice(7).trim())
+    return fs.statSync(destino).isDirectory() ? destino : null
+  } catch {
+    return null
+  }
+}
+
+/** Carpeta global de los flujos (`flujos.jsonl`, `historial/`): `FLUJOS_REGISTROS` o `<CLAUDE>/flujos/registros`. */
+export function carpetaGlobal() {
+  return process.env.FLUJOS_REGISTROS || path.join(CLAUDE, 'flujos', 'registros')
+}
+
+/**
+ * Registro de llamadas de los subagentes, uno por proyecto. Junto a él viven la carpeta del flujo y la caché de
+ * verificar. Está en `<git-dir>/qcc-impl/registro.jsonl`: sigue al repo (y a su worktree) y fuera de la carpeta del
+ * plugin, así que sobrevive a las actualizaciones. Sin git dir, o con `FLUJOS_REGISTROS` (los tests la llevan a un
+ * temporal), queda en `<carpetaGlobal>/<proyecto>-<hash>.jsonl`.
+ */
+export function registroDe(raiz) {
+  const gitDir = process.env.FLUJOS_REGISTROS ? null : gitDirDe(raiz)
+  if (gitDir) return path.join(gitDir, 'qcc-impl', 'registro.jsonl')
+  return path.join(carpetaGlobal(), `${nombreDe(raiz)}.jsonl`)
 }
 
 /** Carpeta del flujo en curso del proyecto (estado, plan y subtareas), junto a su registro. */

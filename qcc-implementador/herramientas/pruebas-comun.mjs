@@ -116,6 +116,17 @@ export function transcriptConLineas(id, lineas) {
   return path.join(dir, 'sesion-1.jsonl')
 }
 
+/**
+ * Agrega al `CLAUDE_CONFIG_DIR` falso `claude` el transcript de la sesión principal de `raiz` con `/impl <pedido>`, unos segundos
+ * antes de ahora (el preflight de después queda dentro de su ventana).
+ */
+export function sesionConImpl(claude, raiz, pedido) {
+  const carpeta = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  fs.mkdirSync(carpeta, { recursive: true })
+  const fila = { type: 'user', timestamp: new Date(Date.now() - 5000).toISOString(), message: { role: 'user', content: `<command-name>/impl</command-name><command-args>${pedido}</command-args>` } }
+  fs.writeFileSync(path.join(carpeta, 'principal.jsonl'), JSON.stringify(fila) + '\n')
+}
+
 /** Mensaje del asistente con `usage` de `tokens` de contexto (todo como input_tokens). */
 export const turnoConUso = (tokens) => ({ type: 'assistant', message: { id: 'm', usage: { input_tokens: tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 10 } } })
 
@@ -126,7 +137,7 @@ export const subtareaDePlan = (n, permitidos, { extra = '', hecho = 'x' } = {}) 
 /** Un repo con el flujo abierto (preflight) y ese plan guardado; devuelve `{ raiz, entorno, salida, estadoJson }`. */
 export function repoConPlanGuardado(nombre, subtareas, ajuste) {
   const plan = `PLAN · Externo\nClasificación: sin criterios\nObjetivo: probar\n\n${subtareas.join('\n\n')}`
-  const entorno = { CLAUDE_CONFIG_DIR: transcripts({ plano: plan, ...(ajuste ? { ajuste } : {}) }) }
+  const entorno = { CLAUDE_CONFIG_DIR: transcripts({ plano: plan, ...(ajuste ? { ajuste } : {}) }), CLAUDE_CODE_SESSION_ID: 'sesion-a' }
   const raiz = repo(nombre, { 'src/a.ts': 'a\n', 'src/b.ts': 'b\n', 'src/c.ts': 'c\n' })
   temporales.push(raiz)
   estadoEn(raiz, ['--paso', '0'], entorno)

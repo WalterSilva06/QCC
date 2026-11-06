@@ -10,10 +10,11 @@ import { repo, temporales, ev, GUARDIA, hook, filasDe, borrarRegistro, limpiar, 
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { evaluar, rolDeAgente, analizar, raizDe, registroDe, flujoDe, configDe, coincide, regexDeExterno } from './guardia.mjs'
+import { evaluar, rolDeAgente, analizar, raizDe, registroDe, flujoDe, nombreDe, gitDirDe, carpetaGlobal, configDe, coincide, regexDeExterno } from './guardia.mjs'
 import { listaPermitidos, enAlcance } from './estado.mjs'
 import { pasosDe } from './verificar.mjs'
 
@@ -73,6 +74,48 @@ test('proyecto: raíz, registro por proyecto, config y verificación', () => {
   assert.equal(configDe(GENERICO).archivo, null)
   assert.deepEqual(pasosDe(ESTRICTO).pasos.map((p) => p.cmd), ['pnpm run test'])
   assert.deepEqual(pasosDe(GENERICO).pasos.map((p) => p.cmd), ['npm run lint', 'npm run build', 'npm run test'])
+})
+
+test('proyecto: sin FLUJOS_REGISTROS, registroDe y flujoDe siguen al git dir', () => {
+  const previo = process.env.FLUJOS_REGISTROS
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'guardia-gitdir-')))
+  temporales.push(base)
+  const dir = (...p) => {
+    fs.mkdirSync(path.join(base, ...p), { recursive: true })
+    return path.join(base, ...p)
+  }
+  const conGitFile = (nombre, contenido) => {
+    const raiz = dir(nombre)
+    fs.writeFileSync(path.join(raiz, '.git'), contenido)
+    return raiz
+  }
+  const real = dir('real')
+  try {
+    // Con FLUJOS_REGISTROS rige la ruta de siempre: <carpeta>/<proyecto>-<hash>.jsonl, con el mismo hash.
+    const nombre = nombreDe(ESTRICTO)
+    const hash = crypto.createHash('sha1').update(WIN ? ESTRICTO.toLowerCase() : ESTRICTO).digest('hex').slice(0, 10)
+    assert.equal(nombre, `${path.basename(ESTRICTO)}-${hash}`)
+    assert.equal(registroDe(ESTRICTO), path.join(process.env.FLUJOS_REGISTROS, `${nombre}.jsonl`))
+    assert.equal(carpetaGlobal(), process.env.FLUJOS_REGISTROS)
+
+    delete process.env.FLUJOS_REGISTROS
+    // .git como carpeta.
+    assert.equal(registroDe(ESTRICTO), path.join(ESTRICTO, '.git', 'qcc-impl', 'registro.jsonl'))
+    assert.equal(flujoDe(ESTRICTO), path.join(ESTRICTO, '.git', 'qcc-impl', 'registro-flujo'))
+    // .git como archivo: gitdir relativa, absoluta, con y sin \r\n.
+    assert.equal(gitDirDe(conGitFile('rel', 'gitdir: ../real\n')), real)
+    assert.equal(gitDirDe(conGitFile('crlf', 'gitdir: ../real\r\n')), real)
+    assert.equal(gitDirDe(conGitFile('abs', `gitdir: ${real}\r\n`)), real)
+    assert.equal(registroDe(path.join(base, 'rel')), path.join(real, 'qcc-impl', 'registro.jsonl'))
+    // Sin .git, o con un gitdir a una carpeta inexistente o sin la línea: la ruta de siempre.
+    for (const raiz of [dir('sin-git'), conGitFile('roto', 'gitdir: ../no-existe\n'), conGitFile('vacio', 'otra cosa\n')]) {
+      assert.equal(gitDirDe(raiz), null)
+      assert.equal(registroDe(raiz), path.join(carpetaGlobal(), `${nombreDe(raiz)}.jsonl`))
+    }
+    assert.equal(carpetaGlobal(), path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'flujos', 'registros'))
+  } finally {
+    process.env.FLUJOS_REGISTROS = previo
+  }
 })
 
 test('ejecutor: verificación, lectura y edición dentro del alcance pasan', () => {

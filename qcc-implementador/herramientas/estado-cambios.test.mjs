@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { registroDe, flujoDe } from './guardia.mjs'
+import { registroDe, flujoDe, carpetaGlobal } from './guardia.mjs'
 import { filaDelFlujo, agruparPorCarpeta } from './estado.mjs'
 
 test('estado: --base --sub y --cambios --sub/--global toman la foto y los permitidos del flujo', () => {
@@ -432,6 +432,7 @@ test('estado: el preflight abre la carpeta del flujo y --estado la resume', () =
 
   // Con plan guardado, el candado dura 6 h (puede estar esperando la aprobación) y el aviso nombra el plan.
   const archivo = path.join(carpeta, 'estado.json')
+  const historialDe = path.join(carpetaGlobal(), 'historial')
   const envejecer = (horas) => {
     const t = new Date(Date.now() - horas * 3_600_000)
     for (const a of [archivo, registroDe(raiz)]) if (fs.existsSync(a)) fs.utimesSync(a, t, t)
@@ -440,8 +441,20 @@ test('estado: el preflight abre la carpeta del flujo y --estado la resume', () =
   fs.writeFileSync(archivo, JSON.stringify(conPlan))
   envejecer(2)
   assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^AVISO: hay otro flujo abierto en este repo \(«Corporativas», empezó a las .*, con actividad hace 120 min\)\./m)
+  // Con plan y sin cierre, ni 7 h sin actividad lo vacían: avisa que quedó cortado y ofrece reanudarlo.
   envejecer(7)
-  assert.doesNotMatch(estadoEn(raiz, ['--paso', '0']).salida, /^AVISO: hay otro flujo abierto/m)
+  const cortado = estadoEn(raiz, ['--paso', '0']).salida
+  assert.match(cortado, /^AVISO: hay un flujo cortado en este repo \(«Corporativas», empezó a las .*, sin actividad hace 7 h\)\. No vacié su carpeta\.$/m)
+  assert.match(cortado, /^REANUDAR:/m)
+  assert.doesNotMatch(cortado, /^AVISO: hay otro flujo abierto/m)
+  assert.equal(JSON.parse(fs.readFileSync(archivo, 'utf8')).plan, conPlan.plan)
+  // --forzar lo archiva en historial/ (con su plan) antes de vaciar la carpeta.
+  const antes = new Set(fs.existsSync(historialDe) ? fs.readdirSync(historialDe) : [])
+  estadoEn(raiz, ['--paso', '0', '--forzar'])
+  assert.equal(JSON.parse(fs.readFileSync(archivo, 'utf8')).plan, undefined)
+  const nuevas = fs.readdirSync(historialDe).filter((n) => !antes.has(n))
+  assert.equal(nuevas.length, 1)
+  assert.equal(JSON.parse(fs.readFileSync(path.join(historialDe, nuevas[0], 'estado.json'), 'utf8')).plan, conPlan.plan)
   // Sin plan, a los 20 min ya no cuenta como abierto.
   envejecer(1)
   assert.doesNotMatch(estadoEn(raiz, ['--paso', '0']).salida, /^AVISO: hay otro flujo abierto/m)
@@ -895,10 +908,10 @@ test('estado: --reanudar sigue un flujo cortado sin vaciar su carpeta, en el pas
   assert.match(enLote, /^SIGUE: paso 5 · lote 1\/2 \(S1\+S2\)$/m)
   assert.match(enLote, new RegExp(`^ {2}S1 · a medias \\(foto sin --cambios\\).* · FOTO BASE=${foto[1]} DESDE=${foto[2]}$`, 'm'))
   assert.match(enLote, /^AJUSTES AL PLAN: S2 sin tests nuevos$/m)
-  assert.match(enLote, /^REANUDADO: sesión 3 del flujo/m)
+  assert.match(enLote, /^REANUDADO: misma sesión del flujo/m)
   assert.ok(fs.existsSync(path.join(carpeta, 'S1.md')), 'no vacía la carpeta')
   assert.equal(estadoJson().en_curso, undefined)
-  assert.deepEqual(estadoJson().sesiones.map((s) => s.id ?? null).slice(1), ['sesion-b', 'sesion-b'])
+  assert.deepEqual(estadoJson().sesiones.map((s) => s.id ?? null), ['sesion-a', 'sesion-b'])
 
   // Vuelven: S1 HECHO y S2 FALLA. --cambios --sub anota el avance leyendo los ejecutores de los transcripts.
   subagente(claude, raiz, 'sesion-b', 'e1', 'impl:qcc-ejecutor', 'SUBTAREA 1/3: Tarea 1', 'ESTADO: HECHO')
@@ -922,6 +935,11 @@ test('estado: --reanudar sigue un flujo cortado sin vaciar su carpeta, en el pas
   estadoEn(raiz, ['--base', '--sub', '3', '--paso', '5'], entorno)
   assert.match(estadoEn(raiz, ['--cambios', '--sub', '3', '--omitida', '--paso', '6'], entorno).salida, /^AVANCE: S3 OMITIDA$/m)
   assert.match(reanudar(), /^SIGUE: paso 6 · revisión ciclo 1$/m)
+
+  // Otra sesión suma una nueva; la misma de antes no.
+  const otra = estadoEn(raiz, ['--reanudar', '--paso', '0'], { ...entorno, CLAUDE_CODE_SESSION_ID: 'sesion-c' }).salida
+  assert.match(otra, /^REANUDADO: sesión 3 del flujo/m)
+  assert.deepEqual(estadoJson().sesiones.map((s) => s.id ?? null), ['sesion-a', 'sesion-b', 'sesion-c'])
 })
 
 test('estado: --reanudar en la revisión final da el ciclo que sigue y los PROBLEMAS literales', () => {

@@ -29,13 +29,14 @@
 // `verificacion-inicial.log` de la carpeta del flujo; `FLUJOS_INICIAL=0` la desactiva) y anota su pid en
 // `estado.json`. `--guardar … exploracion` y `--estado` esperan a que termine y dan su resultado.
 //
-// La carpeta del flujo (`registros/<proyecto>-<hash>-flujo/`) guarda `estado.json` (fotos, plan,
+// La carpeta del flujo (`<git-dir>/qcc-impl/registro-flujo/`) guarda `estado.json` (fotos, plan,
 // cierre), `mapa.md` (los archivos del repo por carpeta, que el preflight deja para el explorador), el informe
 // del explorador, el plan y un `S<n>.md` por subtarea; el preflight la vacía, salvo
 // que otro flujo del repo siga abierto (sin cierre y con actividad en los últimos 20 min, o 6 h si ya tiene
-// plan): entonces avisa con el título del plan y pide `--forzar`.
-// El cierre (`--cambios … --paso 7`) anota en `registros/flujos.jsonl` una fila v2 (costo real, veredictos, tiempos,
-// subtareas y calidad: costos.mjs), imprime el CONTEXTO del hilo principal y archiva el flujo en `registros/historial/`
+// plan): entonces avisa con el título del plan y pide `--forzar`. Un flujo con plan y sin cierre nunca se vacía solo:
+// pasadas 6 h sin actividad avisa que quedó cortado, y `--forzar` lo archiva en `historial/` antes de vaciarlo.
+// El cierre (`--cambios … --paso 7`) anota en `<carpeta global>/flujos.jsonl` (`~/.claude/flujos/registros`) una fila v2 (costo real, veredictos, tiempos,
+// subtareas y calidad: costos.mjs), imprime el CONTEXTO del hilo principal y archiva el flujo en `<carpeta global>/historial/`
 // (las 30 carpetas más recientes).
 // `--guardar` toma el informe de un agente de su transcript, en `projects/*/*/subagents/agent-<id>.jsonl`
 // dentro de `CLAUDE_CONFIG_DIR` (o `~/.claude`). Con `exploracion` acepta varios ids separados por coma y une sus informes.
@@ -45,7 +46,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { evaluar, rolDeAgente, registroDe, flujoDe, arbolDe, configDe, coincide, relativaAlRepo, rutaNativa, RAIZ } from './guardia.mjs'
+import { evaluar, rolDeAgente, registroDe, flujoDe, nombreDe, carpetaGlobal, arbolDe, configDe, coincide, relativaAlRepo, rutaNativa, RAIZ } from './guardia.mjs'
 import { pasosDe, ultimaVerde, vivo, salidasDe, cambiosDe } from './verificar.mjs'
 import { metricasDelFlujo, pedidoDelFlujo, ejecutoresDelProyecto, precioDe, resumenDeCosto, resumenDeVeredictos } from './costos.mjs'
 
@@ -235,20 +236,23 @@ function ultimaActividad() {
 }
 
 /**
- * El flujo anterior del repo si sigue abierto: sin cierre y con actividad en los últimos `ABIERTO_MIN` minutos
- * (`ABIERTO_CON_PLAN_MIN` si ya tiene plan, porque puede estar esperando la aprobación); null si no.
+ * El flujo anterior del repo si sigue abierto: sin cierre y con actividad en los últimos `ABIERTO_MIN` minutos; null si no.
+ * Un flujo con plan y sin cierre nunca es null (el plan es trabajo que no se pierde): pasados `ABIERTO_CON_PLAN_MIN`
+ * minutos sin actividad vuelve con `cortado: true`, y el preflight no lo vacía sin `--forzar`.
  */
 function flujoAbierto() {
   const previo = leerEstado()
   if (!previo.base_global || previo.cierre) return null
   const minutos = (Date.now() - ultimaActividad()) / 60_000
-  return minutos < (previo.plan ? ABIERTO_CON_PLAN_MIN : ABIERTO_MIN) ? { ...previo, minutos } : null
+  if (previo.plan) return { ...previo, minutos, cortado: minutos >= ABIERTO_CON_PLAN_MIN }
+  return minutos < ABIERTO_MIN ? { ...previo, minutos } : null
 }
 
 /** Vacía la carpeta del flujo y la abre con `estado`: la llama el preflight. */
 function nuevoFlujo(estado) {
   // Solo se borra la carpeta propia del proyecto, nunca otra ruta.
-  if (path.basename(FLUJO).endsWith('-flujo') && path.dirname(FLUJO) === path.dirname(registroDe(RAIZ))) {
+  const padre = path.dirname(FLUJO)
+  if (path.basename(FLUJO).endsWith('-flujo') && (path.basename(padre) === 'qcc-impl' || padre === carpetaGlobal()) && padre === path.dirname(registroDe(RAIZ))) {
     fs.rmSync(FLUJO, { recursive: true, force: true })
   }
   fs.mkdirSync(FLUJO, { recursive: true })
@@ -978,6 +982,17 @@ function guardarInforme(id, tipo, ajuste) {
     const { texto: fusion, incompletos } = fusionarExploraciones(informes)
     const texto = pedidos.length === 1 ? informes[0].texto : fusion
     fs.writeFileSync(destino, texto + '\n')
+    // El pedido literal queda en la carpeta del flujo, para que reanudar no dependa de los transcripts.
+    const archivoPedido = path.join(FLUJO, 'pedido.md')
+    if (!fs.existsSync(archivoPedido)) {
+      try {
+        const e = leerEstado()
+        const pedido = pedidoDelFlujo(RAIZ, e.inicio ?? e.desde_global, { base: e.base_global })
+        if (pedido) fs.writeFileSync(archivoPedido, pedido + '\n')
+      } catch {
+        // Sin el pedido, reanudar lo busca de nuevo.
+      }
+    }
     const repetida = Boolean(leerEstado().exploracion)
     anotarEstado({ exploracion: destino })
     console.log(`GUARDADO: exploración → ${destino}`)
@@ -1159,7 +1174,10 @@ function reanudar() {
   cerrarParalelos()
   const sesiones = sesionesDe(e)
   const ahora = new Date().toISOString()
-  anotarEstado({ en_curso: undefined, sesiones: [...(sesiones.length ? sesiones : [{ desde: e.desde_global }]), sesionActual(ahora)] })
+  const actual = sesionActual(ahora)
+  // Dos ids ausentes nunca cuentan como la misma sesión.
+  const misma = Boolean(actual.id) && sesiones[sesiones.length - 1]?.id === actual.id
+  anotarEstado({ en_curso: undefined, ...(misma ? {} : { sesiones: [...(sesiones.length ? sesiones : [{ desde: e.desde_global }]), actual] }) })
   const archivoPedido = path.join(FLUJO, 'pedido.md')
   let pedido = leerTexto(archivoPedido)
   if (pedido === null) {
@@ -1170,7 +1188,7 @@ function reanudar() {
       pedido = null
     }
   }
-  console.log(`REANUDADO: sesión ${sesiones.length + (sesiones.length ? 1 : 2)} del flujo · ${ahora}`)
+  console.log(misma ? `REANUDADO: misma sesión del flujo · ${ahora}` : `REANUDADO: sesión ${sesiones.length + (sesiones.length ? 1 : 2)} del flujo · ${ahora}`)
   console.log(pedido ? `PEDIDO (literal, del /impl original):\n${pedido.trim()}\nFIN PEDIDO` : 'PEDIDO: no lo encontré en los transcripts; tómalo del plan (Objetivo)')
   mostrarEstado()
   if (!e.aprobacion) {
@@ -1360,7 +1378,8 @@ function preflight(forzar) {
   if (abierto) {
     const hora = new Date(abierto.inicio).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
     const plan = abierto.titulo ? `«${abierto.titulo}», ` : abierto.plan ? 'con plan, ' : 'sin plan todavía, '
-    console.log(`AVISO: hay otro flujo abierto en este repo (${plan}empezó a las ${hora}, BASE_GLOBAL ${corto(abierto.base_global)}, sin cierre, con actividad hace ${Math.round(abierto.minutos)} min). Si sigue corriendo en otra sesión (o esperando su aprobación), los dos se pisan los archivos y la carpeta del flujo, que no vacié. Si ya no corre, repite el preflight con --forzar.`)
+    if (abierto.cortado) console.log(`AVISO: hay un flujo cortado en este repo (${plan}empezó a las ${hora}, sin actividad hace ${Math.round(abierto.minutos / 60)} h). No vacié su carpeta.`)
+    else console.log(`AVISO: hay otro flujo abierto en este repo (${plan}empezó a las ${hora}, BASE_GLOBAL ${corto(abierto.base_global)}, sin cierre, con actividad hace ${Math.round(abierto.minutos)} min). Si sigue corriendo en otra sesión (o esperando su aprobación), los dos se pisan los archivos y la carpeta del flujo, que no vacié. Si ya no corre, repite el preflight con --forzar.`)
     if (abierto.plan) {
       const hechas = Object.values(avanceDe(abierto)).filter((a) => TERMINADA.has(a.estado)).length
       console.log(`REANUDAR: estado.mjs --reanudar --paso 0 sigue ese flujo sin vaciar su carpeta (plan guardado${abierto.aprobacion ? ' y aprobado' : ', sin aprobar'}, ${hechas}/${(abierto.subtareas ?? []).length} subtareas terminadas)`)
@@ -1369,6 +1388,9 @@ function preflight(forzar) {
     mapa = 'MAPA: ninguno (la carpeta del flujo está ocupada por el flujo anterior)'
   } else {
     try {
+      // Un flujo con plan y sin cierre no se pierde: con --forzar se archiva (sin fila en flujos.jsonl) antes de vaciarlo.
+      const previo = forzar ? leerEstado() : {}
+      if (previo.base_global && previo.plan && !previo.cierre) archivarFlujo(new Date().toISOString())
       nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [], sesiones: [sesionActual(desde)] })
       const escrito = escribirMapa()
       mapa = escrito.linea
@@ -1815,8 +1837,8 @@ function lineaDeContexto(metricas) {
  */
 function archivarFlujo(t) {
   try {
-    const historial = path.join(path.dirname(FLUJO), 'historial')
-    const destino = path.join(historial, `${t.replace(/[-:]/g, '').slice(0, 15)}-${path.basename(FLUJO).replace(/-flujo$/, '')}`)
+    const historial = path.join(carpetaGlobal(), 'historial')
+    const destino = path.join(historial, `${t.replace(/[-:]/g, '').slice(0, 15)}-${nombreDe(RAIZ)}`)
     fs.mkdirSync(destino, { recursive: true })
     for (const nombre of fs.readdirSync(FLUJO)) {
       if (/^(plan|exploracion|pedido|S\d+|revision-\d+)\.md$/.test(nombre) || nombre === 'estado.json') fs.copyFileSync(path.join(FLUJO, nombre), path.join(destino, nombre))
@@ -1883,7 +1905,7 @@ function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
     // Sin el registro, la fila sigue.
   }
   try {
-    anotarFlujo(path.join(path.dirname(registroDe(RAIZ)), 'flujos.jsonl'), filaDelFlujo({ t, raiz: RAIZ, base, version: versionInstalada(), resultado: valido, tokens: porRol ?? undefined, estado: e, metricas, cambios: cambiosDeSubtareas, negados }))
+    anotarFlujo(path.join(carpetaGlobal(), 'flujos.jsonl'), filaDelFlujo({ t, raiz: RAIZ, base, version: versionInstalada(), resultado: valido, tokens: porRol ?? undefined, estado: e, metricas, cambios: cambiosDeSubtareas, negados }))
   } catch (err) {
     console.log(`AVISO: no se pudo anotar el flujo: ${err.message}`)
   }

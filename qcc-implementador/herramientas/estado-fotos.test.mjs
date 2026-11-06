@@ -1,6 +1,6 @@
 // Casos de estado.mjs (preflight, planes, fotos, cierre), de la config del flujo y de instalar.mjs.
 
-import { repo, temporales, estadoEn, estadoCon, limpiar, transcripts, subtareaDePlan, repoConPlanGuardado, ev, hook, transcriptConLineas, turnoConUso } from './pruebas-comun.mjs'
+import { repo, temporales, estadoEn, estadoCon, limpiar, transcripts, subtareaDePlan, repoConPlanGuardado, ev, hook, transcriptConLineas, turnoConUso, sesionConImpl } from './pruebas-comun.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -678,6 +678,29 @@ test('estado: --guardar exploracion dice si la exploración toca rutas críticas
 })
 
 test.after(() => limpiar())
+
+test('estado: --guardar exploracion escribe pedido.md con el /impl de la sesión principal', () => {
+  const claude = transcripts({ explora: 'ARCHIVOS\n- a.ts:1 — x' })
+  const raiz = repo('pedido', { 'src/a.ts': 'a\n' })
+  temporales.push(raiz)
+  sesionConImpl(claude, raiz, 'arregla el login')
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+  estadoEn(raiz, ['--paso', '0'], entorno)
+  assert.match(estadoEn(raiz, ['--guardar', 'explora', 'exploracion'], entorno).salida, /^GUARDADO: exploración → /m)
+  assert.equal(fs.readFileSync(path.join(flujoDe(raiz), 'pedido.md'), 'utf8'), 'arregla el login\n')
+})
+
+test('estado: --guardar exploracion sin transcript principal guarda y no escribe pedido.md', () => {
+  const claude = transcripts({ explora: 'ARCHIVOS\n- a.ts:1 — x' })
+  const raiz = repo('sinpedido', { 'src/a.ts': 'a\n' })
+  temporales.push(raiz)
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+  estadoEn(raiz, ['--paso', '0'], entorno)
+  const r = estadoEn(raiz, ['--guardar', 'explora', 'exploracion'], entorno)
+  assert.match(r.salida, /^GUARDADO: exploración → /m)
+  assert.equal(r.codigo, 0)
+  assert.equal(fs.existsSync(path.join(flujoDe(raiz), 'pedido.md')), false)
+})
 
 test('plan: CONTEXTO por subtarea, acoplados sin cubrir, DUDAS y bloque para aprobar', () => {
   const exploracion = [
