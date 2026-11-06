@@ -201,6 +201,8 @@ export type FilaHistorial = {
   tokens?: number
   /** Tokens de salida del flujo; falta si la fila no lo anotó. */
   salida?: number
+  /** Sesiones que sumó un flujo reanudado (`sesiones` de la fila); falta con una sola. */
+  sesiones?: number
 }
 
 /** El historial leído de `flujos.jsonl`: su fecha de modificación (ms) y las últimas filas, la más reciente primero. */

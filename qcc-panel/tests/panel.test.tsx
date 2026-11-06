@@ -2227,6 +2227,9 @@ describe('flujo (puro)', () => {
     expect(bash('node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs --cancelar')).toEqual(estado('otro'))
     expect(bash('node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs --estado')).toEqual(estado('otro'))
     expect(bash('node "$HOME/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs" --reglas')).toEqual(estado('otro'))
+    // --reanudar y --aprobado tampoco abren un flujo nuevo: fijan su --paso.
+    expect(bash('node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs --reanudar --paso 0')).toEqual({ tipo: 'estado', modo: 'otro', paso: 0 })
+    expect(bash('node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs --aprobado --ajustes "x" --paso 4')).toEqual({ tipo: 'estado', modo: 'otro', paso: 4 })
   })
 
   test('estado con --paso: manda sobre la heurística; sin marca o fuera de rango, la heurística', async () => {
@@ -6455,6 +6458,9 @@ describe('historial', () => {
     expect(leerHistorial(texto, 6).map(f => f.repo).at(-1)).toBe('proyecto')
     expect(filaDeRegistro(v1)).toEqual({ t: T, repo: 'proyecto', usd: 1.5, minutos: 20, revision: '·', clasificacion: 'sin criterios', subtareas: 3, aviso: false })
     expect(filaDeRegistro(v2())).toEqual({ t: T, repo: 'claude-config', usd: 0.98, minutos: 12, revision: '✓', clasificacion: 'CRÍTICO (#1, #5)', subtareas: 2, aviso: false })
+    // `sesiones` es opcional: con una sola (o sin el campo, las filas viejas) no se anota; con más, sí.
+    expect(filaDeRegistro({ ...v2(), sesiones: 1 })).toEqual(filaDeRegistro(v2()))
+    expect(filaDeRegistro({ ...v2(), sesiones: 2, tiempos: { activo: 720, espera: 0, corte: 3600 } })?.sesiones).toBe(2)
     expect(filaDeRegistro(null)).toBeNull()
     expect(filaDeRegistro({ t: 5 })).toBeNull()
     expect(filaDeRegistro({ v: 2, tipo: 'defecto', t: T })).toBeNull()
@@ -6521,6 +6527,8 @@ describe('historial', () => {
     expect(lineaCifras(fila, 80)).toBe('$1,29 · 11m · 2,5M tok · sal 91k')
     expect(lineaCifras({ ...fila, mas: 123, menos: 63, subtareas: 3 }, 80)).toBe('$1,29 · 11m · 2,5M tok · sal 91k · +123 −63 · ×3')
     expect(lineaCifras({ ...fila, mas: 123 }, 80)).toBe('$1,29 · 11m · 2,5M tok · sal 91k · +123 −0')
+    // Un flujo reanudado dice cuántas sesiones sumó.
+    expect(lineaCifras({ ...fila, subtareas: 3, sesiones: 2 }, 80)).toBe('$1,29 · 11m · 2,5M tok · sal 91k · ×3 · 2 sesiones')
     // Cada parte entra solo si cabe: a 40 `×3` entra aunque `+123 −63` ya no.
     expect(lineaCifras({ ...fila, mas: 123, menos: 63, subtareas: 3 }, 40)).toBe('$1,29 · 11m · 2,5M tok · sal 91k · ×3')
     // Un dato sin valor se muestra `—`; el 0 es un dato.

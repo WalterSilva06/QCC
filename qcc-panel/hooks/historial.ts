@@ -94,6 +94,9 @@ export function filaDeRegistro(r: unknown): FilaHistorial | null {
   if (mas !== undefined) fila.mas = mas
   if (menos !== undefined) fila.menos = menos
 
+  const sesiones = numero(r.sesiones)
+  if (sesiones !== undefined && sesiones > 1) fila.sesiones = sesiones
+
   return fila
 }
 
@@ -253,7 +256,7 @@ export function lineaIdentidad(f: FilaHistorial, ancho: number): string {
 
 /**
  * La línea de cifras de un flujo: `$x,xx · <min> · <tokens> tok · sal <salida>` (un dato sin valor es `—`) y, detrás, cada uno solo si cabe,
- * `+<mas> −<menos>` y `×<subtareas>`. Las cifras van con ` · ` y, si así no caben en `ancho`, con un espacio; si ni así, se cortan a `ancho`.
+ * `+<mas> −<menos>`, `×<subtareas>` y, en un flujo reanudado, `<n> sesiones`. Las cifras van con ` · ` y, si así no caben en `ancho`, con un espacio; si ni así, se cortan a `ancho`.
  */
 export function lineaCifras(f: FilaHistorial, ancho: number): string {
   const dato = (n?: number): string => (n === undefined ? '—' : tokens(n))
@@ -263,7 +266,11 @@ export function lineaCifras(f: FilaHistorial, ancho: number): string {
 
   if (medir(base) > ancho) return Array.from(base).slice(0, Math.max(ancho, 0)).join('')
 
-  const cola = [f.mas === undefined && f.menos === undefined ? '' : `+${f.mas ?? 0} −${f.menos ?? 0}`, f.subtareas === undefined ? '' : `×${f.subtareas}`]
+  const cola = [
+    f.mas === undefined && f.menos === undefined ? '' : `+${f.mas ?? 0} −${f.menos ?? 0}`,
+    f.subtareas === undefined ? '' : `×${f.subtareas}`,
+    f.sesiones === undefined ? '' : `${f.sesiones} sesiones`,
+  ]
 
   return cola.filter(p => p !== '').reduce((acc, p) => (medir(`${acc}${sep}${p}`) <= ancho ? `${acc}${sep}${p}` : acc), base)
 }

@@ -8,7 +8,7 @@ import type { Uso } from './semana'
 /**
  * Lo que una herramienta o un agente hace y que mueve el flujo de paso.
  * `paso` de la señal de estado es el `--paso <n>` de `estado.mjs`: el paso que el flujo dice que lleva. Falta si no vino o no es un entero.
- * `modo` `otro` son `--guardar`, `--estado` y `--reglas`: por sí solos no mueven el flujo; con `--paso`, fijan ese paso.
+ * `modo` `otro` son `--guardar`, `--estado`, `--reanudar`, `--aprobado` y `--reglas`: por sí solos no mueven el flujo; con `--paso`, fijan ese paso.
  */
 export type Senal =
   | { tipo: 'estado'; modo: 'preflight' | 'base' | 'cambios' | 'diff' | 'otro'; paso?: number }
@@ -119,7 +119,7 @@ function argumentosDeScript(comandos: string[][], nombre: string): string[] | nu
   return null
 }
 
-const MODOS_ESTADO = { '--base': 'base', '--cambios': 'cambios', '--diff': 'diff', '--guardar': 'otro', '--estado': 'otro', '--cancelar': 'otro', '--reglas': 'otro', '--guia': 'otro' } as const
+const MODOS_ESTADO = { '--base': 'base', '--cambios': 'cambios', '--diff': 'diff', '--guardar': 'otro', '--estado': 'otro', '--reanudar': 'otro', '--aprobado': 'otro', '--cancelar': 'otro', '--reglas': 'otro', '--guia': 'otro' } as const
 
 /**
  * El `--paso <n>` de los argumentos de `estado.mjs`: el entero no negativo que sigue a la marca, mirando solo lo anterior a `--`
