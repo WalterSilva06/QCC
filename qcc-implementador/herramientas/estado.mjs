@@ -6,13 +6,15 @@
 //   node <plugin>/herramientas/estado.mjs --base [--paso <n>]   foto nueva: BASE=<sha> DESDE=<iso>
 //   node <plugin>/herramientas/estado.mjs --base --sub <n> [--paso <n>]   foto de la subtarea n, guardada en la carpeta del flujo (si ya hay, conserva la primera)
 //   node <plugin>/herramientas/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"] [--resultado COMPLETO|DETENIDO:<0-7>]
-//   node <plugin>/herramientas/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo
+//   node <plugin>/herramientas/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--omitida] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo; --sub anota el avance de sus subtareas (--omitida: OMITIDA)
 //   node <plugin>/herramientas/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
-//   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s), avisa con SIN EXPLORAR y con LARGO solo en la primera corrida. La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección
-//   node <plugin>/herramientas/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan y la VERIFICACIÓN INICIAL)
+//   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion|revision [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s), avisa con SIN EXPLORAR y con LARGO solo en la primera corrida. La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección. La revisión final va a revision-<ciclo>.md
+//   node <plugin>/herramientas/estado.mjs --aprobado [--ajustes "<texto>"] [--paso <n>]   anota que el usuario aprobó el plan, con los AJUSTES AL PLAN
+//   node <plugin>/herramientas/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan, la VERIFICACIÓN INICIAL y la línea SIGUE)
+//   node <plugin>/herramientas/estado.mjs --reanudar [--paso <n>]  sigue un flujo cortado en esta sesión sin vaciar su carpeta: lo de --estado más el PEDIDO y lo pendiente
 //   node <plugin>/herramientas/estado.mjs --cancelar [--paso <n>]  cierra un flujo abierto sin subtareas ejecutadas (resultado CANCELADO) y libera el candado
 //   node <plugin>/herramientas/estado.mjs --reglas                reglas del proyecto para el orquestador
-//   node <plugin>/herramientas/estado.mjs --guia comun|pasos      imprime comun.md o pasos.md con `${CLAUDE_PLUGIN_ROOT}` ya resuelto (los inyecta la skill)
+//   node <plugin>/herramientas/estado.mjs --guia comun|pasos [--parte 1|2]   imprime comun.md (entero o partido en «## 5.») o pasos.md con `${CLAUDE_PLUGIN_ROOT}` ya resuelto (los inyecta la skill)
 //
 // `--paso <n>` (0 a 7) anota en qué paso del flujo se llama; la salida no cambia. Otro valor
 // se avisa con `AVISO:` y se ignora.
@@ -45,7 +47,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, rolDeAgente, registroDe, flujoDe, arbolDe, configDe, coincide, relativaAlRepo, rutaNativa, RAIZ } from './guardia.mjs'
 import { pasosDe, ultimaVerde, vivo, salidasDe, cambiosDe } from './verificar.mjs'
-import { metricasDelFlujo, precioDe, resumenDeCosto, resumenDeVeredictos } from './costos.mjs'
+import { metricasDelFlujo, pedidoDelFlujo, ejecutoresDelProyecto, precioDe, resumenDeCosto, resumenDeVeredictos } from './costos.mjs'
 
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const AGENTES = path.join(CLAUDE, 'agents')
@@ -196,6 +198,28 @@ function basesDe(estado) {
   const crudas = estado.bases && typeof estado.bases === 'object' && !Array.isArray(estado.bases) ? estado.bases : {}
   return Object.fromEntries(Object.entries(crudas).filter(([, f]) => f && typeof f.base === 'string' && f.base && typeof f.desde === 'string' && f.desde))
 }
+
+/** Las sesiones del flujo (`[{ id?, transcript?, desde }]`): la del preflight y una por cada `--reanudar`; vacía en un flujo viejo. */
+function sesionesDe(estado) {
+  return (Array.isArray(estado.sesiones) ? estado.sesiones : []).filter((s) => s && Number.isFinite(Date.parse(s.desde)))
+}
+
+/** La sesión de Claude Code que corre este comando (`CLAUDE_CODE_SESSION_ID`), con su transcript si existe: `{ id?, transcript?, desde }`. */
+function sesionActual(desde) {
+  const id = /^[\w-]+$/.test(process.env.CLAUDE_CODE_SESSION_ID ?? '') ? process.env.CLAUDE_CODE_SESSION_ID : undefined
+  if (!id) return { desde }
+  const transcript = path.join(CLAUDE, 'projects', RAIZ.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`)
+  return { id, ...(fs.existsSync(transcript) ? { transcript } : {}), desde }
+}
+
+/** El avance de la ejecución (`{ "<n>": { estado, ciclos, t } }`), sin las entradas rotas. */
+function avanceDe(estado) {
+  const crudo = estado.avance && typeof estado.avance === 'object' && !Array.isArray(estado.avance) ? estado.avance : {}
+  return Object.fromEntries(Object.entries(crudo).filter(([, a]) => a && typeof a.estado === 'string'))
+}
+
+/** Lista guardada en el estado (`revisiones`, `tandas`), sin las entradas rotas. */
+const listaDe = (estado, clave) => (Array.isArray(estado[clave]) ? estado[clave] : []).filter((x) => x && typeof x === 'object')
 
 /** Hora (ms) de la última actividad de un flujo en este repo: su estado o el registro de la guardia; 0 si no hay. */
 function ultimaActividad() {
@@ -680,15 +704,34 @@ export function acopladosSinCubrir(hallazgos, permitidos, fueraDeAlcance) {
 }
 
 const CAMPOS_APROBACION = ['Crítica', 'Depende de', 'Archivos permitidos', 'Cómo', 'Externo']
+/** Con más subtareas que esto, `PARA APROBAR` va compacto (una línea por subtarea, sin «Cómo») y sin las líneas de resumen: así la salida de `--guardar plan` no pasa de 30.000 caracteres, el tope de Claude Code. */
+const TOPE_APROBACION_ENTERA = 20
 
-/** Lo que el orquestador muestra para aprobar el plan: cabecera, por subtarea su título y CAMPOS_APROBACION, y el pie sin «Verificación final». */
+/** `S<n> · <título> · Crítica: … · Depende de: … · permitidos: …[ · Externo: …]`: la línea de una subtarea en el `PARA APROBAR` compacto. */
+function lineaCompacta(s) {
+  const { permitidos } = permitidosDeSubtarea(s.lineas, s.n)
+  const externo = campoDe(s.lineas, 'Externo')
+  return [
+    `S${s.n} · ${s.objetivo}`,
+    `Crítica: ${campoDe(s.lineas, 'Crítica') ?? '(falta)'}`,
+    `Depende de: ${campoDe(s.lineas, 'Depende de') ?? '(la anterior)'}`,
+    `permitidos: ${permitidos.join(', ') || '(faltan)'}`,
+    ...(externo && !/^(ninguno|ninguna|nada)\.?$/i.test(externo) ? [`Externo: ${externo}`] : []),
+  ].join(' · ')
+}
+
+/**
+ * Lo que el orquestador muestra para aprobar el plan: cabecera, por subtarea su título y CAMPOS_APROBACION, y el pie sin «Verificación final».
+ * Con más de `TOPE_APROBACION_ENTERA` subtareas, una línea compacta por subtarea (`lineaCompacta`): el «Cómo» queda en plan.md.
+ */
 export function aprobacionDe({ cabecera, subtareas, pie }) {
   const titulo = cabecera.find((l) => /^\s*(?:#{1,6}\s+)?(?:\*\*)?PLAN ·/i.test(l))
   const bloques = (lineas, campos) => campos.map((c) => bloqueDe(lineas, c)).filter(Boolean)
+  const compacto = subtareas.length > TOPE_APROBACION_ENTERA
   return [
     ...(titulo ? [titulo.trim()] : []),
     ...bloques(cabecera, ['Clasificación', 'Objetivo', 'Fuera de alcance']),
-    ...subtareas.flatMap((s) => ['', s.lineas[0].trim(), ...bloques(s.lineas, CAMPOS_APROBACION)]),
+    ...(compacto ? ['', ...subtareas.map(lineaCompacta)] : subtareas.flatMap((s) => ['', s.lineas[0].trim(), ...bloques(s.lineas, CAMPOS_APROBACION)])),
     '',
     ...bloques(pie, ['Queda para ti', 'Costo']),
   ].join('\n').trim()
@@ -712,6 +755,8 @@ function resumirPlan(texto, destino) {
   const paraDecidir = []
   console.log(`GUARDADO: plan → ${destino}`)
   console.log(`PLAN: ${subtareas.length} subtarea(s) · Clasificación: ${clasificacion ?? '(falta)'}`)
+  const compacto = subtareas.length > TOPE_APROBACION_ENTERA
+  if (compacto) console.log(`SUBTAREAS: ${subtareas.length} → ${path.join(FLUJO, 'S<n>.md')} (con más de ${TOPE_APROBACION_ENTERA}, su resumen va solo en PARA APROBAR)`)
   for (const s of subtareas) {
     const archivo = path.join(FLUJO, `S${s.n}.md`)
     for (const c of CAMPOS_SUBTAREA) if (campoDe(s.lineas, c) === null) avisos.push(`S${s.n} · falta «${c}»`)
@@ -741,7 +786,7 @@ function resumirPlan(texto, destino) {
     }
     resumen.push({ n: s.n, objetivo: s.objetivo, critica, permitidos, ...(depende ? { depende } : {}), ...(externo ? { externo } : {}) })
     paraDecidir.push({ n: s.n, critica, permitidos, fijos: [...fijos] })
-    console.log(`S${s.n} · ${s.objetivo} · Crítica: ${critica ?? '(falta)'} · permitidos: ${permitidos.join(', ') || '(faltan)'}${externo ? ` · Externo: ${externo.comando} (reversible: ${externo.reversible ? 'sí' : 'no'})` : ''}${contexto.length ? ` · contexto: ${contexto.length}` : ''} → ${archivo}`)
+    if (!compacto) console.log(`S${s.n} · ${s.objetivo} · Crítica: ${critica ?? '(falta)'} · permitidos: ${permitidos.join(', ') || '(faltan)'}${externo ? ` · Externo: ${externo.comando} (reversible: ${externo.reversible ? 'sí' : 'no'})` : ''}${contexto.length ? ` · contexto: ${contexto.length}` : ''} → ${archivo}`)
   }
   const pedidos = [...porCriterio.keys()].sort((a, b) => a - b)
   if (!criticos.length) console.log(`RUTAS CRÍTICAS: el proyecto no declara «criticos» en ${configDe(RAIZ).nombre}`)
@@ -769,7 +814,8 @@ function resumirPlan(texto, destino) {
   const externos = previas && typeof previas === 'object' && !Array.isArray(previas)
     ? Object.fromEntries(Object.entries(previas).filter(([n, a]) => resumen.find((s) => String(s.n) === n)?.externo?.comando === a?.comando))
     : undefined
-  anotarEstado({ plan: destino, subtareas: resumen, decisiones, ...(externos ? { externos } : {}), ...(clasificacion !== null ? { clasificacion } : {}), ...(titulo ? { titulo: sinMarcas(titulo) } : {}) })
+  // Un plan nuevo o re-planificado se vuelve a aprobar: la aprobación previa ya no vale.
+  anotarEstado({ plan: destino, subtareas: resumen, decisiones, aprobacion: undefined, ...(externos ? { externos } : {}), ...(clasificacion !== null ? { clasificacion } : {}), ...(titulo ? { titulo: sinMarcas(titulo) } : {}) })
 }
 
 /** Rutas de archivo que cita un informe (`ruta:línea`, absolutas o relativas), relativas al repo cuando caen dentro. */
@@ -804,8 +850,8 @@ const RE_ENCABEZADO = /^\s*(?:#{1,6}\s*)?(?:\*\*)?(ARCHIVOS|TESTS|ACOPLAMIENTOS|
 const RE_NINGUNO = /^\s*(?:[-*]\s*)?ninguno\.?\s*$/i
 
 /** Tope de líneas de hallazgos de cada explorador y máximo de exploradores en total: fijos, el orquestador elige cuántos según el pedido. */
-const TOPE_LINEAS_EXPLORADOR = 15
-const MAX_EXPLORADORES = 14
+const TOPE_LINEAS_EXPLORADOR = 20
+const MAX_EXPLORADORES = 16
 const MAX_LINEA_EXPLORACION = 160
 const RE_RUTA_LINEA = /[^\s`—]+:\d+/
 
@@ -912,8 +958,9 @@ function guardar(id, tipo, ajuste) {
 }
 
 function guardarInforme(id, tipo, ajuste) {
+  if (tipo === 'revision') return guardarRevision(id)
   if (tipo !== 'plan' && tipo !== 'exploracion') {
-    console.log(`AVISO: --guardar <agentId> plan|exploracion: tipo desconocido «${tipo ?? ''}»; no se guardó nada`)
+    console.log(`AVISO: --guardar <agentId> plan|exploracion|revision: tipo desconocido «${tipo ?? ''}»; no se guardó nada`)
     return
   }
   const pedidos = tipo === 'exploracion' ? idsDe(id) : [id]
@@ -950,19 +997,129 @@ function guardarInforme(id, tipo, ajuste) {
   resumirPlan(plan, destino)
 }
 
-/** Lo que lleva el flujo en curso, para retomar el hilo (por ejemplo, después de una compactación). */
+/** Texto del primer mensaje del usuario en el transcript de un agente (su despacho); '' si no hay. */
+function promptDe(archivo) {
+  for (const linea of (leerTexto(archivo) ?? '').split('\n')) {
+    let fila
+    try {
+      fila = JSON.parse(linea)
+    } catch {
+      continue
+    }
+    if (fila?.type !== 'user') continue
+    const c = fila.message?.content
+    return typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x?.type === 'text' ? x.text : '')).join('') : ''
+  }
+  return ''
+}
+
+const RE_VEREDICTO = /^[\s*_>`-]*VEREDICTO(?:\*\*)?:\s*\**\s*([A-ZÁÉÍÓÚ]+)/m
+
+/**
+ * `--guardar <agentId> revision`: guarda el reporte de la revisión final en `revision-<c>.md` (con la `SALIDA DEL OWNER` de su
+ * despacho, si la trae) y la anota en `revisiones` del estado. Cada agente nuevo es un ciclo más; volver a guardar el mismo agente
+ * (un reintento) reemplaza su ciclo.
+ */
+function guardarRevision(id) {
+  const archivo = transcriptDe(id)
+  const texto = archivo ? textoFinalDe(archivo) : null
+  if (!texto) {
+    console.log(`AVISO: no encontré el informe del agente ${id ?? '(sin id)'}: sigue con su texto, como antes`)
+    return
+  }
+  const revisiones = listaDe(leerEstado(), 'revisiones')
+  const previa = revisiones.findIndex((r) => r.agente === id)
+  const c = previa >= 0 ? revisiones[previa].c : revisiones.length + 1
+  const veredicto = RE_VEREDICTO.exec(texto)?.[1] ?? null
+  const owner = /^SALIDA DEL OWNER:[\s\S]*?(?=^NO corras verificar\.mjs\.|^CRÍTICO:|(?![\s\S]))/m.exec(promptDe(archivo))?.[0].trim()
+  fs.mkdirSync(FLUJO, { recursive: true })
+  const destino = path.join(FLUJO, `revision-${c}.md`)
+  fs.writeFileSync(destino, [texto.trim(), ...(owner ? ['', owner] : [])].join('\n') + '\n')
+  const entrada = { c, agente: id, veredicto, archivo: destino, t: new Date().toISOString() }
+  anotarEstado({ revisiones: previa >= 0 ? revisiones.map((r, i) => (i === previa ? entrada : r)) : [...revisiones, entrada] })
+  console.log(`GUARDADO: revisión ciclo ${c} (${veredicto ?? 'sin VEREDICTO'}) → ${destino}`)
+}
+
+/** El tramo de `texto` desde la línea que empieza con `desde` (incluida) hasta la primera que empiece con algo de `hasta`; '' si no está. */
+function seccionDe(texto, desde, hasta) {
+  const lineas = String(texto ?? '').split('\n')
+  const k = lineas.findIndex((l) => l.replace(/^[\s*_]+/, '').startsWith(desde))
+  if (k < 0) return ''
+  const fin = lineas.findIndex((l, i) => i > k && hasta.some((h) => l.replace(/^[\s*_]+/, '').startsWith(h)))
+  return lineas.slice(k, fin < 0 ? undefined : fin).join('\n').trim()
+}
+
+const TERMINADA = new Set(['HECHO', 'OMITIDA'])
+
+/**
+ * Dónde sigue el flujo, de lo guardado en su carpeta: `{ sigue, pendientes }`. `sigue` es la línea `SIGUE: paso <n> · …` y
+ * `pendientes` las líneas con lo que falta (subtareas sin terminar con su foto, la última revisión con sus PROBLEMAS y CRITERIOS
+ * literales, la BASE de su tanda). Sin aprobación sigue en el paso 4; con alguna subtarea sin terminar, en el lote que la tiene;
+ * con todas, en la revisión final; con la última APROBADO o los ciclos agotados, en el cierre. `correcciones` (de
+ * `ejecutoresDelProyecto`) dice si volvieron los ejecutores de una tanda.
+ */
+export function siguienteDe(e, correcciones = []) {
+  const subtareas = Array.isArray(e.subtareas) ? e.subtareas : []
+  const avance = avanceDe(e)
+  const bases = basesDe(e)
+  const pendientes = []
+  if (!e.plan) return { sigue: 'SIGUE: paso 1 · el flujo no guardó el plan: empieza de cero (preflight con --forzar)', pendientes }
+  if (!e.aprobacion) return { sigue: 'SIGUE: paso 4 · aprobación del plan (no se aprobó todavía)', pendientes }
+  const lotes = lotesDe(subtareas)
+  const k = lotes.findIndex((l) => l.some((n) => !TERMINADA.has(avance[String(n)]?.estado)))
+  if (k >= 0) {
+    for (const n of lotes[k]) {
+      const a = avance[String(n)]
+      if (a && TERMINADA.has(a.estado)) continue
+      const f = bases[String(n)]
+      const foto = f ? ` · FOTO BASE=${f.base} DESDE=${f.desde}` : ''
+      if (a) pendientes.push(`S${n} · ${a.estado} (${a.ciclos ?? 0} correcciones)${foto}`)
+      else if (f) pendientes.push(`S${n} · a medias (foto sin --cambios): se despacha de nuevo desde su foto y ese intento no cuenta como ciclo${foto}`)
+      else pendientes.push(`S${n} · sin empezar`)
+    }
+    return { sigue: `SIGUE: paso 5 · lote ${k + 1}/${lotes.length} (${lotes[k].map((n) => `S${n}`).join('+')})`, pendientes }
+  }
+  const revisiones = listaDe(e, 'revisiones')
+  const ultima = revisiones.at(-1)
+  if (!ultima) return { sigue: 'SIGUE: paso 6 · revisión ciclo 1', pendientes }
+  const maximo = Number(/(\d+)/.exec(e.decisiones?.ciclos ?? '')?.[1] ?? 2)
+  const texto = leerTexto(ultima.archivo) ?? ''
+  pendientes.push(`REVISIÓN ${ultima.c}: ${ultima.veredicto ?? 'sin VEREDICTO'} → ${ultima.archivo}`)
+  if (ultima.veredicto === 'APROBADO') return { sigue: 'SIGUE: paso 7 · cierre (revisión final APROBADO)', pendientes }
+  const owner = seccionDe(texto, 'SALIDA DEL OWNER:', [])
+  if (owner) pendientes.push(owner)
+  if (ultima.veredicto !== 'RECHAZADO') return { sigue: `SIGUE: paso 6 · revisión ciclo ${ultima.c} (volvió sin VEREDICTO: relánzala)`, pendientes }
+  const problemas = seccionDe(texto, 'PROBLEMAS:', ['SIN EJECUTAR:', 'OBSERVACIONES:'])
+  const criterios = seccionDe(texto, 'CRITERIOS:', ['PROBLEMAS:', 'SIN EJECUTAR:', 'OBSERVACIONES:'])
+  pendientes.push('PROBLEMAS ABIERTOS (literales):', problemas || '(no encontré PROBLEMAS en el reporte)', 'CRITERIOS (literales):', criterios || '(no encontré CRITERIOS en el reporte)')
+  if (ultima.c >= maximo) return { sigue: `SIGUE: paso 7 · cierre DETENIDO:6 (${maximo} ciclo(s) de la revisión final agotados)`, pendientes }
+  const tanda = listaDe(e, 'tandas').find((t) => Date.parse(t.t) > Date.parse(ultima.t))
+  if (!tanda) return { sigue: `SIGUE: paso 6 · correcciones del ciclo ${ultima.c} (los PROBLEMAS de abajo)`, pendientes }
+  pendientes.push(`TANDA DEL CICLO ${ultima.c}: BASE=${tanda.base} (va como BASE DE LA CORRECCIÓN, también si repites la tanda)`)
+  const vueltas = correcciones.filter((c) => Date.parse(c.inicio) >= Date.parse(tanda.t))
+  if (vueltas.length < (tanda.n ?? 1) || vueltas.some((c) => !c.estado)) {
+    return { sigue: `SIGUE: paso 6 · correcciones del ciclo ${ultima.c} (tanda a medias: ${vueltas.filter((c) => c.estado).length}/${tanda.n ?? 1} volvieron)`, pendientes }
+  }
+  return { sigue: `SIGUE: paso 6 · revisión ciclo ${ultima.c + 1} (correcciones hechas: --cambios --global, verificar.mjs y la revisión con REVISIÓN ANTERIOR)`, pendientes }
+}
+
+/** Lo que lleva el flujo en curso, para retomar el hilo (por ejemplo, después de una compactación o de un corte). */
 function mostrarEstado() {
   const e = leerEstado()
   if (!e.base_global) {
     console.log('ESTADO: no hay un flujo en curso en este proyecto')
     return
   }
+  const avance = avanceDe(e)
   console.log(`FLUJO: ${FLUJO}${e.cierre ? ` · cerrado ${e.cierre}` : ''}`)
   console.log(`BASE_GLOBAL=${e.base_global} DESDE_GLOBAL=${e.desde_global} · rama ${e.rama ?? '?'}`)
   if (e.exploracion) console.log(`EXPLORACIÓN: ${e.exploracion}`)
-  if (e.plan) console.log(`PLAN: ${e.plan}`)
+  if (e.plan) console.log(`PLAN: ${e.plan}${e.aprobacion?.t ? ` · aprobado ${e.aprobacion.t}` : ''}`)
+  if (e.aprobacion) console.log(`AJUSTES AL PLAN: ${e.aprobacion.ajustes || 'ninguno'}`)
+  if (Array.isArray(e.ampliados) && e.ampliados.length) console.log(`PERMITIDOS AMPLIADOS: ${e.ampliados.join(', ')}`)
   for (const s of Array.isArray(e.subtareas) ? e.subtareas : []) {
-    console.log(`  S${s.n} · ${s.objetivo} · permitidos: ${(s.permitidos ?? []).join(', ')} → ${path.join(FLUJO, `S${s.n}.md`)}`)
+    const a = avance[String(s.n)]
+    console.log(`  S${s.n} · ${s.objetivo} · permitidos: ${(s.permitidos ?? []).join(', ')}${a ? ` · ${a.estado} (${a.ciclos ?? 0} correcciones)` : ''} → ${path.join(FLUJO, `S${s.n}.md`)}`)
     if (s.externo?.comando) console.log(`    Externo: ${s.externo.comando} (reversible: ${s.externo.reversible ? 'sí' : 'no'})${e.externos?.[String(s.n)]?.aprobado ? ` · aprobado ${e.externos[String(s.n)].aprobado}` : ' · sin aprobar'}`)
   }
   if (Array.isArray(e.en_curso) && e.en_curso.length) console.log(`EN CURSO: ${e.en_curso.map((n) => `S${n}`).join('+')}`)
@@ -981,6 +1138,77 @@ function mostrarEstado() {
   if (inicial) console.log(inicial)
   const verde = ultimaVerde(RAIZ)
   if (verde) console.log(`ÚLTIMO VERDE: árbol ${corto(verde.arbol)} · ${verde.t}`)
+  if (e.cierre) return
+  const correcciones = listaDe(e, 'tandas').length ? ejecutoresDelProyecto(RAIZ, e.desde_global).filter((x) => x.n === 'final') : []
+  const { sigue, pendientes } = siguienteDe(e, correcciones)
+  console.log(sigue)
+  if (pendientes.length) console.log(`PENDIENTES:\n${pendientes.map((l) => l.split('\n').map((x) => `  ${x}`).join('\n')).join('\n')}`)
+}
+
+/**
+ * `--reanudar`: sigue en esta sesión un flujo cortado (por el límite de uso, al cerrar la sesión o al cambiar de cuenta) sin vaciar
+ * su carpeta. Anota la sesión nueva en `sesiones` (el cierre suma todas), cierra las fases en paralelo que quedaron abiertas y
+ * borra `en_curso`, e imprime el PEDIDO literal del flujo, lo de `--estado` (con `SIGUE:` y lo pendiente) y, sin aprobación, el
+ * `PARA APROBAR` del plan guardado. Falla sin flujo, con el flujo cerrado o sin plan guardado (ahí se empieza de cero).
+ */
+function reanudar() {
+  const e = leerEstado()
+  if (!e.base_global) throw new Error('no hay un flujo en este proyecto para reanudar: corre el preflight')
+  if (e.cierre) throw new Error(`el flujo ya cerró (${e.cierre}): no hay nada que reanudar`)
+  if (!e.plan || !fs.existsSync(e.plan)) throw new Error('el flujo se cortó antes de guardar el plan: empieza de cero (preflight con --forzar)')
+  cerrarParalelos()
+  const sesiones = sesionesDe(e)
+  const ahora = new Date().toISOString()
+  anotarEstado({ en_curso: undefined, sesiones: [...(sesiones.length ? sesiones : [{ desde: e.desde_global }]), sesionActual(ahora)] })
+  const archivoPedido = path.join(FLUJO, 'pedido.md')
+  let pedido = leerTexto(archivoPedido)
+  if (pedido === null) {
+    try {
+      pedido = pedidoDelFlujo(RAIZ, e.inicio ?? e.desde_global, { base: e.base_global })
+      if (pedido) fs.writeFileSync(archivoPedido, pedido + '\n')
+    } catch {
+      pedido = null
+    }
+  }
+  console.log(`REANUDADO: sesión ${sesiones.length + (sesiones.length ? 1 : 2)} del flujo · ${ahora}`)
+  console.log(pedido ? `PEDIDO (literal, del /impl original):\n${pedido.trim()}\nFIN PEDIDO` : 'PEDIDO: no lo encontré en los transcripts; tómalo del plan (Objetivo)')
+  mostrarEstado()
+  if (!e.aprobacion) {
+    const partes = partesDelPlan(leerTexto(e.plan) ?? '')
+    if (partes.subtareas.length) console.log(`PARA APROBAR (cópialo tal cual en tu texto; el plan completo está en ${e.plan}):\n${aprobacionDe(partes)}\nFIN PARA APROBAR`)
+  }
+}
+
+/** `--aprobado [--ajustes "<texto>"]`: anota que el usuario aprobó el plan guardado, con los AJUSTES AL PLAN (los que el orquestador mostró). */
+function aprobar(ajustes) {
+  const e = leerEstado()
+  if (!e.base_global || e.cierre) throw new Error('el flujo no está abierto: no hay dónde anotar la aprobación (corre el preflight)')
+  if (!e.plan) throw new Error('no hay plan guardado que aprobar (--guardar <agentId> plan)')
+  const texto = String(ajustes ?? '').trim()
+  anotarEstado({ aprobacion: { t: new Date().toISOString(), ajustes: texto } })
+  console.log(`APROBADO: plan de ${(Array.isArray(e.subtareas) ? e.subtareas : []).length} subtarea(s) · ajustes: ${texto ? 'anotados' : 'ninguno'}`)
+}
+
+/**
+ * Anota en `avance` el estado de las subtareas `miembros` tras su `--cambios --sub`: el `ESTADO:` del último ejecutor de cada una
+ * (de los transcripts del proyecto desde `desde`) y cuántas correcciones tuvo; `omitida` las marca OMITIDA («seguir sin ella»).
+ * Una subtarea sin ejecutor encontrado queda como `MEDIDA`. Nunca rompe el `--cambios`.
+ */
+function anotarAvance(miembros, desde, omitida) {
+  try {
+    const ejecutores = omitida ? [] : ejecutoresDelProyecto(RAIZ, desde)
+    const avance = avanceDe(leerEstado())
+    const t = new Date().toISOString()
+    for (const n of miembros) {
+      const suyos = ejecutores.filter((x) => x.n === String(n))
+      const estado = omitida ? 'OMITIDA' : suyos.at(-1)?.estado ?? 'MEDIDA'
+      avance[String(n)] = { estado, ciclos: suyos.filter((x) => x.correccion).length, t }
+    }
+    anotarEstado({ avance })
+    console.log(`AVANCE: ${miembros.map((n) => `S${n} ${avance[String(n)].estado}`).join(' · ')}`)
+  } catch {
+    // Sin avance, el flujo sigue: --reanudar lo verá como «a medias».
+  }
 }
 
 // ── Modos ───────────────────────────────────────────────────────────────────
@@ -1133,11 +1361,15 @@ function preflight(forzar) {
     const hora = new Date(abierto.inicio).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
     const plan = abierto.titulo ? `«${abierto.titulo}», ` : abierto.plan ? 'con plan, ' : 'sin plan todavía, '
     console.log(`AVISO: hay otro flujo abierto en este repo (${plan}empezó a las ${hora}, BASE_GLOBAL ${corto(abierto.base_global)}, sin cierre, con actividad hace ${Math.round(abierto.minutos)} min). Si sigue corriendo en otra sesión (o esperando su aprobación), los dos se pisan los archivos y la carpeta del flujo, que no vacié. Si ya no corre, repite el preflight con --forzar.`)
+    if (abierto.plan) {
+      const hechas = Object.values(avanceDe(abierto)).filter((a) => TERMINADA.has(a.estado)).length
+      console.log(`REANUDAR: estado.mjs --reanudar --paso 0 sigue ese flujo sin vaciar su carpeta (plan guardado${abierto.aprobacion ? ' y aprobado' : ', sin aprobar'}, ${hechas}/${(abierto.subtareas ?? []).length} subtareas terminadas)`)
+    }
     flujo = '(ocupada por el flujo anterior: repite el preflight con --forzar si ya no corre)'
     mapa = 'MAPA: ninguno (la carpeta del flujo está ocupada por el flujo anterior)'
   } else {
     try {
-      nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [] })
+      nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [], sesiones: [sesionActual(desde)] })
       const escrito = escribirMapa()
       mapa = escrito.linea
       preparada = true
@@ -1193,13 +1425,24 @@ const GUIAS = ['comun', 'pasos']
  * Claude Code solo resuelve esa variable en el texto de la skill, no en lo que ella inyecta con un comando, y el Bash del
  * modelo no la tiene: así las rutas de estos archivos llegan completas.
  */
-export function imprimirGuia(nombre) {
+export function imprimirGuia(nombre, parte) {
   const herramientas = path.dirname(fileURLToPath(import.meta.url))
-  const texto = GUIAS.includes(nombre) ? leerTexto(path.join(herramientas, `${nombre}.md`)) : undefined
-  if (texto === undefined) {
+  const leido = GUIAS.includes(nombre) ? leerTexto(path.join(herramientas, `${nombre}.md`)) : null
+  if (leido === null) {
     console.log(`ERROR: --guia pide ${GUIAS.join(' o ')} y que el archivo exista`)
     process.exitCode = 2
     return
+  }
+  let texto = leido
+  if (parte !== undefined) {
+    // Claude Code guarda aparte lo inyectado de más de 30.000 caracteres: comun.md entra en dos partes, cortada en «## 5.».
+    const corte = leido.search(/^## 5\./m)
+    if (nombre !== 'comun' || !['1', '2'].includes(parte) || corte < 0) {
+      console.log('ERROR: --parte vale solo con --guia comun y es 1 o 2')
+      process.exitCode = 2
+      return
+    }
+    texto = parte === '1' ? leido.slice(0, corte) : leido.slice(corte)
   }
   process.stdout.write(texto.replaceAll('${CLAUDE_PLUGIN_ROOT}', () => path.dirname(herramientas).replaceAll('\\', '/')))
 }
@@ -1502,6 +1745,7 @@ const sinNulos = (obj) => {
  * La fila v2 de `registros/flujos.jsonl`. `datos`: `t` (hora del cierre), `raiz`, `base`, `version`, `resultado`, `tokens`
  * (de `--tokens`), `estado` (el estado del flujo), `metricas` (de `metricasDelFlujo`), `cambios` (de `cambiosPorSubtarea`)
  * y `negados` (cuántas negaciones de la guardia hubo). Omite lo que falte; `uso` suma pedidos y tokens de todos los roles.
+ * `sesiones` (de las métricas) es cuántas sesiones sumó el flujo: 1 sin corte, más si se reanudó con `--reanudar`.
  */
 export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado = {}, metricas = null, cambios = {}, negados } = {}) {
   const m = metricas ?? {}
@@ -1523,7 +1767,7 @@ export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado
         usd: redondeo(ejecutor.usd),
         segundos: ejecutor.segundos,
         correcciones: ejecutor.correcciones,
-        estado: ejecutor.estado,
+        estado: estado.avance?.[String(s.n)]?.estado === 'OMITIDA' ? 'OMITIDA' : ejecutor.estado,
       })
     })
     : undefined
@@ -1534,6 +1778,7 @@ export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado
     base,
     version,
     sesion: m.sesion,
+    sesiones: m.sesiones,
     pedido: m.pedido,
     titulo: estado.titulo,
     resultado,
@@ -1564,7 +1809,7 @@ function lineaDeContexto(metricas) {
 }
 
 /**
- * Copia plan.md, exploracion.md, los S<n>.md y estado.json del flujo a `<registros>/historial/<AAAAMMDDTHHMMSS>-<proyecto>-<hash>/`
+ * Copia plan.md, exploracion.md, pedido.md, los S<n>.md, los revision-<c>.md y estado.json del flujo a `<registros>/historial/<AAAAMMDDTHHMMSS>-<proyecto>-<hash>/`
  * y deja las `HISTORIAL_MAX` carpetas más recientes: solo borra subcarpetas directas de `historial/` con nombre `AAAAMMDDTHHMMSS-…`,
  * nunca la recién creada. Nunca rompe el cierre.
  */
@@ -1574,7 +1819,7 @@ function archivarFlujo(t) {
     const destino = path.join(historial, `${t.replace(/[-:]/g, '').slice(0, 15)}-${path.basename(FLUJO).replace(/-flujo$/, '')}`)
     fs.mkdirSync(destino, { recursive: true })
     for (const nombre of fs.readdirSync(FLUJO)) {
-      if (/^(plan|exploracion|S\d+)\.md$/.test(nombre) || nombre === 'estado.json') fs.copyFileSync(path.join(FLUJO, nombre), path.join(destino, nombre))
+      if (/^(plan|exploracion|pedido|S\d+|revision-\d+)\.md$/.test(nombre) || nombre === 'estado.json') fs.copyFileSync(path.join(FLUJO, nombre), path.join(destino, nombre))
     }
     console.log(`HISTORIAL: ${destino}`)
     const carpetas = fs.readdirSync(historial, { withFileTypes: true }).filter((d) => d.isDirectory() && RE_CARPETA_HISTORIAL.test(d.name)).map((d) => d.name).sort().reverse()
@@ -1598,7 +1843,7 @@ function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
   const t = new Date().toISOString()
   let metricas = null
   try {
-    metricas = metricasDelFlujo(RAIZ, e.inicio ?? desde ?? t, { hasta: t, base: e.base_global ?? null })
+    metricas = metricasDelFlujo(RAIZ, e.inicio ?? desde ?? t, { hasta: t, base: e.base_global ?? null, sesiones: sesionesDe(e) })
   } catch {
     // Sin métricas, el cierre sigue.
   }
@@ -1747,13 +1992,16 @@ function abrirTanda(n) {
   const e = leerEstado()
   if (!e.base_global || e.cierre) throw new Error('el flujo no está abierto: no hay dónde anotar la tanda (corre el preflight)')
   const base = foto((Array.isArray(e.subtareas) ? e.subtareas : []).flatMap((s) => (Array.isArray(s?.permitidos) ? s.permitidos : [])))
+  const desde = new Date().toISOString()
+  // La BASE de cada tanda queda en el estado: `--reanudar` la da como BASE DE LA CORRECCIÓN.
+  const tandas = [...listaDe(e, 'tandas'), { n, base, t: desde, ciclo: listaDe(e, 'revisiones').length }].slice(-TOPE_PARALELOS)
   if (n < 2) {
-    console.log(`AVISO: una tanda de ${n} no corre en paralelo; no se anota nada`)
+    anotarEstado({ tandas })
+    console.log(`AVISO: una tanda de ${n} no corre en paralelo; no se anota la fase en paralelo`)
     console.log(`BASE=${base}`)
     return
   }
-  const desde = new Date().toISOString()
-  anotarEstado({ paralelos: [...paralelosDe(e), { tipo: 'tanda', n, desde }].slice(-TOPE_PARALELOS) })
+  anotarEstado({ tandas, paralelos: [...paralelosDe(e), { tipo: 'tanda', n, desde }].slice(-TOPE_PARALELOS) })
   console.log(`TANDA=${n} DESDE=${desde}`)
   console.log(`BASE=${base}`)
 }
@@ -1835,7 +2083,9 @@ function contextoDelFlujo({ base, desde, permitidos, sub, global }) {
   const unidos = [...new Set([...previstos, ...ampliados, ...posteriores])]
   if (!unidos.length) throw new Error('sin plan guardado ni --permitidos: usa la forma explícita (--cambios <BASE> --desde <DESDE> --permitidos "…")')
   console.log(`FOTO ${etiqueta}: BASE=${corto(inicio.base)} DESDE=${inicio.desde} · permitidos: ${previstos.length} del plan + ${ampliados.length} ampliados${etiquetaPosteriores ? ` + ${etiquetaPosteriores}` : ''}`)
-  return { base: inicio.base, desde: inicio.desde, permitidos: unidos }
+  // Los ampliados (respuestas «Aceptar» del usuario) quedan en el estado: `--reanudar` los devuelve.
+  if (ampliados.length) anotarEstado({ ampliados: [...new Set([...(Array.isArray(e.ampliados) ? e.ampliados : []), ...ampliados])] })
+  return { base: inicio.base, desde: inicio.desde, permitidos: unidos, miembros: global ? null : etiqueta.split('+').map((s) => Number(s.slice(1))) }
 }
 
 // Colores fijos para `--color-moved`: así la detección no depende de la configuración de color del usuario.
@@ -1897,10 +2147,10 @@ function subDe(texto) {
 
 /**
  * Argumentos → `{ modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar }`. Las opciones
- * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --estado > --cancelar > --guardar > --externo > --tanda > --base > --cambios > --diff > preflight.
+ * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --reanudar > --estado > --aprobado > --cancelar > --guardar > --externo > --tanda > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
  * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar` (`agente` es el texto crudo: varios ids van separados por coma, sin espacios).
- * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta). `--externo <n> aprobado` es el modo `externo` y agrega `externo` (el entero ≥ 1; null si no vale) y `accion` (la palabra que sigue, `''` si falta). `--tanda <n>` es el modo `tanda` y agrega `tanda` (el entero ≥ 1; null si no vale). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
+ * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta) y, con `--parte <k>`, `parte` (el texto crudo). `--omitida` agrega `omitida: true`; `--aprobado` agrega `ajustes` (el valor de `--ajustes`, `''` si falta). `--externo <n> aprobado` es el modo `externo` y agrega `externo` (el entero ≥ 1; null si no vale) y `accion` (la palabra que sigue, `''` si falta). `--tanda <n>` es el modo `tanda` y agrega `tanda` (el entero ≥ 1; null si no vale). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
  * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
 export function opcionesDe(args) {
@@ -1915,7 +2165,9 @@ export function opcionesDe(args) {
   let base
   if (opciones.includes('--reglas')) modo = 'reglas'
   else if (opciones.includes('--guia')) modo = 'guia'
+  else if (opciones.includes('--reanudar')) modo = 'reanudar'
   else if (opciones.includes('--estado')) modo = 'estado'
+  else if (opciones.includes('--aprobado')) modo = 'aprobado'
   else if (opciones.includes('--cancelar')) modo = 'cancelar'
   else if (opciones.includes('--guardar')) modo = 'guardar'
   else if (opciones.includes('--externo')) modo = 'externo'
@@ -1954,7 +2206,9 @@ export function opcionesDe(args) {
     forzar: opciones.includes('--forzar'),
     ...(conSub ? { sub: subDe(valor('--sub')) } : {}),
     ...(conGlobal ? { global: true } : {}),
-    ...(modo === 'guia' ? { guia: valor('--guia') ?? '' } : {}),
+    ...(modo === 'guia' ? { guia: valor('--guia') ?? '', ...(opciones.includes('--parte') ? { parte: valor('--parte') ?? '' } : {}) } : {}),
+    ...(opciones.includes('--omitida') ? { omitida: true } : {}),
+    ...(modo === 'aprobado' ? { ajustes: /^--/.test(valor('--ajustes') ?? '--') ? '' : valor('--ajustes') } : {}),
     ...(modo === 'tanda' ? { tanda: /^[1-9]\d*$/.test(valor('--tanda') ?? '') ? Number(valor('--tanda')) : null } : {}),
     ...(modo === 'externo' ? { externo: /^[1-9]\d*$/.test(valor('--externo') ?? '') ? Number(valor('--externo')) : null, accion: /^--/.test(valor('--externo', 2) ?? '--') ? '' : valor('--externo', 2) } : {}),
   }
@@ -1985,7 +2239,7 @@ export function anotarFlujo(archivo, fila) {
 }
 
 function main() {
-  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia, externo, accion, tanda } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia, parte, externo, accion, tanda, omitida, ajustes } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   // Ni las reglas ni el estado necesitan git: las reglas se inyectan antes del preflight.
   if (modo === 'reglas') {
@@ -1993,11 +2247,21 @@ function main() {
     return
   }
   if (modo === 'guia') {
-    imprimirGuia(guia)
+    imprimirGuia(guia, parte)
     return
   }
   if (modo === 'estado') {
     mostrarEstado()
+    return
+  }
+  if (modo === 'reanudar' || modo === 'aprobado') {
+    try {
+      if (modo === 'reanudar') reanudar()
+      else aprobar(ajustes)
+    } catch (e) {
+      console.log(`ERROR: ${e.message}`)
+      process.exitCode = 2
+    }
     return
   }
   if (modo === 'cancelar') {
@@ -2049,6 +2313,9 @@ function main() {
       if (delFlujo) anotarEstado({ en_curso: undefined })
       if (tokens !== undefined && paso !== 7) console.log('AVISO: --tokens solo vale en el cierre (--cambios … --paso 7); se ignora')
       if (resultado !== undefined && paso !== 7) console.log('AVISO: --resultado solo vale en el cierre (--cambios … --paso 7); se ignora')
+      if (omitida && !del.miembros?.length) console.log('AVISO: --omitida solo vale con --cambios --sub <n>; se ignora')
+      // Antes de los CAMBIOS: la salida sigue terminando en ALCANCE.
+      if (del.miembros?.length) anotarAvance(del.miembros, del.desde, omitida)
       try {
         cambios(del.base, del.desde, del.permitidos, paso, tokens, resultado, paralelos)
       } finally {

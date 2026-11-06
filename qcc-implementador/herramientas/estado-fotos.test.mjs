@@ -191,7 +191,7 @@ test('estado: --guardar arma el plan, un S<n>.md por subtarea y avisa las rutas 
   const nadie = estadoEn(raiz, ['--guardar', 'nadie', 'plan'], entorno)
   assert.match(nadie.salida, /^AVISO: no encontré el informe del agente nadie: despacha copiando su texto, como antes$/m)
   assert.equal(nadie.codigo, 0)
-  assert.match(estadoEn(raiz, ['--guardar', 'planuno', 'otro'], entorno).salida, /^AVISO: --guardar <agentId> plan\|exploracion: tipo desconocido «otro»/m)
+  assert.match(estadoEn(raiz, ['--guardar', 'planuno', 'otro'], entorno).salida, /^AVISO: --guardar <agentId> plan\|exploracion\|revision: tipo desconocido «otro»/m)
 })
 
 test('estado: lotesDe junta subtareas independientes cuyos permitidos no se pisan', () => {
@@ -516,17 +516,17 @@ test('estado: --guardar con varios exploradores escribe un solo exploracion.md',
   )
 })
 
-test('el preflight imprime EXPLORADORES: hasta 14 sin importar el repo', () => {
+test('el preflight imprime EXPLORADORES: hasta 16 sin importar el repo', () => {
   const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
   const grande = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [`lote/f${i}.txt`, 'x\n']))
   const { raiz, salida } = estadoCon(config, () => ['--paso', '0'], grande)
-  assert.match(salida, /^MAPA: .*\n^EXPLORADORES: hasta 14 \(según el pedido\)$/m)
+  assert.match(salida, /^MAPA: .*\n^EXPLORADORES: hasta 16 \(según el pedido\)$/m)
   const chico = estadoCon(config, () => ['--paso', '0']).salida
-  assert.match(chico, /^MAPA: .*\n^EXPLORADORES: hasta 14 \(según el pedido\)$/m)
+  assert.match(chico, /^MAPA: .*\n^EXPLORADORES: hasta 16 \(según el pedido\)$/m)
 
   // Con el flujo ocupado no hay MAPA y el tope es el mismo.
   fs.writeFileSync(path.join(raiz, 'nuevo.ts'), 'n\n')
-  assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^MAPA: ninguno.*\n^EXPLORADORES: hasta 14 \(según el pedido\)$/m)
+  assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^MAPA: ninguno.*\n^EXPLORADORES: hasta 16 \(según el pedido\)$/m)
 })
 
 test('--guardar avisa CORTADO del explorador que la guardia dejó sin leer por contexto', () => {
@@ -544,11 +544,11 @@ test('--guardar avisa CORTADO del explorador que la guardia dejó sin leer por c
   assert.doesNotMatch(sin, /CORTADO/)
 
   // La fila que produce la guardia real marca solo al agente negado, también al volver a guardar con más ids.
-  assert.equal(JSON.parse(leer('c1', 90_000).stdout).hookSpecificOutput.permissionDecision, 'deny')
+  assert.equal(JSON.parse(leer('c1', 95_000).stdout).hookSpecificOutput.permissionDecision, 'deny')
   const con = estadoEn(raiz, ['--guardar', 'c1,c2', 'exploracion', '--paso', '2'], entorno).salida
-  assert.match(con, /^CORTADO: agente c1 por contexto \(90k\)$/m)
+  assert.match(con, /^CORTADO: agente c1 por contexto \(95k\)$/m)
   assert.equal((con.match(/^CORTADO/gm) ?? []).length, 1)
-  assert.match(estadoEn(raiz, ['--guardar', 'c1', 'exploracion'], entorno).salida, /^CORTADO: agente c1 por contexto \(90k\)$/m)
+  assert.match(estadoEn(raiz, ['--guardar', 'c1', 'exploracion'], entorno).salida, /^CORTADO: agente c1 por contexto \(95k\)$/m)
   assert.doesNotMatch(estadoEn(raiz, ['--guardar', 'c2', 'exploracion'], entorno).salida, /CORTADO/)
 })
 
@@ -558,13 +558,13 @@ const informeDe = (n, linea = (i) => `- src/f${i}.ts:${i} — hecho`) =>
 
 test('--guardar avisa LARGO por exceso de hallazgos', () => {
   const claude = transcripts({
-    justo: informeDe(15),
-    largo: informeDe(16),
-    t1: informeDe(16, (i) => `- a/${i}.ts:${i} — uno`),
-    t2: informeDe(15, (i) => `- b/${i}.ts:${i} — dos`),
+    justo: informeDe(20),
+    largo: informeDe(21),
+    t1: informeDe(21, (i) => `- a/${i}.ts:${i} — uno`),
+    t2: informeDe(20, (i) => `- b/${i}.ts:${i} — dos`),
     t3: informeDe(3, (i) => `- c/${i}.ts:${i} — tres`),
-    d1: informeDe(16, (i) => `- d/${i}.ts:${i} — igual`),
-    d2: informeDe(16, (i) => `- d/${i}.ts:${i} — igual`),
+    d1: informeDe(21, (i) => `- d/${i}.ts:${i} — igual`),
+    d2: informeDe(21, (i) => `- d/${i}.ts:${i} — igual`),
   })
   const entorno = { CLAUDE_CONFIG_DIR: claude }
   // LARGO sale solo en la primera corrida de un flujo: cada caso usa un flujo nuevo.
@@ -573,24 +573,24 @@ test('--guardar avisa LARGO por exceso de hallazgos', () => {
     return { salida, md: fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8'), raiz }
   }
 
-  // El tope es 15 con un explorador, justo en el tope no avisa.
+  // El tope es 20 con un explorador, justo en el tope no avisa.
   assert.doesNotMatch(guardar('justo').salida, /LARGO/)
   const largo = guardar('largo')
-  assert.match(largo.salida, /^LARGO: agente largo con 16 hallazgos \(tope 15\)$/m)
+  assert.match(largo.salida, /^LARGO: agente largo con 21 hallazgos \(tope 20\)$/m)
   // El aviso no corta ni cambia lo guardado.
-  assert.equal(largo.md, informeDe(16) + '\n')
+  assert.equal(largo.md, informeDe(21) + '\n')
 
-  // Con tres, el tope de cada uno sigue siendo 15 (solo t1 lo pasa).
+  // Con tres, el tope de cada uno sigue siendo 20 (solo t1 lo pasa).
   const tres = guardar('t1,t2,t3')
-  assert.match(tres.salida, /^LARGO: agente t1 con 16 hallazgos \(tope 15\)$/m)
+  assert.match(tres.salida, /^LARGO: agente t1 con 21 hallazgos \(tope 20\)$/m)
   assert.doesNotMatch(tres.salida, /LARGO: agente t[23]/)
   assert.equal((tres.salida.match(/^LARGO/gm) ?? []).length, 1)
-  assert.match(tres.md, /- a\/16\.ts:16 — uno/)
+  assert.match(tres.md, /- a\/21\.ts:21 — uno/)
 
-  // Se cuenta antes de deduplicar: d2 repite todo lo de d1 y aun así pasa el tope de 15.
+  // Se cuenta antes de deduplicar: d2 repite todo lo de d1 y aun así pasa el tope de 20.
   const dos = guardar('d1,d2')
-  assert.match(dos.salida, /^LARGO: agente d1 con 16 hallazgos \(tope 15\)$/m)
-  assert.match(dos.salida, /^LARGO: agente d2 con 16 hallazgos \(tope 15\)$/m)
+  assert.match(dos.salida, /^LARGO: agente d1 con 21 hallazgos \(tope 20\)$/m)
+  assert.match(dos.salida, /^LARGO: agente d2 con 21 hallazgos \(tope 20\)$/m)
   assert.equal(dos.md.match(/d\/1\.ts:1\b/g).length, 1)
 
   // En la segunda corrida del mismo flujo, aunque el informe pase el tope, no vuelve a avisar.

@@ -446,6 +446,49 @@ test('costos: todo revisor es la revisión final y su veredicto entra en final',
   assert.deepEqual(m.problemas, { final: [{ veredicto: 'RECHAZADO', items: ['Falla X'] }] })
 })
 
+test('costos: un flujo reanudado en otra sesión suma las dos y no cuenta el corte', () => {
+  const { raiz, en, turno, texto, usuario, escribir, agente, opciones } = transcripts('repo-metricas-reanudado')
+  const carpeta = path.join(opciones(0).proyectos, path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  const bash = (id, comando) => ({ type: 'tool_use', id, name: 'Bash', input: { command: comando } })
+  const ESTADO = 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs'
+  // Sesión A: el /impl original, la ejecución y un ejecutor; se corta a los 600 s.
+  escribir([
+    usuario(0, '<command-name>/impl</command-name><command-args>pedido original entero</command-args>'),
+    turno('a1', 10, [bash('b0', `${ESTADO} --paso 0`)]),
+    turno('a2', 300, [bash('b5', `${ESTADO} --base --sub 1 --paso 5`)]),
+    turno('a3', 600, [texto('cortado')]),
+  ])
+  agente('agent-e1', 'impl:qcc-ejecutor', 'SUBTAREA 1/1: x', 310, [turno('e1', 500, [texto('ESTADO: HECHO')])])
+  // Sesión B (otra cuenta), una hora después: /impl reanudar, la revisión final y el cierre.
+  const sub = path.join(carpeta, 's2', 'subagents')
+  fs.mkdirSync(sub, { recursive: true })
+  const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
+  fs.writeFileSync(path.join(carpeta, 's2.jsonl'), jsonl([
+    usuario(4200, '<command-name>/impl</command-name><command-args>reanudar</command-args>'),
+    turno('b1', 4210, [bash('c0', `${ESTADO} --reanudar --paso 6`)]),
+    turno('b2', 4400, [bash('c7', `${ESTADO} --cambios --global --paso 7`)]),
+  ]))
+  fs.writeFileSync(path.join(sub, 'agent-r1.meta.json'), JSON.stringify({ agentType: 'impl:qcc-revisor' }))
+  fs.writeFileSync(path.join(sub, 'agent-r1.jsonl'), jsonl([usuario(4220, 'QUÉ REVISAR: cambio completo'), turno('r1', 4300, [texto('VEREDICTO: APROBADO\nOBSERVACIONES: ninguna')])]))
+
+  const sesiones = [{ id: 's1', desde: en(0) }, { id: 's2', desde: en(4210) }]
+  const m = metricasDelFlujo(raiz, en(0), { ...opciones(4500), sesiones })
+  assert.equal(m.sesiones, 2)
+  assert.equal(m.pedido, 'pedido original entero')
+  assert.equal(m.sesion, path.join(carpeta, 's2.jsonl'))
+  assert.equal(m.costo.roles.orquestador.pedidos, 5)
+  assert.deepEqual(m.costo.veredictos, { ejecutor: ['HECHO'], final: ['APROBADO'] })
+  // El corte es el hueco entre la última fila de A (600 s) y el /impl de B (4200 s): no cuenta como activo ni como espera.
+  assert.equal(m.tiempos.corte, 3600)
+  assert.equal(m.tiempos.activo, 600 + 200)
+  assert.ok(Math.abs(m.costo.minutos - (4500 - 3600) / 60) < 1e-9)
+  assert.equal(m.ejecutores[1].estado, 'HECHO')
+  // Sin las sesiones anotadas (un flujo de antes), lee solo la primera, como siempre.
+  const viejo = metricasDelFlujo(raiz, en(0), opciones(4500))
+  assert.equal(viejo.sesiones, 1)
+  assert.equal(viejo.tiempos.corte, undefined)
+})
+
 test('costos: problemasDe acepta viñetas y ruta:línea sin numeración', () => {
   assert.deepEqual(problemasDe('VEREDICTO: RECHAZADO\nPROBLEMAS:\n1. uno\n2) dos\nOBSERVACIONES: x'), ['uno', 'dos'])
   assert.deepEqual(problemasDe('PROBLEMAS:\n- a falla\n* b falla\n• c falla\nOBSERVACIONES:\n- no cuenta'), ['a falla', 'b falla', 'c falla'])

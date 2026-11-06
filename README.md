@@ -16,7 +16,7 @@ Los flujos son skills de Claude Code: solo corren cuando el usuario escribe el c
 
 | Comando | Para qué |
 |---|---|
-| `/impl <qué cambiar>` | Cambios con exploración, plan aprobado por el usuario, ejecución por subtareas, verificación real y revisión final independiente. |
+| `/impl <qué cambiar>` | Cambios con exploración, plan aprobado por el usuario, ejecución por subtareas, verificación real y revisión final independiente. Un flujo cortado (límite de uso, sesión cerrada, otra cuenta) se sigue con `/impl reanudar` sin perder lo hecho: el cierre suma todas sus sesiones en una sola fila del historial. |
 | `/commit [por qué]` | Separa los cambios sin commit en grupos lógicos y hace un commit en español por grupo. Pregunta si hacer commit + push, solo commit o commit en una rama nueva. Es el único camino para hacer commits: ningún flujo ni agente los hace por su cuenta. |
 | `/panel` · `/panel carpeta` | Panel de uso del mod; el segundo abre la carpeta del proyecto. |
 

@@ -36,7 +36,9 @@ Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases n
 
 ## Reglas comunes
 
-!`node "${CLAUDE_PLUGIN_ROOT}/herramientas/estado.mjs" --guia comun || echo "AVISO: no se pudo inyectar comun.md. Léelo con Read en ${CLAUDE_PLUGIN_ROOT}/herramientas/comun.md antes de seguir; en ese archivo, la variable CLAUDE_PLUGIN_ROOT es la carpeta que contiene herramientas/."`
+!`node "${CLAUDE_PLUGIN_ROOT}/herramientas/estado.mjs" --guia comun --parte 1 || echo "AVISO: no se pudo inyectar comun.md (§1 a §4). Léelo con Read en ${CLAUDE_PLUGIN_ROOT}/herramientas/comun.md, hasta «## 5.», antes de seguir; en ese archivo, la variable CLAUDE_PLUGIN_ROOT es la carpeta que contiene herramientas/."`
+
+!`node "${CLAUDE_PLUGIN_ROOT}/herramientas/estado.mjs" --guia comun --parte 2 || echo "AVISO: no se pudo inyectar comun.md (§5 a §7). Léelo con Read en ${CLAUDE_PLUGIN_ROOT}/herramientas/comun.md, desde «## 5.», antes de seguir; en ese archivo, la variable CLAUDE_PLUGIN_ROOT es la carpeta que contiene herramientas/."`
 
 ## Reglas del proyecto
 

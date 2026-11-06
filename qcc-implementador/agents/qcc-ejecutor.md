@@ -46,7 +46,7 @@ La guardia lo bloquea; si te bloquea, no lo rodees: anótalo en BLOQUEOS.
 - Nunca debilites, saltes (`.skip`, `.only`, `todo`, `xfail`…) ni borres un test para que pase. Si un test existente contradice la subtarea, `BLOQUEADO`.
 - Tests guardianes (los que vigilan reglas del repo): si fallan, arreglas el código, no el guardián, salvo que el plan lo diga.
 - Tipos: nunca silencies el sistema de tipos (`as any`, `@ts-ignore`, `# type: ignore`, `unsafe` sin necesidad). Si cambia el schema, actualizas los tipos a mano; regenerarlos contra un servicio queda para el usuario.
-- Mientras trabajas, corre solo el test puntual, sin watch, con la salida acotada a resumen y fallos por una tubería que oculte los tests que pasan (sin redirigirla a un archivo). Si el proyecto da un patrón, úsalo tal cual. Si las reglas del proyecto indican que la suite no se puede filtrar, no la corras aparte antes de `verificar.mjs`: ve directo a `verificar.mjs`, que ya la incluye (salvo con `LOTE: S<a>+S<b>`: ahí no corres `verificar.mjs` ni esa suite, ver «Verificación obligatoria»). Con la tubería el código de salida no es el de los tests: lee el resumen. Si un fallo no se entiende, repite solo ese test o archivo, nunca todo sin filtro.
+- Mientras trabajas, corre solo el test puntual, sin watch, con la salida acotada a resumen y fallos por una tubería que oculte los tests que pasan (sin redirigirla a un archivo). Si el proyecto da un patrón, úsalo tal cual. Si las reglas del proyecto indican que la suite no se puede filtrar, no la corras aparte antes de `verificar.mjs`: ve directo a `verificar.mjs`, que ya la incluye (salvo con `LOTE:`, de un lote o de una tanda: ahí no corres `verificar.mjs` ni esa suite, ver «Verificación obligatoria»). Con la tubería el código de salida no es el de los tests: lee el resumen. Si un fallo no se entiende, repite solo ese test o archivo, nunca todo sin filtro.
 
 ## Correcciones
 
@@ -64,13 +64,13 @@ Se aplica si el despacho trae `CORRECCIÓN`:
 
 - Un Edit por bloque contiguo, no uno por línea; Write para los archivos nuevos. Para mover bloques sin cambiarlos, `mover.mjs` (ver «Alcance»).
 - No releas un archivo después de editarlo: si un Edit falla, la herramienta lo dice.
-- Mientras iteras, solo el test puntual; `verificar.mjs` una sola vez al final (ver «Verificación obligatoria»), salvo con `LOTE: S<a>+S<b>`, donde no se corre.
+- Mientras iteras, solo el test puntual; `verificar.mjs` una sola vez al final (ver «Verificación obligatoria»), salvo con `LOTE:` (`S<a>+S<b>` o `G1+G2`), donde no se corre.
 
 ## Verificación obligatoria
 
-- `node "${CLAUDE_PLUGIN_ROOT}/herramientas/verificar.mjs"` tiene que terminar en `RESULTADO: VERDE`. Si sale ROJO, corriges y repites (con `LOTE:`, solo el ROJO de tus permitidos: ver abajo). Si no logras verde, `ESTADO: FALLA` con la salida. Córrelo sin tubería (su salida ya es corta) y con `timeout: 600000` en la llamada a Bash, también si tu cambio no toca código (imágenes, textos): el orquestador lo vuelve a correr sobre el mismo árbol, y tu VERDE le sale de la caché sin esperar. Si la suite no se puede filtrar (reglas del proyecto), este es tu primer y único comando de pruebas: no corras la suite aparte antes.
-- Con `LOTE: S<a>+S<b>` en el despacho (también en las correcciones en paralelo de un lote), no corres `verificar.mjs`: lo reemplaza el del orquestador cuando vuelve el lote, aunque las reglas del proyecto manden ir primero a `verificar.mjs`. Corres tus tests puntuales (acotados como en «Calidad»; incluye los de los archivos que tocaste y los de tu «Hecho cuando») y los comandos de tu «Hecho cuando», y reportas `VERIFICACIÓN: puntual (lote): <comandos con su exit>`. Si la suite que cubre tu cambio no se puede filtrar (reglas del proyecto), dilo y no la corras. Un «Hecho cuando» que pide `verificar.mjs` se reporta como «lo da el verificar.mjs del orquestador». Tu cambio sigue necesitando sus tests: esto solo quita el `verificar.mjs`.
-- Con `LOTE: G1+G2` (una tanda de correcciones de la revisión final) sí corres `verificar.mjs` como siempre, no la verificación puntual del punto anterior. Con `LOTE: S<a>+S<b>` o `LOTE: G1+G2`, otros ejecutores editan el mismo árbol a la vez (cada uno escribe su test en rojo primero, por ejemplo). Un ROJO de `verificar.mjs` en archivos fuera de tus ARCHIVOS PERMITIDOS es de otro miembro del lote (u otro grupo): no lo corriges, no lo tocas y no lo reportas como FALLA; anótalo en una línea (paso y archivos) en BLOQUEOS y reporta `ESTADO: HECHO` si lo tuyo está verde. El ROJO en tus propios permitidos sí lo corriges como siempre. El orquestador decide con el `verificar.mjs` que corre cuando vuelve todo el lote.
+- `node "${CLAUDE_PLUGIN_ROOT}/herramientas/verificar.mjs"` tiene que terminar en `RESULTADO: VERDE` (sin `LOTE:` en el despacho; con él, ver abajo). Si sale ROJO, corriges y repites. Si no logras verde, `ESTADO: FALLA` con la salida. Córrelo sin tubería (su salida ya es corta) y con `timeout: 600000` en la llamada a Bash, también si tu cambio no toca código (imágenes, textos): el orquestador lo vuelve a correr sobre el mismo árbol, y tu VERDE le sale de la caché sin esperar. Si la suite no se puede filtrar (reglas del proyecto), este es tu primer y único comando de pruebas: no corras la suite aparte antes.
+- Con `LOTE: S<a>+S<b>` en el despacho (también en las correcciones en paralelo de un lote) o `LOTE: G1+G2` (una tanda de correcciones de la revisión final), no corres `verificar.mjs`: lo reemplaza el del orquestador cuando vuelve el lote, aunque las reglas del proyecto manden ir primero a `verificar.mjs`. Corres tus tests puntuales (acotados como en «Calidad»; incluye los de los archivos que tocaste y los de tu «Hecho cuando») y los comandos de tu «Hecho cuando», y reportas `VERIFICACIÓN: puntual (lote): <comandos con su exit>`. Si la suite que cubre tu cambio no se puede filtrar (reglas del proyecto), dilo y no la corras. Un «Hecho cuando» que pide `verificar.mjs` se reporta como «lo da el verificar.mjs del orquestador». Tu cambio sigue necesitando sus tests: esto solo quita el `verificar.mjs`.
+- Con `LOTE:`, otros ejecutores editan el mismo árbol a la vez (cada uno escribe su test en rojo primero, por ejemplo). Un test puntual que falla por archivos fuera de tus ARCHIVOS PERMITIDOS es de otro miembro del lote (u otro grupo): no lo corriges, no lo tocas y no lo reportas como FALLA; anótalo en una línea (test y archivos) en BLOQUEOS y reporta `ESTADO: HECHO` si lo tuyo está verde. El fallo en tus propios permitidos sí lo corriges como siempre. El orquestador decide con el `verificar.mjs` que corre cuando vuelve todo el lote.
 - Si dice `RESULTADO: SIN PASOS`, corre los tests que cubren tu cambio, acotados como en «Calidad», y dilo en VERIFICACIÓN.
 - Nunca afirmes algo que no ejecutaste.
 
@@ -80,13 +80,12 @@ Antes de reportar, repasa tu diff contra Alcance, Calidad y Verificación de arr
 
 ## Reporte
 
-Solo esto, compacto: una línea por archivo en ARCHIVOS, una línea por ítem en CRITERIO y sin narrar lo que hiciste. Tope de ~25 líneas, salvo en FALLA o BLOQUEADO, donde puedes extenderte lo necesario:
+Solo esto, compacto y sin narrar lo que hiciste. Sin lista de archivos: qué cambió lo mide el orquestador con `--cambios`. Lo que las secciones de arriba te piden reportar en CRITERIO (mover.mjs, otros llamadores, sin segundo camino) va igual, una línea cada uno. Tope de ~25 líneas, salvo en FALLA o BLOQUEADO, donde puedes extenderte lo necesario:
 
 ```
 ESTADO: HECHO | BLOQUEADO | FALLA
-ARCHIVOS: ruta (nuevo|modificado|borrado) — qué, una línea c/u, ≤ 12 palabras
-VERIFICACIÓN: <solo la línea RESULTADO de verificar.mjs, sin la tabla> + otros comandos con su exit | puntual (lote): <comandos con su exit> (con LOTE: S<a>+S<b>)
-CRITERIO: <cada «hecho cuando» → sí/no, con evidencia en ≤ 12 palabras; en una corrección, también: test de reproducción falló antes → pasa; segundo camino → pasa>
+VERIFICACIÓN: <solo la línea RESULTADO de verificar.mjs, sin la tabla> + otros comandos con su exit | puntual (lote): <comandos con su exit> (con LOTE:)
+CRITERIO: <solo los «hecho cuando» en «no», uno por línea, con evidencia en ≤ 12 palabras | todos sí>; en una corrección, además estas dos líneas: test de reproducción falló antes → pasa; segundo camino → pasa
 BLOQUEOS: <guardia, NECESITA_ALCANCE, dudas | ninguno>
 ```
 

@@ -608,37 +608,37 @@ test('guardia: roles de lectura registran sin bloquear', () => {
   }
 })
 
-test('guardia: el explorador con más de 85k de contexto no lee más; los demás casos pasan', () => {
+test('guardia: el explorador con más de 90k de contexto no lee más; los demás casos pasan', () => {
   const raiz = repo('tope-contexto', { 'src/a.ts': 'a\n' })
   temporales.push(raiz)
   try {
     const leer = (rol, id, transcript_path) => hook(raiz, rol, { ...ev(raiz, 'Read', { file_path: path.join(raiz, 'src', 'a.ts') }), agent_id: id, transcript_path })
 
-    const alto = leer('explorador', 'ex-alto', transcriptConLineas('ex-alto', [{ type: 'user' }, turnoConUso(10_000), turnoConUso(90_000)]))
+    const alto = leer('explorador', 'ex-alto', transcriptConLineas('ex-alto', [{ type: 'user' }, turnoConUso(10_000), turnoConUso(95_000)]))
     const razon = JSON.parse(alto.stdout).hookSpecificOutput
     assert.equal(razon.permissionDecision, 'deny')
-    assert.ok(razon.permissionDecisionReason.includes('contexto del explorador en 90k (tope 85k)'))
+    assert.ok(razon.permissionDecisionReason.includes('contexto del explorador en 95k (tope 90k)'))
     assert.ok(!razon.permissionDecisionReason.includes('BLOQUEOS'))
     assert.equal(filasDe(raiz).at(-1).decision, 'negado')
-    assert.equal(filasDe(raiz).at(-1).motivo, 'contexto 90k')
+    assert.equal(filasDe(raiz).at(-1).motivo, 'contexto 95k')
 
     // También Glob y Grep.
-    const grep = hook(raiz, 'explorador', { ...ev(raiz, 'Grep', { pattern: 'x' }), agent_id: 'ex-alto', transcript_path: transcriptConLineas('ex-alto', [turnoConUso(90_000)]) })
+    const grep = hook(raiz, 'explorador', { ...ev(raiz, 'Grep', { pattern: 'x' }), agent_id: 'ex-alto', transcript_path: transcriptConLineas('ex-alto', [turnoConUso(95_000)]) })
     assert.equal(JSON.parse(grep.stdout).hookSpecificOutput.permissionDecision, 'deny')
 
-    const bajo = leer('explorador', 'ex-bajo', transcriptConLineas('ex-bajo', [turnoConUso(50_000)]))
+    const bajo = leer('explorador', 'ex-bajo', transcriptConLineas('ex-bajo', [turnoConUso(88_000)]))
     assert.equal(bajo.stdout, '')
     assert.equal(filasDe(raiz).at(-1).decision, 'lectura')
 
     assert.equal(leer('explorador', 'ex-sin', path.join(os.tmpdir(), 'no-existe', 'sesion.jsonl')).stdout, '', 'sin transcript')
-    assert.equal(leer('explorador', 'ex-roto', transcriptConLineas('ex-roto', [turnoConUso(90_000), '{no es json'])).stdout, '', 'JSON roto en la cola')
-    assert.equal(leer('explorador', '../x', transcriptConLineas('ex-alto', [turnoConUso(90_000)])).stdout, '', 'agent_id inválido')
-    assert.equal(leer('planificador', 'pl-alto', transcriptConLineas('pl-alto', [turnoConUso(90_000)])).stdout, '', 'el planificador no tiene tope')
+    assert.equal(leer('explorador', 'ex-roto', transcriptConLineas('ex-roto', [turnoConUso(95_000), '{no es json'])).stdout, '', 'JSON roto en la cola')
+    assert.equal(leer('explorador', '../x', transcriptConLineas('ex-alto', [turnoConUso(95_000)])).stdout, '', 'agent_id inválido')
+    assert.equal(leer('planificador', 'pl-alto', transcriptConLineas('pl-alto', [turnoConUso(95_000)])).stdout, '', 'el planificador no tiene tope')
 
     // Un transcript grande (la cola no empieza en una línea entera) sigue leyéndose.
     const relleno = 'x'.repeat(1000)
-    const grande = transcriptConLineas('ex-grande', [...Array.from({ length: 400 }, () => ({ type: 'user', message: { content: relleno } })), turnoConUso(95_000)])
-    assert.match(JSON.parse(leer('explorador', 'ex-grande', grande).stdout).hookSpecificOutput.permissionDecisionReason, /en 95k/)
+    const grande = transcriptConLineas('ex-grande', [...Array.from({ length: 400 }, () => ({ type: 'user', message: { content: relleno } })), turnoConUso(96_000)])
+    assert.match(JSON.parse(leer('explorador', 'ex-grande', grande).stdout).hookSpecificOutput.permissionDecisionReason, /en 96k/)
   } finally {
     borrarRegistro(raiz)
   }
@@ -918,7 +918,11 @@ test('ejecutor: estado.mjs con opciones que escriben el estado del flujo se nieg
     '--cambios --global',
     '--cambios abc --sub 3',
     '--guardar x plan --paso 4',
+    '--guardar x revision --paso 6',
     '--cancelar --paso 4',
+    '--tanda 2 --paso 6',
+    '--aprobado --paso 4',
+    '--reanudar --paso 0',
   ]) {
     niega(bash(R, `${E} ${args}`))
     niega(ps(R, `node C:/plugin/herramientas/estado.mjs ${args}`))
@@ -934,6 +938,7 @@ test('ejecutor: estado.mjs con opciones que escriben el estado del flujo se nieg
   deja(bash(R, 'node -e "console.log(1)" --base'))
   deja(bash(R, `${E} --externo 3 aprobado --paso 4`), 'orquestador')
   deja(bash(R, `${E} --base --sub 3`), 'orquestador')
+  deja(bash(R, `${E} --reanudar --paso 0`), 'orquestador')
 })
 
 test.after(() => limpiar(ESTRICTO, GENERICO))

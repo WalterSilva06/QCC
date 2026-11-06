@@ -515,6 +515,10 @@ function filasDeFlujos(raiz) {
 
 test('estado: filaDelFlujo omite lo que falta y arma subtareas, calidad y uso', () => {
   assert.deepEqual(filaDelFlujo({ t: 'T', raiz: 'R', base: 'B' }), { v: 2, t: 'T', raiz: 'R', base: 'B' })
+  // Un flujo reanudado anota cuántas sesiones sumó; una subtarea OMITIDA lo dice aunque su ejecutor volviera BLOQUEADO.
+  const reanudada = filaDelFlujo({ t: 'T', estado: { subtareas: [{ n: 1 }], avance: { 1: { estado: 'OMITIDA' } } }, metricas: { sesiones: 2, ejecutores: { 1: { estado: 'BLOQUEADO' } } } })
+  assert.equal(reanudada.sesiones, 2)
+  assert.equal(reanudada.subtareas[0].estado, 'OMITIDA')
   const roles = {
     orquestador: { pedidos: 2, usd: 1, sinPrecio: 0, agentes: 0, tokens: { entrada: 1, leidos: 2, escritos: 3, salida: 4, thinking: 5 } },
     ejecutor: { pedidos: 1, usd: 1, sinPrecio: 0, agentes: 1, tokens: { entrada: 10, leidos: 20, escritos: 30, salida: 40, thinking: 50 } },
@@ -850,6 +854,142 @@ test('estado: --cambios sigue perdonando la salida de un build sin agentes en pa
   const despues = lote.estado('--cambios', '--sub', '2,3').salida
   assert.match(despues, /^ {2}~ [AM] dist\/x\.js {3}← \(salida de verificar: build\)$/m)
   assert.match(despues, /^ALCANCE: OK$/m)
+})
+
+/** Escribe en `claude` el transcript de un subagente del proyecto `raiz` (sesión `sesion`): su despacho y su informe, con hora de ahora. */
+function subagente(claude, raiz, sesion, id, tipo, prompt, informe) {
+  const sub = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'), sesion, 'subagents')
+  fs.mkdirSync(sub, { recursive: true })
+  const t = new Date().toISOString()
+  fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ agentType: tipo }))
+  const filas = [
+    { type: 'user', timestamp: t, message: { role: 'user', content: prompt } },
+    { type: 'assistant', timestamp: t, message: { id: `m-${id}`, model: 'claude-sonnet-5-5', usage: { output_tokens: 1 }, content: [{ type: 'text', text: informe }] } },
+  ]
+  fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), filas.map((f) => JSON.stringify(f)).join('\n') + '\n')
+}
+
+test('estado: --reanudar sigue un flujo cortado sin vaciar su carpeta, en el paso y el lote donde quedó', () => {
+  const sin = { extra: '- Depende de: ninguna\n' }
+  const { raiz, entorno, estadoJson } = repoConPlanGuardado('reanudar', [
+    subtareaDePlan(1, 'src/a.ts', sin),
+    subtareaDePlan(2, 'src/b.ts', sin),
+    subtareaDePlan(3, 'src/c.ts', { extra: '- Depende de: S1, S2\n' }),
+  ])
+  const claude = entorno.CLAUDE_CONFIG_DIR
+  const carpeta = flujoDe(raiz)
+  const reanudar = () => estadoEn(raiz, ['--reanudar', '--paso', '0'], { ...entorno, CLAUDE_CODE_SESSION_ID: 'sesion-b' }).salida
+
+  // El candado con plan guardado ofrece reanudar; --forzar sigue empezando de cero (lo prueba el test del candado).
+  assert.match(estadoEn(raiz, ['--paso', '0'], entorno).salida, /^REANUDAR: estado\.mjs --reanudar --paso 0 sigue ese flujo sin vaciar su carpeta \(plan guardado, sin aprobar, 0\/3 subtareas terminadas\)$/m)
+
+  // Cortado antes de aprobar: sigue en la aprobación, con el PARA APROBAR del plan guardado.
+  const antes = reanudar()
+  assert.match(antes, /^SIGUE: paso 4 · aprobación del plan/m)
+  assert.match(antes, /^PARA APROBAR /m)
+
+  assert.match(estadoEn(raiz, ['--aprobado', '--ajustes', 'S2 sin tests nuevos', '--paso', '4'], entorno).salida, /^APROBADO: plan de 3 subtarea\(s\) · ajustes: anotados$/m)
+  // Cortado a mitad del lote 1 (foto tomada, ejecutores sin volver).
+  const foto = /^BASE=(\w+) DESDE=(\S+)$/m.exec(estadoEn(raiz, ['--base', '--sub', '1,2', '--paso', '5'], entorno).salida)
+  const enLote = reanudar()
+  assert.match(enLote, /^SIGUE: paso 5 · lote 1\/2 \(S1\+S2\)$/m)
+  assert.match(enLote, new RegExp(`^ {2}S1 · a medias \\(foto sin --cambios\\).* · FOTO BASE=${foto[1]} DESDE=${foto[2]}$`, 'm'))
+  assert.match(enLote, /^AJUSTES AL PLAN: S2 sin tests nuevos$/m)
+  assert.match(enLote, /^REANUDADO: sesión 3 del flujo/m)
+  assert.ok(fs.existsSync(path.join(carpeta, 'S1.md')), 'no vacía la carpeta')
+  assert.equal(estadoJson().en_curso, undefined)
+  assert.deepEqual(estadoJson().sesiones.map((s) => s.id ?? null).slice(1), ['sesion-b', 'sesion-b'])
+
+  // Vuelven: S1 HECHO y S2 FALLA. --cambios --sub anota el avance leyendo los ejecutores de los transcripts.
+  subagente(claude, raiz, 'sesion-b', 'e1', 'impl:qcc-ejecutor', 'SUBTAREA 1/3: Tarea 1', 'ESTADO: HECHO')
+  subagente(claude, raiz, 'sesion-b', 'e2', 'impl:qcc-ejecutor', 'SUBTAREA 2/3: Tarea 2', 'ESTADO: FALLA')
+  assert.match(estadoEn(raiz, ['--cambios', '--sub', '1,2', '--permitidos', 'src/extra.ts', '--paso', '5'], entorno).salida, /^AVANCE: S1 HECHO · S2 FALLA$/m)
+  const conFalla = reanudar()
+  assert.match(conFalla, /^SIGUE: paso 5 · lote 1\/2 \(S1\+S2\)$/m)
+  assert.match(conFalla, /^ {2}S2 · FALLA \(0 correcciones\) · FOTO /m)
+  assert.doesNotMatch(conFalla.split('PENDIENTES:')[1], /^ {2}S1 · /m)
+  assert.match(conFalla, /^PERMITIDOS AMPLIADOS: src\/extra\.ts$/m)
+
+  // La corrección de S2 vuelve HECHO: el lote 1 terminó y sigue el lote 2, sin empezar.
+  subagente(claude, raiz, 'sesion-b', 'e3', 'impl:qcc-ejecutor', 'SUBTAREA 2/3: Tarea 2\nCORRECCIÓN 1/2: corrige la causa', 'ESTADO: HECHO')
+  assert.match(estadoEn(raiz, ['--cambios', '--sub', '2', '--paso', '5'], entorno).salida, /^AVANCE: S1 HECHO · S2 HECHO$/m)
+  assert.equal(estadoJson().avance['2'].ciclos, 1)
+  const lote2 = reanudar()
+  assert.match(lote2, /^SIGUE: paso 5 · lote 2\/2 \(S3\)$/m)
+  assert.match(lote2, /^ {2}S3 · sin empezar$/m)
+
+  // «Seguir sin ella»: --omitida la da por terminada y sigue la revisión final.
+  estadoEn(raiz, ['--base', '--sub', '3', '--paso', '5'], entorno)
+  assert.match(estadoEn(raiz, ['--cambios', '--sub', '3', '--omitida', '--paso', '6'], entorno).salida, /^AVANCE: S3 OMITIDA$/m)
+  assert.match(reanudar(), /^SIGUE: paso 6 · revisión ciclo 1$/m)
+})
+
+test('estado: --reanudar en la revisión final da el ciclo que sigue y los PROBLEMAS literales', () => {
+  const { raiz, entorno } = repoConPlanGuardado('reanudar-revision', [subtareaDePlan(1, 'src/a.ts'), subtareaDePlan(2, 'src/b.ts')])
+  const claude = entorno.CLAUDE_CONFIG_DIR
+  const reanudar = () => estadoEn(raiz, ['--reanudar', '--paso', '6'], entorno).salida
+  estadoEn(raiz, ['--aprobado', '--paso', '4'], entorno)
+  for (const n of [1, 2]) {
+    estadoEn(raiz, ['--base', '--sub', String(n), '--paso', '5'], entorno)
+    subagente(claude, raiz, 's1', `e${n}`, 'impl:qcc-ejecutor', `SUBTAREA ${n}/2: x`, 'ESTADO: HECHO')
+    estadoEn(raiz, ['--cambios', '--sub', String(n), '--paso', '5'], entorno)
+  }
+  const reporte = 'VEREDICTO: RECHAZADO\nVERIFICACIÓN: orquestador · RESULTADO: VERDE\nCRITERIOS:\nS1 — ok\nS2 — no: falta el borde\nPROBLEMAS:\nsrc/b.ts:3 — sin borde — que lo maneje · repro: b(0) → lanza\nOBSERVACIONES: ninguna'
+  subagente(claude, raiz, 's1', 'rev1', 'impl:qcc-revisor', 'QUÉ REVISAR: cambio completo (2 subtarea(s))\nSALIDA DEL OWNER: sin ejecutar\nNO corras verificar.mjs.\nCRÍTICO: ninguno', reporte)
+  const guardada = estadoEn(raiz, ['--guardar', 'rev1', 'revision', '--paso', '6'], entorno).salida
+  const archivo = path.join(flujoDe(raiz), 'revision-1.md')
+  assert.equal(/^GUARDADO: revisión ciclo 1 \(RECHAZADO\) → (.*)$/m.exec(guardada)?.[1], archivo)
+  assert.equal(fs.readFileSync(archivo, 'utf8'), `${reporte}\n\nSALIDA DEL OWNER: sin ejecutar\n`)
+  // Volver a guardar el mismo agente no suma un ciclo.
+  assert.match(estadoEn(raiz, ['--guardar', 'rev1', 'revision', '--paso', '6'], entorno).salida, /^GUARDADO: revisión ciclo 1 /m)
+
+  // «sin criterios» da un solo ciclo: RECHAZADO en el ciclo 1 ya los agota y sigue el cierre DETENIDO.
+  assert.match(reanudar(), /^SIGUE: paso 7 · cierre DETENIDO:6 \(1 ciclo\(s\) de la revisión final agotados\)$/m)
+  const estadoJson = path.join(flujoDe(raiz), 'estado.json')
+  const e = JSON.parse(fs.readFileSync(estadoJson, 'utf8'))
+  fs.writeFileSync(estadoJson, JSON.stringify({ ...e, decisiones: { ...e.decisiones, ciclos: 'CICLOS DE LA REVISIÓN FINAL: 2' } }))
+  const sinTanda = reanudar()
+  assert.match(sinTanda, /^SIGUE: paso 6 · correcciones del ciclo 1 \(los PROBLEMAS de abajo\)$/m)
+  assert.ok(sinTanda.includes('  PROBLEMAS:\n  src/b.ts:3 — sin borde — que lo maneje · repro: b(0) → lanza\n'))
+  assert.ok(sinTanda.includes('  CRITERIOS:\n  S1 — ok\n  S2 — no: falta el borde\n'))
+  assert.match(sinTanda, /^ {2}SALIDA DEL OWNER: sin ejecutar$/m)
+
+  // Con la tanda abierta y sus ejecutores sin volver, la tanda está a medias; con los dos de vuelta, sigue el ciclo 2.
+  const tanda = /^BASE=(\w+)$/m.exec(estadoEn(raiz, ['--tanda', '2', '--paso', '6'], entorno).salida)[1]
+  const aMedias = reanudar()
+  assert.match(aMedias, /^SIGUE: paso 6 · correcciones del ciclo 1 \(tanda a medias: 0\/2 volvieron\)$/m)
+  assert.match(aMedias, new RegExp(`^ {2}TANDA DEL CICLO 1: BASE=${tanda} `, 'm'))
+  for (const g of [1, 2]) subagente(claude, raiz, 's1', `g${g}`, 'impl:qcc-ejecutor', `SUBTAREA: correcciones de la revisión final\nGRUPO: ${g}/2\nCORRECCIÓN 1/2: x`, 'ESTADO: HECHO')
+  const ciclo2 = reanudar()
+  assert.match(ciclo2, /^SIGUE: paso 6 · revisión ciclo 2 /m)
+  assert.ok(ciclo2.includes('src/b.ts:3 — sin borde'))
+  assert.match(ciclo2, new RegExp(`TANDA DEL CICLO 1: BASE=${tanda}`))
+
+  // Con la revisión APROBADO, el cierre; sin flujo o ya cerrado, --reanudar no tiene qué seguir.
+  subagente(claude, raiz, 's1', 'rev2', 'impl:qcc-revisor', 'QUÉ REVISAR: cambio completo', 'VEREDICTO: APROBADO\nOBSERVACIONES: ninguna')
+  assert.match(estadoEn(raiz, ['--guardar', 'rev2', 'revision', '--paso', '6'], entorno).salida, /^GUARDADO: revisión ciclo 2 \(APROBADO\)/m)
+  assert.match(reanudar(), /^SIGUE: paso 7 · cierre/m)
+  estadoEn(raiz, ['--cambios', '--global', '--paso', '7', '--resultado', 'COMPLETO'], entorno)
+  const cerrado = estadoEn(raiz, ['--reanudar'], entorno)
+  assert.equal(cerrado.codigo, 2)
+  assert.match(cerrado.salida, /^ERROR: el flujo ya cerró/m)
+  assert.ok(fs.readdirSync(path.join(path.dirname(flujoDe(raiz)), 'historial')).some((d) => fs.existsSync(path.join(path.dirname(flujoDe(raiz)), 'historial', d, 'revision-2.md'))))
+})
+
+test('estado: --guardar plan con más de 20 subtareas da un PARA APROBAR compacto y una salida bajo 30.000 caracteres', () => {
+  const como = { extra: `- Cómo: ${'cambia la función con cuidado y revisa los llamadores '.repeat(4)}\n` }
+  const largo = repoConPlanGuardado('aprobar-largo', Array.from({ length: 60 }, (_, i) => subtareaDePlan(i + 1, `src/f${i + 1}.ts`, como)))
+  assert.ok(largo.salida.length < 30_000, `salida de ${largo.salida.length} caracteres`)
+  const bloque = /^PARA APROBAR [^\n]*\n([\s\S]*?)\nFIN PARA APROBAR$/m.exec(largo.salida)[1]
+  assert.doesNotMatch(bloque, /Cómo/)
+  assert.match(bloque, /^S7 · Tarea 7 · Crítica: no · Depende de: \(la anterior\) · permitidos: src\/f7\.ts$/m)
+  assert.equal((bloque.match(/^S\d+ · /gm) ?? []).length, 60)
+  assert.doesNotMatch(largo.salida, /→ .*S7\.md$/m)
+  assert.match(largo.salida, /^SUBTAREAS: 60 → /m)
+  // Con 20 o menos, el bloque de siempre (con «Cómo») y una línea de resumen por subtarea.
+  const corto = repoConPlanGuardado('aprobar-corto', Array.from({ length: 20 }, (_, i) => subtareaDePlan(i + 1, `src/f${i + 1}.ts`, como)))
+  assert.match(/^PARA APROBAR [^\n]*\n([\s\S]*?)\nFIN PARA APROBAR$/m.exec(corto.salida)[1], /^- Cómo: /m)
+  assert.match(corto.salida, /→ .*S7\.md$/m)
 })
 
 test.after(() => limpiar())

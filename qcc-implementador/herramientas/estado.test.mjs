@@ -331,6 +331,20 @@ test('estado --guia: comun.md y pasos.md salen con ${CLAUDE_PLUGIN_ROOT} resuelt
     assert.equal(r.status, 2)
     assert.match(r.stdout, /^ERROR: --guia pide comun o pasos/)
   }
+  // comun.md en dos partes, cortada en «## 5.»: cada una bajo los 30.000 caracteres que Claude Code inyecta sin guardar aparte, y juntas, la guía entera.
+  const guia = (...args) => spawnSync(process.execPath, [ESTADO, '--guia', ...args], { encoding: 'utf8' })
+  const [entera, uno, dos] = [guia('comun'), guia('comun', '--parte', '1'), guia('comun', '--parte', '2')]
+  for (const r of [uno, dos]) {
+    assert.equal(r.status, 0)
+    assert.ok(r.stdout.length < 30_000, `parte de ${r.stdout.length} caracteres`)
+  }
+  assert.match(dos.stdout, /^## 5\./)
+  assert.equal(uno.stdout + dos.stdout, entera.stdout)
+  assert.equal(opcionesDe(['--guia', 'comun', '--parte', '2']).parte, '2')
+  for (const mala of [['comun', '--parte', '3'], ['pasos', '--parte', '1']]) {
+    assert.equal(guia(...mala).status, 2)
+    assert.match(guia(...mala).stdout, /^ERROR: --parte vale solo con --guia comun y es 1 o 2/)
+  }
 })
 
 test('preflight: la verificación inicial en segundo plano llega a --estado como VERDE', () => {
