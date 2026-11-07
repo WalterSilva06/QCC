@@ -531,10 +531,10 @@ export function permitidosDeSubtarea(lineas, n) {
   return { permitidos, avisos }
 }
 
-const RE_PARECE_EXTERNA =/\blocalhost\b|\bcurl\b|--env-file|\bservidor\b|\bdeploy\b|--linked/i
+const RE_PARECE_EXTERNA =/\blocalhost\b|--env-file|\bservidor\b|\bdeploy\b|--linked/i
 const RE_GET_POST = /\b(?:GET|POST)\s+a\b/
 
-/** Lo que de «Hecho cuando», «Tests» y «Riesgos» sugiere un servicio vivo o la red (localhost, curl, GET/POST a, --env-file, servidor, deploy, --linked); null si nada. */
+/** Lo que de «Hecho cuando», «Tests» y «Riesgos» sugiere un servicio vivo o la red (localhost, GET/POST a, --env-file, servidor, deploy, --linked); null si nada. */
 export function parecenExternas(lineas) {
   const texto = ['Hecho cuando', 'Tests', 'Riesgos'].map((c) => bloqueDe(lineas, c)).join('\n')
   return RE_PARECE_EXTERNA.exec(texto)?.[0] ?? RE_GET_POST.exec(texto)?.[0] ?? null

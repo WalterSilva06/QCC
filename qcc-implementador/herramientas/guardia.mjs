@@ -193,6 +193,7 @@ const SCRIPTS_NEGADOS_BASE = [
   'deploy', 'deploy:*', 'release', 'release:*', 'publish', 'publish:*',
 ]
 
+// Los subagentes no llaman servicios. Excepción: el ejecutor lee http(s) con curl, wget, iwr e irm (evaluarLecturaRed).
 const RED = 'red: los subagentes no llaman servicios'
 const EXTERNO = 'servicio externo, nube o despliegue: queda para el usuario'
 const EXTERNOS_BASE = {
@@ -1018,6 +1019,142 @@ function esPlaywright(prog, args) {
   return primeroEsPlaywright(args.slice(1))
 }
 
+// ── Red de solo lectura: curl, wget, iwr e irm (solo el ejecutor) ──
+
+const RED_PROGS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod'])
+const INTERPRETES = new Set([
+  'bash', 'sh', 'zsh', 'dash', 'ksh', 'pwsh', 'powershell', 'cmd', 'node', 'python', 'python3', 'py', 'perl', 'ruby', 'php',
+  'deno', 'bun', 'eval', 'source', '.', 'iex', 'invoke-expression',
+])
+const RE_IEX = /(^|[\s(;|&{'"`])(iex|invoke-expression)(?![\w-])/i
+const RE_RED = /(^|[\s(;|&{'"`$])(curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)(?![\w-])/i
+const URL_HTTP = /^https?:\/\/\S+$/i
+const motivoRed = (por) => `red: el ejecutor solo lee (GET/HEAD a http(s), sin cuerpo, subida ni escritura fuera de un temporal): ${por}`
+
+/** ¿Un comando de red convive con un intérprete (`curl … | sh`, `iex (irm …)`, `iex(irm …)`)? Solo el ejecutor puede leer de la red. */
+function bajaYEjecuta(cmd, simples, ctx) {
+  if (ctx.rol !== 'ejecutor') return false
+  const progs = simples.map((s) => nombreProg(sinPrefijos(s.palabras)[0] ?? ''))
+  const red = progs.some((p) => RED_PROGS.has(p))
+  return (red && progs.some((p) => INTERPRETES.has(p))) || (RE_IEX.test(cmd) && (red || RE_RED.test(cmd)))
+}
+
+/** Destino de una descarga: el dispositivo nulo, `-` (stdout, si `stdout`) o un temporal fuera del repo. */
+function salidaRed(ruta, ctx, stdout) {
+  if (/^(\/dev\/null|nul|\$null)$/i.test(ruta) || (stdout && ruta === '-')) return null
+  if (ruta && !ruta.includes('\u0000') && temporal(ruta, ctx)) return null
+  return motivoRed(`escribir en ${ruta || '?'} (solo a un temporal; al repo, con Edit o Write)`)
+}
+
+const CURL = {
+  cortas: new Set('sSLIikfgNv46Vh'),
+  cortasValor: { H: 'header', A: 'user-agent', e: 'referer', m: 'max-time', w: 'write-out', X: 'request', r: 'range', o: 'output', D: 'dump-header' },
+  largas: new Set([
+    'silent', 'show-error', 'location', 'head', 'include', 'insecure', 'fail', 'fail-with-body', 'globoff', 'no-buffer', 'ipv4',
+    'ipv6', 'verbose', 'version', 'help', 'compressed', 'http1.1', 'http2', 'no-progress-meter', 'progress-bar', 'raw',
+  ]),
+  largasValor: new Set([
+    'header', 'user-agent', 'referer', 'max-time', 'connect-timeout', 'retry', 'retry-delay', 'retry-max-time', 'write-out',
+    'request', 'range', 'max-redirs', 'url', 'output', 'dump-header',
+  ]),
+}
+const WGET = {
+  cortas: new Set('qvSh46V'),
+  cortasValor: { O: 'output-document', T: 'timeout', t: 'tries', U: 'user-agent' },
+  largas: new Set(['quiet', 'verbose', 'no-verbose', 'server-response', 'spider', 'no-check-certificate', 'no-cache', 'no-cookies', 'version', 'help']),
+  largasValor: new Set(['output-document', 'timeout', 'tries', 'user-agent', 'header', 'max-redirect']),
+}
+
+/**
+ * Recorre los args de curl o wget con la lista blanca `spec`: solo opciones conocidas (lo dudoso se niega), las cortas juntas
+ * letra a letra (`-sSLo f`, `-XPOST`: la letra que toma valor se lleva el resto del grupo o la palabra siguiente) y solo URL http(s).
+ * Anota en `vistas` las opciones con valor y las largas que vio. Devuelve el motivo para negar, o null.
+ */
+function recorrerRed(args, ctx, spec, vistas) {
+  const toma = (nombre, valor) => {
+    vistas.add(nombre)
+    if (valor === undefined) return motivoRed(`${nombre} sin valor`)
+    if (nombre === 'request' && !/^(GET|HEAD)$/i.test(valor)) return motivoRed(`-X ${valor}`)
+    if (['output', 'dump-header', 'output-document'].includes(nombre)) return salidaRed(valor, ctx, true)
+    if (nombre === 'url' && !URL_HTTP.test(valor)) return motivoRed(`${valor}: solo URL http(s)`)
+    return null
+  }
+  let soloUrls = false
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k]
+    let m = null
+    if (soloUrls || a === '-' || !a.startsWith('-')) m = URL_HTTP.test(a) ? null : motivoRed(`${a}: solo URL http(s)`)
+    else if (a === '--') soloUrls = true
+    else if (a.startsWith('--')) {
+      const i = a.indexOf('=')
+      const nombre = i < 0 ? a.slice(2) : a.slice(2, i)
+      if (spec.largas.has(nombre)) vistas.add(nombre)
+      else if (spec.largasValor.has(nombre)) m = toma(nombre, i < 0 ? args[++k] : a.slice(i + 1))
+      else m = motivoRed(`--${nombre} no está permitida`)
+    } else {
+      for (let j = 1; j < a.length; j++) {
+        if (spec.cortas.has(a[j])) continue
+        const nombre = Object.hasOwn(spec.cortasValor, a[j]) ? spec.cortasValor[a[j]] : null
+        m = nombre ? toma(nombre, a.length > j + 1 ? a.slice(j + 1) : args[++k]) : motivoRed(`-${a[j]} no está permitida`)
+        break
+      }
+    }
+    if (m) return m
+  }
+  return null
+}
+
+// Parámetros de Invoke-WebRequest e Invoke-RestMethod: los comunes, para que una abreviatura ambigua se niegue.
+const PS_INTERRUPTORES = ['UseBasicParsing', 'SkipCertificateCheck', 'SkipHttpErrorCheck', 'AllowInsecureRedirect', 'DisableKeepAlive', 'NoProxy', 'SkipHeaderValidation', 'PassThru', 'Verbose', 'Debug']
+const PS_VALOR = ['Uri', 'Method', 'OutFile', 'Headers', 'UserAgent', 'TimeoutSec', 'MaximumRedirection', 'MaximumRetryCount', 'RetryIntervalSec', 'ErrorAction']
+const PS_PELIGRO = [
+  'Body', 'InFile', 'Form', 'Resume', 'CustomMethod', 'Credential', 'Authentication', 'Token', 'Proxy', 'ProxyCredential', 'ProxyUseDefaultCredentials',
+  'WebSession', 'SessionVariable', 'ContentType', 'TransferEncoding', 'AllowUnencryptedAuthentication', 'Certificate', 'CertificateThumbprint',
+  'SslProtocol', 'PreserveAuthorizationOnRedirect', 'UseDefaultCredentials', 'HttpVersion', 'ResponseHeadersVariable', 'StatusCodeVariable',
+  'WarningAction', 'InformationAction', 'ProgressAction', 'ErrorVariable', 'WarningVariable', 'InformationVariable', 'OutVariable', 'OutBuffer',
+  'PipelineVariable', 'WhatIf', 'Confirm', 'Key',
+]
+const PS_TODOS = [...PS_INTERRUPTORES, ...PS_VALOR, ...PS_PELIGRO]
+
+/** `iwr`, `irm` e `Invoke-*`: parámetros sin mayúsculas y por prefijo (`-Meth`); una abreviatura ambigua o desconocida se niega. */
+function evaluarWebPS(args, ctx) {
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k]
+    if (!/^-[A-Za-z]/.test(a)) {
+      if (!URL_HTTP.test(a)) return motivoRed(`${a}: solo URL http(s)`)
+      continue
+    }
+    const c = a.indexOf(':')
+    const p = (c < 0 ? a.slice(1) : a.slice(1, c)).toLowerCase()
+    const prefijados = PS_TODOS.filter((n) => n.toLowerCase().startsWith(p))
+    const nombre = PS_TODOS.find((n) => n.toLowerCase() === p) ?? (prefijados.length === 1 ? prefijados[0] : null)
+    if (!nombre) return motivoRed(`${a}: parámetro desconocido o ambiguo`)
+    if (PS_INTERRUPTORES.includes(nombre)) continue
+    if (!PS_VALOR.includes(nombre)) return motivoRed(`-${nombre} puede enviar, subir o escribir`)
+    const valor = c < 0 ? args[++k] : a.slice(c + 1)
+    if (valor === undefined) return motivoRed(`-${nombre} sin valor`)
+    if (nombre === 'Method' && !/^(get|head)$/i.test(valor)) return motivoRed(`-Method ${valor}`)
+    if (nombre === 'Uri' && !URL_HTTP.test(valor)) return motivoRed(`${valor}: solo URL http(s)`)
+    if (nombre === 'OutFile') {
+      const m = salidaRed(valor, ctx, false)
+      if (m) return m
+    }
+  }
+  return null
+}
+
+/** Motivo para negar un curl, wget, iwr o irm del ejecutor, o null si solo lee. */
+function evaluarLecturaRed(prog, args, ctx) {
+  if (prog === 'curl') return recorrerRed(args, ctx, CURL, new Set())
+  if (prog === 'wget') {
+    const vistas = new Set()
+    const m = recorrerRed(args, ctx, WGET, vistas)
+    if (m) return m
+    return vistas.has('spider') || vistas.has('output-document') ? null : motivoRed('wget sin -O ni --spider escribe en la carpeta actual')
+  }
+  return evaluarWebPS(args, ctx)
+}
+
 function evaluarSimple(simple, ctx) {
   const palabras = simple.palabras.map((w) => expandir(w, ctx))
   const redirs = simple.redirs.map((r) => ({ ...r, objetivo: expandir(r.objetivo, ctx) }))
@@ -1091,6 +1228,8 @@ function evaluarSimple(simple, ctx) {
     const bin = args[binDeNpx(args)]
     return `npx puede descargar y ejecutar paquetes: usa \`${config.pm === 'npm' ? 'npm exec --no --' : `${config.pm} exec`} ${bin ?? '<bin>'}\``
   }
+  // Red de solo lectura: solo el ejecutor y solo si el proyecto no redefinió el programa (como `npx`).
+  if (ctx.rol === 'ejecutor' && RED_PROGS.has(prog) && config.externos[prog] === RED) return evaluarLecturaRed(prog, args, ctx)
   if (Object.hasOwn(config.externos, prog)) return config.externos[prog]
   if (prog === 'git') return evaluarGit(args, ctx)
   if (GESTORES.has(prog)) return evaluarGestor(prog, args, ctx)
@@ -1181,7 +1320,9 @@ export function regexDeExterno(comando) {
 
 /** Motivo para negar el comando completo, o null. `ctx`: { rol, raiz, cwd, powershell, externos }. */
 export function evaluarCadena(cmd, ctx) {
-  for (const simple of analizar(cmd, { powershell: ctx.powershell })) {
+  const simples = analizar(cmd, { powershell: ctx.powershell })
+  if (bajaYEjecuta(cmd, simples, ctx)) return 'red: bajar algo y ejecutarlo en el mismo comando no se permite (`curl … | sh`, `iex (irm …)`)'
+  for (const simple of simples) {
     const m = evaluarSimple(simple, ctx)
     if (m) return m
     anotarVariables(simple, ctx)

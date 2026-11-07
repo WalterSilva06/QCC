@@ -28,6 +28,8 @@ El nombre viejo `.claude/implementador.json` sigue valiendo de respaldo.
     // prisma/migrations/ y db/migrate/).
     "inmutables": ["migrations/"],
     // Programas negados, con el motivo (se suman a los CLIs de nube, deploy y red).
+    // Redefinir curl, wget, iwr o irm aquí los mantiene negados al ejecutor (por defecto
+    // lee con GET o HEAD a http(s)).
     "externos": { "deno": "las Edge Functions se despliegan a mano" },
     // Scripts del gestor JS negados (se suman a dev, start, serve, preview, watch, deploy,
     // release y publish, con sus variantes `nombre:*`).
