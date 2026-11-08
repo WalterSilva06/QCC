@@ -36,6 +36,39 @@ export function barraTramos(parte: number, flujo: number, sub: number, ancho: nu
   return { principal: b.principal.slice(celdasFlujo), flujo: '█'.repeat(celdasFlujo), sub: b.sub, vacio: b.vacio }
 }
 
+/** Un trozo de barra ya dibujado: su texto y su color. */
+export type TrozoBarra = { texto: string; color: string }
+
+/** Celdas que ocupa la chispa de `conOnda`: la cabeza y su estela. */
+const LARGO_ONDA = 3
+
+/**
+ * La onda que recorre una barra mientras su fila consume tokens: una chispa avanza una celda por `fase`
+ * de punta a punta, sobre lo lleno y lo vacío, sale por el final y vuelve a empezar. La cabeza es `█` en
+ * `cabeza` y la estela `▓▒` en `estela`. Devuelve los trozos con la chispa encima, unidos por color (`unirPorColor`).
+ */
+export function conOnda(trozos: readonly TrozoBarra[], fase: number, cabeza: string, estela: string): TrozoBarra[] {
+  const celdas = trozos.flatMap(t => [...t.texto].map(texto => ({ texto, color: t.color })))
+  const pos = ((fase % (celdas.length + LARGO_ONDA)) + celdas.length + LARGO_ONDA) % (celdas.length + LARGO_ONDA)
+  for (let i = 0; i < LARGO_ONDA; i++) {
+    if (pos - i >= 0 && pos - i < celdas.length) celdas[pos - i] = { texto: '█▓▒'[i], color: i === 0 ? cabeza : estela }
+  }
+
+  return unirPorColor(celdas)
+}
+
+/** Une los trozos seguidos del mismo color y quita los vacíos. */
+export function unirPorColor(trozos: readonly TrozoBarra[]): TrozoBarra[] {
+  const unidos: TrozoBarra[] = []
+  for (const c of trozos.filter(x => x.texto !== '')) {
+    const ultimo = unidos[unidos.length - 1]
+    if (ultimo?.color === c.color) ultimo.texto += c.texto
+    else unidos.push({ ...c })
+  }
+
+  return unidos
+}
+
 /**
  * El desglose de una fila por tramos: «directo 6,4M · orquestador 3,5M · sub 3M», sin los tramos en 0.
  * Sin flujo ni sub, vacío. Si no cabe en `ancho` (mínimo 1) quita los espacios y, si aún no cabe, recorta con «…».

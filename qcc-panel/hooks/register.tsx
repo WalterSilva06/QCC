@@ -52,6 +52,7 @@ import {
   aDesglose,
   barra,
   barraTramos,
+  conOnda,
   cuando,
   cuotaUsado,
   desgloseTramos,
@@ -75,13 +76,16 @@ import {
   tonoCompactacion,
   totalConSalida,
   tramos,
+  unirPorColor,
 } from './formato'
+import type { TrozoBarra } from './formato'
 import {
   PREFIJO,
   RETENCION_MS,
   anotar,
   clave,
   comoRegistro,
+  estadoActividad,
   estadoDeFila,
   etiquetaDia,
   familia,
@@ -105,6 +109,8 @@ const MARCO = 4
 const COLUMNAS_APERTURA = 48
 const TICK_MS = 30_000
 const SCROLL_MS = 150
+/** Cada cuánto avanza una celda la onda de las barras de «Esta sesión» con una petición en curso. */
+const ONDA_MS = 120
 
 /** `key` de la fila de pestañas, para apuntarle con `$.ui.scroll` al cambiar de pestaña. */
 const CLAVE_PESTANAS = 'pestanas'
@@ -128,6 +134,7 @@ const cache = atom({ plugin: 'panel', key: 'cache' } as const, null)
 const avisoContexto = atom({ plugin: 'panel', key: 'avisoContexto' } as const, 0)
 const agentes = atom({ plugin: 'panel', key: 'agentes' } as const, [])
 const archivos = atom({ plugin: 'panel', key: 'archivos' } as const, [])
+const fase = atom({ plugin: 'panel', key: 'fase' } as const, 0)
 
 /** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
@@ -741,6 +748,15 @@ export const register: Register = on => {
       void detectarInstalados($)
     })
 
+    // La onda solo avanza (y redibuja) mientras alguna fila tiene una petición en curso; en reposo no hace nada.
+    $.clock.every(ONDA_MS, () => {
+      void (async () => {
+        const act = (await read($, actividad)) ?? {}
+        const t = await $.clock.now()
+        if (Object.keys(act).some(id => estadoActividad(act, id, t) === 'activo')) await update($, fase, n => (n ?? 0) + 1)
+      })().catch(() => undefined)
+    })
+
     try {
       // Tras `/reload-plugins` el panel puede seguir con el dibujo anterior y sus botones sin efecto.
       $.ui.invalidate('ui.render')
@@ -1097,6 +1113,7 @@ export const register: Register = on => {
     const ags = (await read($, agentes)) ?? []
     const arcs = (await read($, archivos)) ?? []
     await read($, ahora)
+    const paso = (await read($, fase)) ?? 0
     const t = await $.clock.now()
 
     // Qué se muestra según los implementadores instalados; la evidencia de uso gana sobre un «no está».
@@ -1112,32 +1129,24 @@ export const register: Register = on => {
     const anchoBarraDia = Math.max(1, ancho - 6 - 1 - 7)
     const maxDia = (s: Semana) => Math.max(1, ...s.dias.map(x => x.total))
 
-    /** La barra de una fila con flujo o subagentes: un `Text` por tramo (principal, flujo, subagente y vacío), sin los vacíos. */
-    const barraConTramos = (parte: number, flujo: number, sub: number, anchoBarra: number) => {
+    /**
+     * La barra de una fila: un `Text` por tramo (principal, flujo, subagente y vacío), sin los vacíos.
+     * Con `activa` (petición en curso) la recorre la onda de `conOnda`, que avanza con el atom `fase`.
+     */
+    const barraConTramos = (parte: number, flujo: number, sub: number, anchoBarra: number, activa: boolean) => {
       const b = barraTramos(parte, flujo, sub, anchoBarra)
-
-      return [
-        b.principal !== '' && (
-          <Text key="principal" color="claude">
-            {b.principal}
-          </Text>
-        ),
-        b.flujo !== '' && (
-          <Text key="flujo" color={COLOR_FLUJO}>
-            {b.flujo}
-          </Text>
-        ),
-        b.sub !== '' && (
-          <Text key="sub" color={COLOR_SUB}>
-            {b.sub}
-          </Text>
-        ),
-        b.vacio !== '' && (
-          <Text key="vacio" color="claude">
-            {b.vacio}
-          </Text>
-        ),
+      const trozos: TrozoBarra[] = [
+        { texto: b.principal, color: 'claude' },
+        { texto: b.flujo, color: COLOR_FLUJO },
+        { texto: b.sub, color: COLOR_SUB },
+        { texto: b.vacio, color: 'claude' },
       ]
+
+      return (activa ? conOnda(trozos, paso, 'text', 'claudeShimmer') : unirPorColor(trozos)).map((x, i) => (
+        <Text key={`trozo-${i}`} color={x.color}>
+          {x.texto}
+        </Text>
+      ))
     }
 
     /**
@@ -1213,15 +1222,12 @@ export const register: Register = on => {
                       <Text dimColor>{tokens(f.salida).padStart(7)}</Text>
                     </Box>
                     <Box>
-                      {(f.sub ?? 0) > 0 || (f.flujo ?? 0) > 0 ? (
-                        barraConTramos(
-                          parte,
-                          ((f.flujo ?? 0) / s.total) * 100,
-                          ((f.sub ?? 0) / s.total) * 100,
-                          Math.max(1, ancho - 7),
-                        )
-                      ) : (
-                        <Text color="claude">{barra(parte, Math.max(1, ancho - 7))}</Text>
+                      {barraConTramos(
+                        parte,
+                        ((f.flujo ?? 0) / s.total) * 100,
+                        ((f.sub ?? 0) / s.total) * 100,
+                        Math.max(1, ancho - 7),
+                        conActividad && estadoDeFila(act, idsDeActividad(f), t) === 'activo',
                       )}
                       <Text dimColor>{pct(parte).padStart(7)}</Text>
                     </Box>

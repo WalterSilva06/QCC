@@ -289,6 +289,8 @@ declare module 'claude-code' {
       medida: Medida | null
       esfuerzo: Esfuerzo | null
       ahora: number
+      /** Paso de la onda de las barras de «Esta sesión»; solo avanza con una petición en curso. */
+      fase?: number
       desglose: Desglose | null
       precisando: boolean
       semana: Semana | null
