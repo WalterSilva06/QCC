@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
+import type { Color, EngineInterface, Register, SessionContextUsage, SessionRateLimit, TurnStepResult } from 'claude-code'
 
 import type { Actividad, Esfuerzo, FilaSemana, Flujo, Medida, Pestana, Semana } from '../types'
 import {
@@ -99,8 +99,10 @@ import type { NivelEsfuerzo, Registro, Uso } from './semana'
 
 const PANEL = 'qcc-panel'
 const COLUMNAS = 40
-/** Columnas que pide al abrirse: el marco del dock se lleva algunas y los cuatro botones de las pestañas (38) tienen que caber en el cuerpo. */
-const COLUMNAS_APERTURA = 44
+/** Columnas que se lleva cada tarjeta: el borde (1 + 1) y el hueco interior (1 + 1). */
+const MARCO = 4
+/** Columnas que pide al abrirse: el marco del dock se lleva algunas y el interior de las tarjetas tiene que quedar en `COLUMNAS`. */
+const COLUMNAS_APERTURA = 48
 const TICK_MS = 30_000
 const SCROLL_MS = 150
 
@@ -129,6 +131,9 @@ const archivos = atom({ plugin: 'panel', key: 'archivos' } as const, [])
 
 /** Color de cada ■ de «Esta sesión» según el estado de su origen (el del principal y el del subagente pueden diferir). */
 const COLOR_ACTIVIDAD = { activo: 'success', espera: 'warning', inactivo: 'subtle' } as const
+
+/** El estado de toda la sesión en la cabecera del panel: el de la fila más activa de «Esta sesión». */
+const TEXTO_ACTIVIDAD = { activo: '● trabajando', espera: '◐ esperando', inactivo: '○ en reposo' } as const
 
 /** La pestaña abierta. Fuera del prefijo `uso:`: la poda y la suma de la semana no la tocan. Las claves viejas (`prefs:semana`, `prefs:flujo`, `prefs:historial`) se ignoran. */
 const PREF_PESTANA = 'prefs:pestana'
@@ -1099,7 +1104,9 @@ export const register: Register = on => {
     // Una pestaña oculta dibuja «Inicio»; la preferencia guardada no se borra. «Agentes» solo existe con algún agente anotado.
     const pest = pestanaValida(pestGuardada, { ...vista, agentes: ags.length > 0 })
 
-    const ancho = Math.max(6, Math.min(40, e.props.bodyColumns))
+    // Todo va en tarjetas con borde: lo de dentro mide el cuerpo menos el marco.
+    const interior = Math.max(1, e.props.bodyColumns - MARCO)
+    const ancho = Math.max(6, Math.min(40, interior))
 
     // Fila de un día: etiqueta (6) + espacio (1) + barra + total (7) = `ancho`.
     const anchoBarraDia = Math.max(1, ancho - 6 - 1 - 7)
@@ -1160,13 +1167,13 @@ export const register: Register = on => {
       const anchoSufijo =
         conActividad && s !== null ? Math.max(0, ...s.filas.map(f => ' ■ x'.length + String(enCurso(f)).length)) : 0
       const etiquetas =
-        s !== null ? etiquetasAlineadas(s.filas, Math.max(1, e.props.bodyColumns - COLUMNAS_CIFRAS - anchoSufijo)) : []
+        s !== null ? etiquetasAlineadas(s.filas, Math.max(1, interior - COLUMNAS_CIFRAS - anchoSufijo)) : []
 
       return (
         <Box key={`tabla-${prefijo}`} flexDirection="column" marginTop={prefijo === 'n' ? 0 : 1}>
           <Box>
             <Box flexGrow={1}>
-              {cabecera ?? <Text bold>{titulo}</Text>}
+              {cabecera ?? <Text bold color="claude">{titulo}</Text>}
               {/* Esta sesión vacía cabe en una línea: el título y, detrás, lo que falta. */}
               {cabecera === null && prefijo === 'n' && (s === null || s.filas.length === 0) && (
                 <Text dimColor>{' · sin respuestas anotadas'}</Text>
@@ -1275,10 +1282,10 @@ export const register: Register = on => {
      * las etiquetas son cortas para que los cuatro quepan en una fila de 40 columnas). «Carpeta» va al pie (`pieCarpeta`).
      */
     const botones = [
-      { clave: 'pestana-inicio', hotkey: 'i', label: 'Inicio', alPulsar: () => elegirPestana($, 'inicio') },
-      { clave: 'pestana-semana', hotkey: 's', label: 'Semana', alPulsar: () => elegirPestana($, 'semana') },
-      ...(vista.historial ? [{ clave: 'pestana-historial', hotkey: 'h', label: 'Hist.', alPulsar: () => elegirPestana($, 'historial') }] : []),
-      ...(ags.length > 0 ? [{ clave: 'pestana-agentes', hotkey: 'a', label: 'Agentes', alPulsar: () => elegirPestana($, 'agentes') }] : []),
+      { clave: 'pestana-inicio', pestana: 'inicio', hotkey: 'i', label: 'Inicio', alPulsar: () => elegirPestana($, 'inicio') },
+      { clave: 'pestana-semana', pestana: 'semana', hotkey: 's', label: 'Semana', alPulsar: () => elegirPestana($, 'semana') },
+      ...(vista.historial ? [{ clave: 'pestana-historial', pestana: 'historial', hotkey: 'h', label: 'Hist.', alPulsar: () => elegirPestana($, 'historial') }] : []),
+      ...(ags.length > 0 ? [{ clave: 'pestana-agentes', pestana: 'agentes', hotkey: 'a', label: 'Agentes', alPulsar: () => elegirPestana($, 'agentes') }] : []),
     ]
     const filaPestanas = (
       <Box key="pestanas" flexDirection="column">
@@ -1290,7 +1297,16 @@ export const register: Register = on => {
             {fila.flatMap(i => {
               const b = botones[i]
 
-              return b === undefined ? [] : [<Button key={b.clave} hotkey={b.hotkey} label={b.label} onPress={b.alPulsar} />]
+              // La pestaña abierta va en el color de acento; las demás, tenues.
+              return b === undefined
+                ? []
+                : [
+                    b.pestana === pest ? (
+                      <Button key={b.clave} hotkey={b.hotkey} label={b.label} variant="primary" onPress={b.alPulsar} />
+                    ) : (
+                      <Button key={b.clave} hotkey={b.hotkey} label={b.label} dimColor onPress={b.alPulsar} />
+                    ),
+                  ]
             })}
           </Box>
         ))}
@@ -1304,37 +1320,71 @@ export const register: Register = on => {
       </Box>
     )
 
-    /** La regla fina que separa los bloques de todas las vistas (`n` distingue las claves). */
-    const regla = (n: number) => (
-      <Text key={`regla-${n}`} dimColor>
-        {'─'.repeat(Math.max(1, e.props.bodyColumns))}
-      </Text>
+    /** Una tarjeta: borde redondeado del color de su sección y un hueco de 1 a cada lado (`MARCO`). */
+    const tarjeta = (clave: string, color: Color, contenido: JSX.Element) => (
+      <Box key={clave} flexDirection="column" borderStyle="round" borderColor={color} paddingX={1}>
+        {contenido}
+      </Box>
+    )
+
+    /** El título de una tarjeta, en negrita y con el color de su borde; `derecha` va tenue al otro extremo. */
+    const tituloTarjeta = (texto: string, color: Color, derecha = '') => (
+      <Box key={`titulo-${texto}`}>
+        <Box flexGrow={1}>
+          <Text bold color={color}>
+            {texto}
+          </Text>
+        </Box>
+        {derecha !== '' && <Text dimColor>{derecha}</Text>}
+      </Box>
+    )
+
+    // La sesión unida por modelo·esfuerzo: la tabla de Inicio y el estado de la cabecera.
+    const sesionUnida = ses === null ? null : unirOrigenes(ses)
+    const estadoSesion = estadoDeFila(act, (sesionUnida?.filas ?? []).flatMap(idsDeActividad), t)
+
+    /** La cabecera del panel, en todas las vistas: el nombre y el estado de la sesión (el de su fila más activa). */
+    const cabeceraPanel = (
+      <Box key="cabecera-panel">
+        <Box flexGrow={1}>
+          <Text bold color="claude">
+            {'◆ QCC'}
+          </Text>
+          <Text dimColor>{' · panel'}</Text>
+        </Box>
+        <Text color={COLOR_ACTIVIDAD[estadoSesion]}>{TEXTO_ACTIVIDAD[estadoSesion]}</Text>
+      </Box>
     )
 
     /**
      * Los límites, bajo la fila de pestañas y en todas las vistas: una línea por límite
      * (etiqueta, mini barra, % y cuánto falta; barra y % con el tono del %). Sin límites, un aviso dim.
+     * El borde lleva el tono del límite más gastado.
      */
-    const bloqueLimites = (
+    const colorLimites: Color = limites.length === 0 ? 'subtle' : tono(Math.max(...limites.map(l => l.percentUsed)))
+    const bloqueLimites = tarjeta(
+      'tarjeta-limites',
+      colorLimites,
       <Box key="limites" flexDirection="column">
+        {tituloTarjeta('LÍMITES', colorLimites)}
         {limites.length === 0 ? (
           <Text dimColor>límites tras la 1.ª respuesta</Text>
         ) : (
           limites.map(l => {
             const reinicio = l.resetsAt === undefined ? undefined : Date.parse(l.resetsAt)
-            const linea = lineaLimite(l.kind, l.percentUsed, reinicio, t, e.props.bodyColumns)
+            const linea = lineaLimite(l.kind, l.percentUsed, reinicio, t, interior)
 
             return (
               <Box key={`limite-${l.kind}`}>
                 <Text>{`${linea.etiqueta} `}</Text>
                 <Text color={tono(l.percentUsed)}>{linea.barra}</Text>
-                <Text color={tono(l.percentUsed)}>{linea.cifra}</Text>
+                <Text bold color={tono(l.percentUsed)}>{linea.cifra}</Text>
                 {linea.cola !== '' && <Text dimColor>{linea.cola}</Text>}
               </Box>
             )
           })
         )}
-      </Box>
+      </Box>,
     )
 
     /**
@@ -1342,9 +1392,13 @@ export const register: Register = on => {
      * con dólares, tiempo, tokens y cambios). Sin filas, un aviso.
      */
     const promedio = his === null ? {} : promedioHistorial(his.filas)
-    const bloqueHistorial = (
+    const bloqueHistorial = tarjeta(
+      'tarjeta-historial',
+      'suggestion',
       <Box key="historial" flexDirection="column">
-        <Text bold>Historial</Text>
+        <Text bold color="suggestion">
+          Historial
+        </Text>
         {his === null || his.filas.length === 0 ? (
           <Text dimColor>sin flujos anotados todavía</Text>
         ) : (
@@ -1354,8 +1408,8 @@ export const register: Register = on => {
             </Text>
             {his.filas.map((f, i) => (
               <Box key={`historial-${i}`} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
-                {lineasHistorial(f, e.props.bodyColumns).map((linea, j) => (
-                  <Text key={`historial-${i}-${j}`} dimColor={j > 0} wrap="truncate-end">
+                {lineasHistorial(f, interior).map((linea, j) => (
+                  <Text key={`historial-${i}-${j}`} bold={j === 0} dimColor={j > 0} wrap="truncate-end">
                     {linea}
                   </Text>
                 ))}
@@ -1363,53 +1417,65 @@ export const register: Register = on => {
             ))}
           </Box>
         )}
-      </Box>
+      </Box>,
     )
 
     /**
      * La pestaña «Agentes»: el resumen, por subagente una línea con el glifo de su estado, el rol, el tiempo y las herramientas y debajo su
      * descripción, y los archivos tocados, de lo más reciente a lo más viejo.
      */
-    const lineasAgentes = resumenAgentes(ags, arcs, t, Math.min(e.props.bodyColumns, COLUMNAS))
+    const lineasAgentes = resumenAgentes(ags, arcs, t, Math.min(interior, COLUMNAS))
     const bloqueAgentes = (
-      <Box key="agentes" flexDirection="column">
-        <Text dimColor wrap="truncate-end">
-          {lineasAgentes.resumen}
-        </Text>
-        {lineasAgentes.agentes.map((a, i) => (
-          <Box key={`agente-${i}`} flexDirection="column">
-            <Box>
-              <Text color={a.color}>{`${a.glifo} `}</Text>
-              <Box flexGrow={1}>
-                <Text wrap="truncate-end">{a.rol}</Text>
-              </Box>
-              <Box flexShrink={0}>
-                <Text dimColor>{a.cola}</Text>
-              </Box>
-            </Box>
-            {a.descripcion !== '' && (
-              <Text dimColor wrap="truncate-end">
-                {`  ${a.descripcion}`}
-              </Text>
-            )}
-            {a.detalle !== '' && (
-              <Text dimColor wrap="truncate-end">
-                {a.detalle}
-              </Text>
-            )}
-          </Box>
-        ))}
-        {lineasAgentes.archivos.length > 0 && (
-          <Box key="agentes-archivos" flexDirection="column" marginTop={1}>
-            <Text bold>Archivos tocados</Text>
-            {lineasAgentes.archivos.map((a, i) => (
-              <Box key={`archivo-${i}`}>
-                <Text wrap="truncate-end">{a.ruta}</Text>
-                <Text dimColor>{a.cola}</Text>
+      <Box key="agentes-bloque" flexDirection="column">
+        {tarjeta(
+          'tarjeta-agentes',
+          'permission',
+          <Box key="agentes" flexDirection="column">
+            {/* El resumen hace de título de la tarjeta. */}
+            <Text bold color="permission" wrap="truncate-end">
+              {lineasAgentes.resumen}
+            </Text>
+            {lineasAgentes.agentes.map((a, i) => (
+              <Box key={`agente-${i}`} flexDirection="column">
+                <Box>
+                  <Text color={a.color}>{`${a.glifo} `}</Text>
+                  <Box flexGrow={1}>
+                    <Text bold wrap="truncate-end">{a.rol}</Text>
+                  </Box>
+                  <Box flexShrink={0}>
+                    <Text dimColor>{a.cola}</Text>
+                  </Box>
+                </Box>
+                {a.descripcion !== '' && (
+                  <Text dimColor wrap="truncate-end">
+                    {`  ${a.descripcion}`}
+                  </Text>
+                )}
+                {a.detalle !== '' && (
+                  <Text dimColor wrap="truncate-end">
+                    {a.detalle}
+                  </Text>
+                )}
               </Box>
             ))}
-          </Box>
+          </Box>,
         )}
+        {lineasAgentes.archivos.length > 0 &&
+          tarjeta(
+            'tarjeta-archivos',
+            'success',
+            <Box key="agentes-archivos" flexDirection="column">
+              <Text bold color="success">
+                Archivos tocados
+              </Text>
+              {lineasAgentes.archivos.map((a, i) => (
+                <Box key={`archivo-${i}`}>
+                  <Text wrap="truncate-end">{a.ruta}</Text>
+                  <Text dimColor>{a.cola}</Text>
+                </Box>
+              ))}
+            </Box>,
+          )}
       </Box>
     )
 
@@ -1426,7 +1492,7 @@ export const register: Register = on => {
       <Box key="leyenda" flexDirection="column" marginTop={separada ? 1 : 0}>
         {repartir(
           entradasLeyenda.map(entrada => 2 + entrada.nombre.length),
-          Math.min(e.props.bodyColumns, COLUMNAS),
+          Math.min(interior, COLUMNAS),
           2,
         ).map(fila => (
           <Box key={`leyenda-${fila[0]}`}>
@@ -1454,10 +1520,9 @@ export const register: Register = on => {
     if (pest === 'agentes') {
       return (
         <Box flexDirection="column">
+          {cabeceraPanel}
           {filaPestanas}
-          {regla(0)}
           {bloqueLimites}
-          {regla(1)}
           {bloqueAgentes}
           {pieCarpeta}
         </Box>
@@ -1467,10 +1532,9 @@ export const register: Register = on => {
     if (pest === 'historial') {
       return (
         <Box flexDirection="column">
+          {cabeceraPanel}
           {filaPestanas}
-          {regla(0)}
           {bloqueLimites}
-          {regla(1)}
           {bloqueHistorial}
           {pieCarpeta}
         </Box>
@@ -1480,31 +1544,34 @@ export const register: Register = on => {
     if (pest === 'semana') {
       return (
         <Box flexDirection="column">
+          {cabeceraPanel}
           {filaPestanas}
-          {regla(0)}
           {bloqueLimites}
-          {regla(1)}
-          {leyenda(false)}
-
-          {tabla(
-            'Esta semana',
-            's',
-            sem,
-            sem === null
-              ? null
-              : sem.registroDesde !== null && sem.registroDesde > sem.desde
-                ? `anotado desde ${cuando(t, sem.registroDesde)}`
-                : `desde ${cuando(t, sem.desde)}`,
-            false,
-            false,
-            true,
+          {tarjeta(
+            'tarjeta-semana',
+            'claude',
+            <Box key="semana" flexDirection="column">
+              {leyenda(false)}
+              {tabla(
+                'Esta semana',
+                's',
+                sem,
+                sem === null
+                  ? null
+                  : sem.registroDesde !== null && sem.registroDesde > sem.desde
+                    ? `anotado desde ${cuando(t, sem.registroDesde)}`
+                    : `desde ${cuando(t, sem.desde)}`,
+                false,
+                false,
+                true,
+              )}
+            </Box>,
           )}
           {pieCarpeta}
         </Box>
       )
     }
 
-    const sesionUnida = ses === null ? null : unirOrigenes(ses)
     /**
      * La cabecera de «Esta sesión»: «SESIÓN  Opus 5.5 · high». El modelo con el esfuerzo y, con un implementador
      * instalado y un flujo en curso, el resumen del flujo. Si no cabe se recorta el flujo, nunca el modelo ni el
@@ -1513,7 +1580,9 @@ export const register: Register = on => {
     const cabeceraSesion = (
       <Box key="sesion-cabecera">
         <Box flexShrink={0}>
-          <Text bold>{'SESIÓN  '}</Text>
+          <Text bold color="claude">
+            {'SESIÓN  '}
+          </Text>
         </Box>
         <Box flexShrink={0}>
           <Text dimColor>
@@ -1536,7 +1605,7 @@ export const register: Register = on => {
     )
     // Una sola fila como las de los límites: etiqueta, barra, cifra y cola. Con desglose y medición, solo etiqueta y
     // barra a todo el ancho: la cifra y los tokens ya van en la cabecera, pegada bajo la barra, y no se repiten.
-    const lineaCtx = lineaContexto(m, e.props.bodyColumns)
+    const lineaCtx = lineaContexto(m, interior)
     const resumen = d === null ? null : resumenContexto(d)
     // El caché del prompt: cuenta regresiva a su vencimiento (TTL de 5 min desde la última respuesta) y tasa de aciertos.
     // Tras ⏱ van dos espacios: la terminal lo dibuja ancho y con uno solo se pega al texto.
@@ -1548,119 +1617,130 @@ export const register: Register = on => {
         : `${quedaCache === 0 ? 'caché vencido' : `caché ⏱  ${falta(t, cac.t + TTL_CACHE_MS)}`}${aciertos === null ? '' : ` · aciertos ${aciertos} %`}`
     const colorCache = quedaCache === null ? undefined : quedaCache === 0 ? 'error' : quedaCache <= 60_000 ? 'warning' : 'success'
     const barraAncha = d !== null && lineaCtx.medido
-    const anchoBarra = barraAncha ? Math.max(3, e.props.bodyColumns - lineaCtx.etiqueta.length - 1) : lineaCtx.barra.length
+    const anchoBarra = barraAncha ? Math.max(3, interior - lineaCtx.etiqueta.length - 1) : lineaCtx.barra.length
+    // El borde del contexto lleva el tono de la compactación (o el de la medición sin desglose).
+    const colorContexto: Color =
+      resumen !== null ? tonoCompactacion(resumen.porcentaje) : lineaCtx.medido && m?.porcentaje !== undefined ? tono(m.porcentaje) : 'subtle'
 
     return (
       <Box flexDirection="column">
+        {cabeceraPanel}
         {filaPestanas}
-        {regla(0)}
         {bloqueLimites}
-        {regla(1)}
-        <Box key="contexto-fila">
-          <Text>{`${lineaCtx.etiqueta} `}</Text>
-          {d !== null ? (
-            <Box>
-              {tramos(d.partes, anchoBarra).map((tr, i) => (
-                <Text key={`t${i}`} color={tr.color}>
-                  {relleno(tr.tipo).repeat(tr.celdas)}
-                </Text>
-              ))}
-            </Box>
-          ) : lineaCtx.medido && m?.porcentaje !== undefined ? (
-            <Text color={tono(m.porcentaje)}>{lineaCtx.barra}</Text>
-          ) : (
-            <Text color="subtle">{lineaCtx.barra}</Text>
-          )}
-          {!barraAncha && (lineaCtx.medido && m?.porcentaje !== undefined ? (
-            <Text color={tono(m.porcentaje)}>{lineaCtx.cifra}</Text>
-          ) : (
-            <Text dimColor>{lineaCtx.cifra}</Text>
-          ))}
-          {!barraAncha && lineaCtx.cola !== '' && <Text dimColor>{lineaCtx.cola}</Text>}
-        </Box>
-
-        {resumen !== null && (
-          <Box key="resumen-ctx" justifyContent="space-between">
-            <Text bold color={tonoCompactacion(resumen.porcentaje)}>{`${resumen.porcentaje}%`}</Text>
-            <Text wrap="truncate-end">
-              <Text>{tokens(resumen.usados)}</Text>
-              <Text dimColor>{` / ${tokens(resumen.ventana)}`}</Text>
-            </Text>
-          </Box>
-        )}
-        {resumen !== null && resumen.compacta && (
-          <Box key="compactacion-ctx" justifyContent="space-between">
-            <Text dimColor>{`╰ compacta en ${tokens(resumen.punto)}`}</Text>
-            <Text dimColor>{`faltan ${tokens(Math.max(0, resumen.punto - resumen.usados))}`}</Text>
-          </Box>
-        )}
-        <Box key="cache-ctx">
-          {colorCache === undefined ? (
-            <Text dimColor wrap="truncate-end">{textoCache}</Text>
-          ) : (
-            <Text color={colorCache} wrap="truncate-end">{textoCache}</Text>
-          )}
-        </Box>
-
-        {d !== null && (
-          <Box key="desglose" flexDirection="column" marginTop={1}>
-            {ordenLeyenda(d.partes).map((p, i) => (
-              <Box key={`p-${p.nombre}`}>
-                <Text color={p.color}>{marcador(p.tipo)} </Text>
-                <Box flexGrow={1}>
-                  <Text wrap="truncate-end">{p.nombre}</Text>
+        {tarjeta(
+          'tarjeta-contexto',
+          colorContexto,
+          <Box key="contexto" flexDirection="column">
+            {tituloTarjeta('CONTEXTO', colorContexto)}
+            <Box key="contexto-fila">
+              <Text>{`${lineaCtx.etiqueta} `}</Text>
+              {d !== null ? (
+                <Box>
+                  {tramos(d.partes, anchoBarra).map((tr, i) => (
+                    <Text key={`t${i}`} color={tr.color}>
+                      {relleno(tr.tipo).repeat(tr.celdas)}
+                    </Text>
+                  ))}
                 </Box>
-                <Text>{tokens(p.tokens).padStart(6)}</Text>
-                <Text dimColor>{pctParte(p).padStart(7)}</Text>
-                {i === 0 && p.tipo === 'usado' && resumen !== null && (
-                  <Box marginLeft={1}>
-                    <Text dimColor>{cuotaUsado(p.tokens, resumen.usados)}</Text>
+              ) : lineaCtx.medido && m?.porcentaje !== undefined ? (
+                <Text color={tono(m.porcentaje)}>{lineaCtx.barra}</Text>
+              ) : (
+                <Text color="subtle">{lineaCtx.barra}</Text>
+              )}
+              {!barraAncha && (lineaCtx.medido && m?.porcentaje !== undefined ? (
+                <Text color={tono(m.porcentaje)}>{lineaCtx.cifra}</Text>
+              ) : (
+                <Text dimColor>{lineaCtx.cifra}</Text>
+              ))}
+              {!barraAncha && lineaCtx.cola !== '' && <Text dimColor>{lineaCtx.cola}</Text>}
+            </Box>
+
+            {resumen !== null && (
+              <Box key="resumen-ctx" justifyContent="space-between">
+                <Text bold color={tonoCompactacion(resumen.porcentaje)}>{`${resumen.porcentaje}%`}</Text>
+                <Text wrap="truncate-end">
+                  <Text>{tokens(resumen.usados)}</Text>
+                  <Text dimColor>{` / ${tokens(resumen.ventana)}`}</Text>
+                </Text>
+              </Box>
+            )}
+            {resumen !== null && resumen.compacta && (
+              <Box key="compactacion-ctx" justifyContent="space-between">
+                <Text dimColor>{`╰ compacta en ${tokens(resumen.punto)}`}</Text>
+                <Text dimColor>{`faltan ${tokens(Math.max(0, resumen.punto - resumen.usados))}`}</Text>
+              </Box>
+            )}
+            <Box key="cache-ctx">
+              {colorCache === undefined ? (
+                <Text dimColor wrap="truncate-end">{textoCache}</Text>
+              ) : (
+                <Text color={colorCache} wrap="truncate-end">{textoCache}</Text>
+              )}
+            </Box>
+
+            {d !== null && (
+              <Box key="desglose" flexDirection="column" marginTop={1}>
+                {ordenLeyenda(d.partes).map((p, i) => (
+                  <Box key={`p-${p.nombre}`}>
+                    <Text color={p.color}>{marcador(p.tipo)} </Text>
+                    <Box flexGrow={1}>
+                      <Text wrap="truncate-end">{p.nombre}</Text>
+                    </Box>
+                    <Text>{tokens(p.tokens).padStart(6)}</Text>
+                    <Text dimColor>{pctParte(p).padStart(7)}</Text>
+                    {i === 0 && p.tipo === 'usado' && resumen !== null && (
+                      <Box marginLeft={1}>
+                        <Text dimColor>{cuotaUsado(p.tokens, resumen.usados)}</Text>
+                      </Box>
+                    )}
                   </Box>
+                ))}
+                {m !== null && d.ventana !== m.ventana && (
+                  <Text dimColor>% sobre la ventana de compactación ({tokens(d.ventana)})</Text>
                 )}
               </Box>
-            ))}
-            {m !== null && d.ventana !== m.ventana && (
-              <Text dimColor>% sobre la ventana de compactación ({tokens(d.ventana)})</Text>
             )}
-          </Box>
-        )}
 
-        {d !== null && d.pesados.length > 0 && (
-          <Box key="pesados" flexDirection="column" marginTop={1}>
-            <Text dimColor>Lo más pesado</Text>
-            {d.pesados.map(p => (
-              <Box key={`h-${p.nombre}`}>
-                <Box flexGrow={1}>
-                  <Text wrap="truncate-end">  {p.nombre}</Text>
-                </Box>
-                <Text>{tokens(p.tokens).padStart(6)}</Text>
+            {d !== null && d.pesados.length > 0 && (
+              <Box key="pesados" flexDirection="column" marginTop={1}>
+                <Text dimColor>Lo más pesado</Text>
+                {d.pesados.map(p => (
+                  <Box key={`h-${p.nombre}`}>
+                    <Box flexGrow={1}>
+                      <Text wrap="truncate-end">  {p.nombre}</Text>
+                    </Box>
+                    <Text>{tokens(p.tokens).padStart(6)}</Text>
+                  </Box>
+                ))}
               </Box>
-            ))}
-          </Box>
+            )}
+
+            {d !== null && (
+              <Box key="precisar-fila" marginTop={1}>
+                <Button
+                  key="precisar"
+                  hotkey="p"
+                  label={ocupado ? 'Precisando…' : 'Precisar'}
+                  onPress={() => precisar($)}
+                />
+                <Text dimColor> {ocupado ? 'contando' : d.exacto ? 'exacto' : 'estimado'}</Text>
+              </Box>
+            )}
+          </Box>,
         )}
 
-        {d !== null && (
-          <Box key="precisar-fila" marginTop={1}>
-            <Button
-              key="precisar"
-              hotkey="p"
-              label={ocupado ? 'Precisando…' : 'Precisar'}
-              onPress={() => precisar($)}
-            />
-            <Text dimColor> {ocupado ? 'contando' : d.exacto ? 'exacto' : 'estimado'}</Text>
-          </Box>
+        {tarjeta(
+          'sesion-bloque',
+          'claude',
+          <Box key="sesion" flexDirection="column">
+            {/* La hora anotada se redondea a la hora entera: «desde» mentiría en la sesión. */}
+            <Box key="sesion-tabla" flexDirection="column">
+              {tabla('Esta sesión', 'n', sesionUnida, null, true, true, false, cabeceraSesion)}
+            </Box>
+
+            {sesionUnida !== null && sesionUnida.filas.length > 0 && leyenda(true)}
+          </Box>,
         )}
-
-        {regla(2)}
-
-        <Box key="sesion-bloque" flexDirection="column">
-          {/* La hora anotada se redondea a la hora entera: «desde» mentiría en la sesión. */}
-          <Box key="sesion-tabla" flexDirection="column">
-            {tabla('Esta sesión', 'n', sesionUnida, null, true, true, false, cabeceraSesion)}
-          </Box>
-
-          {sesionUnida !== null && sesionUnida.filas.length > 0 && leyenda(true)}
-        </Box>
 
         {pieCarpeta}
       </Box>

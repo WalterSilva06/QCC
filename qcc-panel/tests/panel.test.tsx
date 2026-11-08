@@ -78,6 +78,9 @@ import type { Actividad, AgenteVisto, ArchivoTocado, Cache, Desglose, FilaSemana
 
 const AHORA = Date.parse('2026-10-09T15:00:00Z')
 
+/** Columnas que se lleva cada tarjeta (borde y hueco): los anchos de abajo son los del interior más el marco. */
+const MARCO = 4
+
 const PANE = {
   plugin: 'panel',
   component: 'Pane',
@@ -85,7 +88,7 @@ const PANE = {
   props: {
     title: 'Uso',
     isFocused: false,
-    bodyColumns: 32,
+    bodyColumns: 32 + MARCO,
     placement: 'dock',
     scroll: { offset: 0, bodyRows: 30 },
     view: {},
@@ -93,10 +96,10 @@ const PANE = {
 } as const
 
 /** El panel con el ancho real del usuario (49 columnas): ahí caben varios ■ en la fila. */
-const PANE_ANCHO = { ...PANE, props: { ...PANE.props, bodyColumns: 49 } } as const
+const PANE_ANCHO = { ...PANE, props: { ...PANE.props, bodyColumns: 49 + MARCO } } as const
 
-/** El panel con el ancho de diseño (40 columnas de cuerpo; al abrirse pide 44 para descontar el marco). */
-const PANE_40 = { ...PANE, props: { ...PANE.props, bodyColumns: 40 } } as const
+/** El panel con el ancho de diseño (40 columnas dentro de las tarjetas; al abrirse pide 48 para descontar el marco del dock). */
+const PANE_40 = { ...PANE, props: { ...PANE.props, bodyColumns: 40 + MARCO } } as const
 
 const MEDIDA: SessionMeasureInput = {
   context: { tokens: 96_200, window: 200_000, percent: 48 },
@@ -1482,7 +1485,7 @@ describe('semana', () => {
     on('session.id', () => ({ value: 's1' }))
   }
 
-  const conColumnas = (columnas: number) => ({ ...PANE, props: { ...PANE.props, bodyColumns: columnas } })
+  const conColumnas = (columnas: number) => ({ ...PANE, props: { ...PANE.props, bodyColumns: columnas + MARCO } })
 
   test('«Esta semana» ancha: la salida va en el encabezado y el pie no la repite', async ($, on) => {
     motorSemana(on)
@@ -4524,15 +4527,19 @@ describe('actividad en el panel', () => {
 
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
+    // La cabecera del panel sigue a la fila más activa.
+    expect((await ui.find({ type: 'Box', key: 'cabecera-panel' }))?.text).toBe('◆ QCC · panel○ en reposo')
 
     const abrir = motor.detener('principal')
     const enCurso = paso($, 'claude-opus-5-5', 'high')
     await esperar()
     expect(await colorDe(ui, 'Opus 5.5 high')).toBe('success')
+    expect((await ui.find({ type: 'Box', key: 'cabecera-panel' }))?.text).toBe('◆ QCC · panel● trabajando')
 
     abrir()
     await enCurso
     expect(await colorDe(ui, 'Opus 5.5 high')).toBe('subtle')
+    expect((await ui.find({ type: 'Box', key: 'cabecera-panel' }))?.text).toBe('◆ QCC · panel○ en reposo')
     await ui.unmount()
   })
 
@@ -4556,6 +4563,7 @@ describe('actividad en el panel', () => {
     abrirSub()
     await sub
     expect(await coloresDe(ui, 'Opus 5.5 high')).toEqual(['warning'])
+    expect((await ui.find({ type: 'Box', key: 'cabecera-panel' }))?.text).toBe('◆ QCC · panel◐ esperando')
     await ui.unmount()
   })
 
@@ -5019,7 +5027,7 @@ describe('flujo en el panel', () => {
     await ui.unmount()
 
     // Más estrecho aún (20 columnas): recortado con «…», sin pasar del ancho.
-    const estrecho = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 20 }, surface: 'terminal' })
+    const estrecho = await $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns: 20 + MARCO }, surface: 'terminal' })
     const recortados = (await textosDe(estrecho)).filter(t => /^directo /.test(t))
     expect(recortados).toEqual(['directo 100k·orques…'])
     expect(recortados[0]?.length).toBe(20)
@@ -5100,7 +5108,7 @@ describe('flujo en el panel', () => {
     expect((await filas(12)).claves).toEqual(['pestanas-0', 'pestanas-1', 'pestanas-2'])
   })
 
-  test('rediseño B: botones en una fila arriba y límites, contexto y sesión separados por reglas', async ($, on) => {
+  test('rediseño C: cabecera, botones en una fila y límites, contexto y sesión en tarjetas con borde', async ($, on) => {
     preparar(on)
     // Un subagente sigue trabajando (su respuesta pide herramienta) hasta que se le da su respuesta final.
     const terminan = new Set<string>()
@@ -5130,23 +5138,33 @@ describe('flujo en el panel', () => {
     ])
     expect(arbol.filter(n => n.type === 'Box' && (n.key ?? '').startsWith('pestanas-')).map(n => n.key)).toEqual(['pestanas-0'])
 
-    // Orden: botones, regla, límites, regla, ctx, regla, sesión, y «Carpeta» al pie.
-    const regla = '─'.repeat(40)
+    // Orden: cabecera, botones, tarjeta de límites, tarjeta de contexto, tarjeta de sesión, y «Carpeta» al pie. Ya no hay reglas.
     const en = (f: (n: (typeof arbol)[number]) => boolean) => arbol.findIndex(f)
-    const reglas = arbol.flatMap((n, i) => (n.type === 'Text' && n.text === regla ? [i] : []))
+    const tarjeta = (clave: string) => en(n => n.type === 'Box' && n.key === clave)
+    const iCabecera = en(n => n.type === 'Box' && n.key === 'cabecera-panel')
     const iBotones = en(n => n.type === 'Button' && n.key === 'pestana-inicio')
     const iLimites = en(n => n.type === 'Text' && /^5h/.test(n.text ?? ''))
     const iCtx = en(n => n.type === 'Text' && n.text === 'ctx   ')
     const iSesion = en(n => n.type === 'Text' && n.text === 'SESIÓN  ')
     const iCarpeta = en(n => n.type === 'Button' && n.key === 'carpeta')
-    expect(reglas).toHaveLength(3)
-    expect([iBotones, reglas[0], iLimites, reglas[1], iCtx, reglas[2], iSesion, iCarpeta]).toEqual(
-      [iBotones, reglas[0], iLimites, reglas[1], iCtx, reglas[2], iSesion, iCarpeta].sort((a, b) => (a ?? 0) - (b ?? 0)),
-    )
-    expect(iBotones).toBeGreaterThan(-1)
-    expect(iLimites).toBeGreaterThan(reglas[0] ?? Infinity)
-    expect(iCarpeta).toBeGreaterThan(iSesion)
+    const orden = [iCabecera, iBotones, tarjeta('tarjeta-limites'), iLimites, tarjeta('tarjeta-contexto'), iCtx, tarjeta('sesion-bloque'), iSesion, iCarpeta]
+    expect(orden.every(i => i > -1)).toBe(true)
+    expect(orden).toEqual([...orden].sort((a, b) => a - b))
+    expect(arbol.some(n => (n.key ?? '').startsWith('regla-'))).toBe(false)
     expect(arbol.find(n => n.type === 'Box' && n.key === 'pestanas-carpeta')).toBeUndefined()
+    expect((await ui.find({ type: 'Box', key: 'cabecera-panel' }))?.text).toMatch(/^◆ QCC · panel(● trabajando|◐ esperando|○ en reposo)$/)
+    // Cada tarjeta lleva borde redondeado de color y un hueco de 1 a cada lado.
+    for (const clave of ['tarjeta-limites', 'tarjeta-contexto', 'sesion-bloque']) {
+      const caja = arbol[tarjeta(clave)]
+      expect([caja?.props.borderStyle, caja?.props.paddingX]).toEqual(['round', 1])
+    }
+    expect(arbol[tarjeta('sesion-bloque')]?.props.borderColor).toBe('claude')
+    // La pestaña abierta va en el color de acento; las demás, tenues.
+    expect(botones.filter(b => (b.key ?? '').startsWith('pestana-')).map(b => [b.props.variant, b.props.dimColor])).toEqual([
+      ['primary', undefined],
+      [undefined, true],
+      [undefined, true],
+    ])
 
     // La cabecera de la sesión reúne modelo, esfuerzo y flujo en una fila.
     expect((await ui.find({ type: 'Box', key: 'sesion-cabecera' }))?.text).toBe('SESIÓN  Opus 5.5 · high')
