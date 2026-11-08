@@ -52,7 +52,7 @@ import {
   aDesglose,
   barra,
   barraTramos,
-  conOnda,
+  conPulso,
   cuando,
   cuotaUsado,
   desgloseTramos,
@@ -109,8 +109,10 @@ const MARCO = 4
 const COLUMNAS_APERTURA = 48
 const TICK_MS = 30_000
 const SCROLL_MS = 150
-/** Cada cuánto avanza una celda la onda de las barras de «Esta sesión» con una petición en curso. */
-const ONDA_MS = 120
+/** Cada cuánto avanza el atom `fase` con una petición en curso; el pulso cambia de color cada dos pasos. */
+const PULSO_MS = 120
+/** Color del destello de las barras de «Esta sesión» con una petición en curso: un blanco apagado y cálido, para no encandilar. */
+const DESTELLO = '#d8cfc6'
 
 /** `key` de la fila de pestañas, para apuntarle con `$.ui.scroll` al cambiar de pestaña. */
 const CLAVE_PESTANAS = 'pestanas'
@@ -748,8 +750,8 @@ export const register: Register = on => {
       void detectarInstalados($)
     })
 
-    // La onda solo avanza (y redibuja) mientras alguna fila tiene una petición en curso; en reposo no hace nada.
-    $.clock.every(ONDA_MS, () => {
+    // El pulso solo avanza (y redibuja) mientras alguna fila tiene una petición en curso; en reposo no redibuja.
+    $.clock.every(PULSO_MS, () => {
       void (async () => {
         const act = (await read($, actividad)) ?? {}
         const t = await $.clock.now()
@@ -1131,18 +1133,22 @@ export const register: Register = on => {
 
     /**
      * La barra de una fila: un `Text` por tramo (principal, flujo, subagente y vacío), sin los vacíos.
-     * Con `activa` (petición en curso) la recorre la onda de `conOnda`, que avanza con el atom `fase`.
+     * Con `activa` (petición en curso) su parte llena destella con `conPulso` en `DESTELLO`, al ritmo del atom `fase`; fuera del destello cada tramo conserva su color.
      */
     const barraConTramos = (parte: number, flujo: number, sub: number, anchoBarra: number, activa: boolean) => {
       const b = barraTramos(parte, flujo, sub, anchoBarra)
-      const trozos: TrozoBarra[] = [
+      const llenos: TrozoBarra[] = [
         { texto: b.principal, color: 'claude' },
         { texto: b.flujo, color: COLOR_FLUJO },
         { texto: b.sub, color: COLOR_SUB },
-        { texto: b.vacio, color: 'claude' },
       ]
+      // Solo palpita lo lleno: lo vacío queda quieto.
+      const trozos = unirPorColor([
+        ...(activa ? conPulso(llenos, paso, DESTELLO) : llenos),
+        { texto: b.vacio, color: 'claude' },
+      ])
 
-      return (activa ? conOnda(trozos, paso, 'text', 'claudeShimmer') : unirPorColor(trozos)).map((x, i) => (
+      return trozos.map((x, i) => (
         <Text key={`trozo-${i}`} color={x.color}>
           {x.texto}
         </Text>

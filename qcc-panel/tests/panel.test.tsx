@@ -51,7 +51,7 @@ import type { Nodo, Senal } from '../hooks/flujo'
 import { decidirFreno, UMBRAL_FRENO } from '../hooks/freno'
 import { cifraMinutos, cifraUsd, clasificacionCorta, filaDeRegistro, leerHistorial, lineaCifras, lineaIdentidad, lineasHistorial, promedioHistorial, rutaHistorial, unirHistorial } from '../hooks/historial'
 import { detectar, rutaSkill, vistaDe } from '../hooks/instalados'
-import { aDesglose, barra, barraPartida, barraTramos, conOnda, cuotaUsado, desgloseTramos, duracion, etiquetasAlineadas, falta, historialVigente, lineaContexto, lineaLimite, marcador, ordenLeyenda, pct, pctParte, pestanaValida, relleno, repartir, resumenContexto, tokens, tono, tonoCompactacion, totalConSalida, tramos } from '../hooks/formato'
+import { aDesglose, barra, barraPartida, barraTramos, conPulso, cuotaUsado, desgloseTramos, duracion, etiquetasAlineadas, falta, historialVigente, lineaContexto, lineaLimite, marcador, ordenLeyenda, pct, pctParte, pestanaValida, relleno, repartir, resumenContexto, tokens, tono, tonoCompactacion, totalConSalida, tramos, unirPorColor } from '../hooks/formato'
 import {
   ESPERA_MAX_MS,
   anotar,
@@ -221,19 +221,32 @@ describe('formato', () => {
     }
   })
 
-  test('conOnda: la chispa avanza una celda por fase, cruza lo lleno y lo vacío, sale por el final y vuelve', async () => {
-    const trozos = [
-      { texto: '███', color: 'claude' },
-      { texto: '░░', color: 'gris' },
-    ]
-    const ver = (n: number) => conOnda(trozos, n, 'H', 'E')
+  test('unirPorColor: quita los trozos vacíos y une los seguidos del mismo color', async () => {
+    expect(
+      unirPorColor([
+        { texto: '██', color: 'claude' },
+        { texto: '', color: 'cian' },
+        { texto: '░░', color: 'claude' },
+        { texto: '█', color: 'sub' },
+      ]),
+    ).toEqual([
+      { texto: '██░░', color: 'claude' },
+      { texto: '█', color: 'sub' },
+    ])
+    expect(unirPorColor([{ texto: '', color: 'claude' }])).toEqual([])
+  })
 
-    expect(ver(0)).toEqual([{ texto: '█', color: 'H' }, { texto: '██', color: 'claude' }, { texto: '░░', color: 'gris' }])
-    expect(ver(2)).toEqual([{ texto: '▒▓', color: 'E' }, { texto: '█', color: 'H' }, { texto: '░░', color: 'gris' }])
-    expect(ver(4)).toEqual([{ texto: '██', color: 'claude' }, { texto: '▒▓', color: 'E' }, { texto: '█', color: 'H' }])
-    // Ya fuera: la estela sale y la barra queda como estaba; luego vuelve a empezar.
-    expect(ver(7)).toEqual(trozos)
-    expect(ver(8)).toEqual(ver(0))
+  test('conPulso: cada tramo conserva su color y destella un paso de cada tres (un paso son dos fases)', async () => {
+    const trozos = [
+      { texto: '██', color: 'claude' },
+      { texto: '█', color: 'sub' },
+    ]
+
+    expect(conPulso(trozos, 0, 'D')).toEqual(trozos)
+    expect(conPulso(trozos, 3, 'D')).toEqual(trozos)
+    expect(conPulso(trozos, 4, 'D')).toEqual([{ texto: '███', color: 'D' }])
+    expect(conPulso(trozos, 5, 'D')).toEqual([{ texto: '███', color: 'D' }])
+    expect(conPulso(trozos, 6, 'D')).toEqual(trozos)
   })
 
   test('barraTramos: el tramo del flujo sale de lo principal; el de subagentes y la barra no cambian', async () => {
