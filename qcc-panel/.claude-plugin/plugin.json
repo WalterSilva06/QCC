@@ -1,7 +1,7 @@
 {
   "name": "panel",
   "displayName": "QCC",
-  "version": "0.38.0",
+  "version": "0.39.2",
   "description": "Panel lateral con el contexto de la sesión, los límites de uso (5 horas y semana) con su reinicio, el esfuerzo actual, los tokens de la sesión y de la semana (en la pestaña «Semana») por modelo (con su versión) y esfuerzo, separando los subagentes en violeta (y en cian lo que el hilo principal gastó durante un flujo), con una leyenda de los colores de las barras sobre «Esta sesión», con una barra del % de cada fila, un gráfico por día de la semana, un cuadrado de actividad por fila de la sesión (verde: en curso, amarillo: esperando una herramienta, gris: inactiva) seguido de «xN», los subagentes en curso con ese modelo y esfuerzo (x0 sin ninguno), el paso y el tiempo de trabajo del flujo en curso de /impl en la cabecera de la sesión, una pestaña «Agentes» (tecla a, solo con agentes anotados) con los subagentes de la sesión, sus herramientas y los archivos que editaron, y un botón que abre la carpeta del proyecto",
   "types": "./types/index.d.ts"
 }
