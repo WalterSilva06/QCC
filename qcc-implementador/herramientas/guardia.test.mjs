@@ -786,29 +786,30 @@ test('guardia: el explorador con más de 90k de contexto no lee más; los demás
   }
 })
 
-test('guardia: el ejecutor con más de 85k no lee más', () => {
+test('guardia: el ejecutor con más de 100k no lee más', () => {
   const raiz = repo('tope-contexto-ejecutor', { 'src/a.ts': 'a\n' })
   temporales.push(raiz)
   try {
     const con = (e, id, transcript_path) => ({ ...e, agent_id: id, transcript_path })
     const leer = (id, transcript_path) => hook(raiz, 'ejecutor', con(ev(raiz, 'Read', { file_path: path.join(raiz, 'src', 'a.ts') }), id, transcript_path))
 
-    const alto = leer('ej-alto', transcriptConLineas('ej-alto', [{ type: 'user' }, turnoConUso(10_000), turnoConUso(90_000)]))
+    const alto = leer('ej-alto', transcriptConLineas('ej-alto', [{ type: 'user' }, turnoConUso(10_000), turnoConUso(110_000)]))
     const razon = JSON.parse(alto.stdout).hookSpecificOutput
     assert.equal(razon.permissionDecision, 'deny')
-    assert.ok(razon.permissionDecisionReason.includes('contexto del ejecutor en 90k (tope 85k)'))
+    assert.ok(razon.permissionDecisionReason.includes('contexto del ejecutor en 110k (tope 100k)'))
     assert.equal(filasDe(raiz).at(-1).decision, 'negado')
-    assert.equal(filasDe(raiz).at(-1).motivo, 'contexto 90k')
+    assert.equal(filasDe(raiz).at(-1).motivo, 'contexto 110k')
 
-    const grep = hook(raiz, 'ejecutor', con(ev(raiz, 'Grep', { pattern: 'x' }), 'ej-alto', transcriptConLineas('ej-alto', [turnoConUso(90_000)])))
+    const grep = hook(raiz, 'ejecutor', con(ev(raiz, 'Grep', { pattern: 'x' }), 'ej-alto', transcriptConLineas('ej-alto', [turnoConUso(110_000)])))
     assert.equal(JSON.parse(grep.stdout).hookSpecificOutput.permissionDecision, 'deny')
 
     const antes = filasDe(raiz).length
     assert.equal(leer('ej-bajo', transcriptConLineas('ej-bajo', [turnoConUso(50_000)])).stdout, '')
     assert.equal(filasDe(raiz).length, antes, 'una lectura del ejecutor bajo el tope no se anota')
+    assert.equal(leer('ej-borde', transcriptConLineas('ej-borde', [turnoConUso(100_000)])).stdout, '', 'justo en el tope pasa')
 
-    const edita90 = hook(raiz, 'ejecutor', con(edita(raiz, path.join(raiz, 'src', 'a.ts')), 'ej-alto', transcriptConLineas('ej-alto', [turnoConUso(90_000)])))
-    assert.equal(edita90.stdout, '', 'el tope no niega ediciones')
+    const edita110 = hook(raiz, 'ejecutor', con(edita(raiz, path.join(raiz, 'src', 'a.ts')), 'ej-alto', transcriptConLineas('ej-alto', [turnoConUso(110_000)])))
+    assert.equal(edita110.stdout, '', 'el tope no niega ediciones')
 
     assert.equal(leer('ej-sin', path.join(os.tmpdir(), 'no-existe', 'sesion.jsonl')).stdout, '', 'sin transcript')
   } finally {

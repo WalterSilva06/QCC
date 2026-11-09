@@ -13,7 +13,7 @@
 // cruza con el árbol para el chequeo de alcance (cubre rutas que git ignora).
 // `explorador` y `planificador` (solo lectura) anotan sus Read, Glob y Grep con decision `lectura`; solo
 // al explorador, con el contexto de su subagente sobre 90k (fijo: Haiku cobra 5× el pedido de más de 100k), se los niega para que reporte ya. Al ejecutor,
-// con su contexto sobre 85k, también se le niegan Read, Glob y Grep (sin anotar las que pasan) para que termine.
+// con su contexto sobre 100k, también se le niegan Read, Glob y Grep (sin anotar las que pasan) para que termine.
 //
 // Lo propio de cada proyecto va en `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, el
 // nombre viejo `.claude/implementador.json`), clave `guardia` (ver `config.ejemplo.md`).
@@ -40,7 +40,7 @@ const TOPE_REGISTRO = 2 * 1024 * 1024
 /** Contexto del explorador (tokens) desde el que se le niegan Read, Glob y Grep. */
 export const TOPE_CONTEXTO_EXPLORADOR = 90_000
 /** Contexto del ejecutor (tokens) desde el que se le niegan Read, Glob y Grep. */
-export const TOPE_CONTEXTO_EJECUTOR = 85_000
+export const TOPE_CONTEXTO_EJECUTOR = 100_000
 const COLA_TRANSCRIPT = 256 * 1024
 const WIN = process.platform === 'win32'
 
