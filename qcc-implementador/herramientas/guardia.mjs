@@ -807,8 +807,8 @@ function motivoArchivoScript(args, ctx) {
   return null
 }
 
-/** Opciones de `estado.mjs` que escriben el estado del flujo: son del orquestador, no de un ejecutor. */
-const ESTADO_ESCRIBE = /^--(externo|base|cambios|guardar|cancelar|tanda|aprobado|reanudar)(=|$)/
+/** Opciones de `estado.mjs` que escriben el estado del flujo: son del orquestador, no de un subagente. */
+const ESTADO_ESCRIBE = /^--(permiso|permiso-nuevo|base|cambios|guardar|cancelar|tanda|aprobado|reanudar)(=|$)/
 
 /** Índice (en `args`, de `node`) del script que corre; -1 si corre código en línea (`-e`…) o ninguno. */
 function indiceScript(args) {
@@ -831,10 +831,8 @@ function motivoEstadoEscribe(args) {
 }
 
 function evaluarNode(args, ctx) {
-  if (ctx.rol === 'ejecutor') {
-    const m = motivoEstadoEscribe(args)
-    if (m) return m
-  }
+  const m = motivoEstadoEscribe(args)
+  if (m) return m
   if (ctx.rol === 'revisor' && nombreScript(args, indiceScript(args)) === 'mover.mjs') return 'mover.mjs escribe en el repo: el revisor no edita'
   if (args.some((a) => a.startsWith('--env-file'))) return 'node --env-file carga secretos y suele pegar a servicios vivos: queda para el usuario'
   if (args.some((a) => a === '--watch' || a.startsWith('--watch-path'))) return 'node --watch no termina'
@@ -1155,6 +1153,46 @@ function evaluarLecturaRed(prog, args, ctx) {
   return evaluarWebPS(args, ctx)
 }
 
+const ENV_FILE = /^--env-file=\.env(\.[\w-]+)?$/
+
+/** ¿Un permiso vigente (`ctx.permisos`, solo del ejecutor) cubre estas palabras, unidas por un espacio? */
+function permitido(palabras, ctx) {
+  if (ctx.rol !== 'ejecutor' || !ctx.permisos?.length || palabras.some((w) => w.includes('\u0000'))) return false
+  const texto = palabras.join(' ').replace(/\s+/g, ' ')
+  return ctx.permisos.some((re) => re.test(texto))
+}
+
+/**
+ * Lo que ningún permiso levanta, ni aprobado: git que modifica, `estado.mjs` que escribe el estado, comandos
+ * destructivos y destinos protegidos (fuera del repo, `.git/`, settings, secretos, lockfiles, artefactos).
+ */
+function motivoFijo(prog, args, ctx) {
+  if (prog === 'git') return evaluarGit(args, ctx)
+  if (prog === 'node') return motivoEstadoEscribe(args)
+  if (['format', 'diskpart', 'mkfs'].includes(prog)) return `${prog}: destructivo`
+  if (CON_DESTINO.has(prog) || COPIAN.has(prog) || ((prog === 'sed' || prog === 'perl') && args.some(EDITA_EN_SITIO))) {
+    // sed/perl: solo los archivos, no el script (`/a/,/b/c\…` parecería una ruta absoluta).
+    const rutas = COPIAN.has(prog) ? destinosDe(prog, args, ctx) : prog === 'sed' || prog === 'perl' ? archivosEnSitio(prog, args) : args
+    for (const a of rutas) {
+      if (a.startsWith('-')) continue
+      const m = motivoRuta(a, { raiz: ctx.raiz, base: ctx.cwd, permitirTemporal: true })
+      if (m) return m
+    }
+  }
+  return null
+}
+
+/** `motivoFijo` de cada comando simple de `comando` (como lo correría el ejecutor en `raiz`); null si ninguno lo tiene. */
+export function motivoFijoDe(comando, { raiz = RAIZ } = {}) {
+  const ctx = { rol: 'ejecutor', raiz, cwd: raiz }
+  for (const simple of analizar(sinEnvoltura(comando))) {
+    const ws = sinPrefijos(simple.palabras)
+    const m = ws.length ? motivoFijo(nombreProg(ws[0]), ws.slice(1), ctx) : null
+    if (m) return m
+  }
+  return null
+}
+
 function evaluarSimple(simple, ctx) {
   const palabras = simple.palabras.map((w) => expandir(w, ctx))
   const redirs = simple.redirs.map((r) => ({ ...r, objetivo: expandir(r.objetivo, ctx) }))
@@ -1181,9 +1219,16 @@ function evaluarSimple(simple, ctx) {
   // El patrón de una búsqueda no es un archivo: `grep -rn ".env" src` busca el texto, no lo lee.
   const ip = BUSCAN.has(prog) ? indicePatron(args) : -1
   const patron = ip >= 0 ? ip + (palabras.length - args.length) : -1
+  const iScript = prog === 'node' ? indiceScript(args) : -1
   for (const [j, w] of palabras.entries()) {
     if (j === patron) continue
-    if (SECRETO.test(w)) return 'toca un .env (secretos); para buscar el texto en el código, usa la herramienta Grep'
+    if (SECRETO.test(w)) {
+      // Única excepción: `node --env-file=.env <script>` si un permiso vigente cubre el comando entero.
+      const k = j - (palabras.length - args.length)
+      if (!(ENV_FILE.test(w) && k >= 0 && k < iScript && permitido(palabras, ctx))) {
+        return 'toca un .env (secretos); para buscar el texto en el código, usa la herramienta Grep'
+      }
+    }
     if (j > 0 && nombraSecreto(w, ctx)) return `${w} guarda secretos o claves (secreto del proyecto)`
   }
   if (!ws.length) return null
@@ -1209,12 +1254,12 @@ function evaluarSimple(simple, ctx) {
     return null
   }
 
-  // Externo aprobado: solo el ejecutor, solo el comando aprobado de una subtarea en curso. Antes ya se negaron los
-  // `.env`, los secretos del proyecto y las redirecciones fuera de alcance; los shells (`bash -c`…) volvieron arriba.
-  if (ctx.rol === 'ejecutor' && ctx.externos?.length && !palabras.some((w) => w.includes('\u0000'))) {
-    const texto = palabras.join(' ').replace(/\s+/g, ' ')
-    if (ctx.externos.some((re) => re.test(texto))) return null
-  }
+  // Permiso aprobado: solo el ejecutor, solo el comando aprobado de una subtarea en curso. Antes ya se negaron los
+  // `.env`, los secretos del proyecto, las redirecciones fuera de alcance y lo que ningún permiso levanta (`motivoFijo`);
+  // los shells (`bash -c`…) volvieron arriba.
+  const fijo = motivoFijo(prog, args, ctx)
+  if (fijo) return fijo
+  if (permitido(palabras, ctx)) return null
 
   // Playwright y playwright-cli: libres para el ejecutor, con cualquier subcomando. Va después de los `.env`, los secretos y
   // las redirecciones fuera de alcance (que ya se negaron) y antes de la regla de `npx`. Los servidores directos siguen negados.
@@ -1231,7 +1276,6 @@ function evaluarSimple(simple, ctx) {
   // Red de solo lectura: solo el ejecutor y solo si el proyecto no redefinió el programa (como `npx`).
   if (ctx.rol === 'ejecutor' && RED_PROGS.has(prog) && config.externos[prog] === RED) return evaluarLecturaRed(prog, args, ctx)
   if (Object.hasOwn(config.externos, prog)) return config.externos[prog]
-  if (prog === 'git') return evaluarGit(args, ctx)
   if (GESTORES.has(prog)) return evaluarGestor(prog, args, ctx)
   const otro = evaluarOtros(prog, args, ctx)
   if (otro) return otro
@@ -1270,55 +1314,73 @@ function evaluarSimple(simple, ctx) {
     }
     return null
   }
-  if (CON_DESTINO.has(prog) || COPIAN.has(prog) || ((prog === 'sed' || prog === 'perl') && args.some(EDITA_EN_SITIO))) {
-    // sed/perl: solo los archivos, no el script (`/a/,/b/c\…` parecería una ruta absoluta).
-    const rutas = COPIAN.has(prog) ? destinosDe(prog, args, ctx) : prog === 'sed' || prog === 'perl' ? archivosEnSitio(prog, args) : args
-    for (const a of rutas) {
-      if (a.startsWith('-')) continue
-      const m = motivoRuta(a, { raiz: ctx.raiz, base: ctx.cwd, permitirTemporal: true })
-      if (m) return m
-    }
-  }
   return null
 }
 
 /**
- * Comandos `Externo:` aprobados de las subtareas en curso del flujo del proyecto (`externos` y `en_curso` de `estado.json`,
- * que escribe `estado.mjs`). Un comando vale solo mientras su subtarea esté en `en_curso` y traiga `aprobado`. Un lote puede
- * tener varias en curso: la guardia no liga el agente a una subtarea. Ante cualquier error, `[]` (la guardia sigue negando).
+ * Comandos de los permisos aprobados del flujo del proyecto (`permisos` y `en_curso` de `estado.json`, que escribe
+ * `estado.mjs`): `{ P1: { rol, sub, comando, … , aprobado } }`. Un comando vale solo con `aprobado`, `rol` `ejecutor` y su
+ * `sub` (número) en `en_curso`. Un lote puede tener varias en curso: la guardia no liga el agente a una subtarea. Ante
+ * cualquier error, `[]` (la guardia sigue negando).
  */
-export function externosAprobados(raiz) {
+export function permisosAprobados(raiz) {
   try {
     const estado = leerJson(path.join(flujoDe(raiz), 'estado.json'))
-    if (!estado || !Array.isArray(estado.en_curso) || !estado.externos || typeof estado.externos !== 'object') return []
-    const comandos = []
-    for (const n of estado.en_curso) {
-      const e = Object.hasOwn(estado.externos, String(n)) ? estado.externos[String(n)] : null
-      if (e && typeof e.aprobado === 'string' && e.aprobado && typeof e.comando === 'string' && e.comando.trim()) comandos.push(e.comando)
-    }
-    return comandos
+    if (!estado || !Array.isArray(estado.en_curso) || !estado.permisos || typeof estado.permisos !== 'object' || Array.isArray(estado.permisos)) return []
+    return Object.values(estado.permisos)
+      .filter((p) => p && p.rol === 'ejecutor' && typeof p.aprobado === 'string' && p.aprobado && estado.en_curso.includes(p.sub) && typeof p.comando === 'string' && p.comando.trim())
+      .map((p) => p.comando)
   } catch {
     return []
   }
 }
 
-/**
- * Un `Externo:` aprobado → RegExp sobre las palabras de un comando simple (unidas por un espacio): texto exacto con espacios
- * normalizados y `*` como comodín. `null` si no es un comando simple (varios comandos, redirecciones, sustituciones) o si el
- * programa lleva comodín.
- */
-export function regexDeExterno(comando) {
-  // El plan escribe los comandos entre comillas invertidas: un par que envuelve todo el comando se quita.
+/** El plan escribe los comandos entre comillas invertidas: un par que envuelve todo el comando se quita. */
+function sinEnvoltura(comando) {
   const envuelto = /^(`+)([^`]+)\1$/.exec(String(comando).trim())
-  const simples = analizar(envuelto ? envuelto[2] : String(comando))
+  return envuelto ? envuelto[2] : String(comando)
+}
+
+/** Índice (en `ws`) de la primera palabra que no es opción desde `desde`, saltando el valor de las de `conValor`; la última si no hay. */
+function sinOpcion(ws, desde, conValor = new Set()) {
+  for (let k = desde; k < ws.length; k++) {
+    if (!ws[k].startsWith('-')) return k
+    if (conValor.has(ws[k])) k++
+  }
+  return ws.length - 1
+}
+
+/**
+ * Índice de la última palabra de `ws` que no admite comodín: el programa y su primer argumento no-opción; con `exec`, `dlx`,
+ * `x` o `run` de un gestor, también el siguiente; en `node`, hasta el script (sin script, todo el comando).
+ */
+function ultimoLiteral(ws) {
+  const prog = nombreProg(ws[0])
+  if (prog === 'node') {
+    const i = indiceScript(ws.slice(1))
+    return i < 0 ? ws.length - 1 : i + 1
+  }
+  const gestor = GESTORES.has(prog)
+  const k = sinOpcion(ws, 1, gestor ? PM_OPC_CON_VALOR : undefined)
+  return gestor && ['exec', 'dlx', 'x', 'run'].includes(ws[k]) ? sinOpcion(ws, k + 1) : k
+}
+
+/**
+ * Un permiso aprobado → RegExp sobre las palabras de un comando simple (unidas por un espacio): texto exacto con espacios
+ * normalizados y `*` como comodín. `null` si no es un comando simple (varios comandos, redirecciones, sustituciones) o si el
+ * comodín cae en el programa, en su primer argumento (o los que fija `ultimoLiteral`) o tras un prefijo (`timeout 5 *`).
+ */
+export function regexDePermiso(comando) {
+  const simples = analizar(sinEnvoltura(comando))
   if (simples.length !== 1 || simples[0].redirs.length) return null
   const ws = simples[0].palabras
-  if (!ws.length || ws[0].includes('*') || ws.some((w) => w.includes('\u0000'))) return null
+  if (!ws.length || ws.some((w) => w.includes('\u0000'))) return null
+  if (ws.some((w) => w.includes('*')) && (sinPrefijos(ws).length !== ws.length || ws.slice(0, ultimoLiteral(ws) + 1).some((w) => w.includes('*')))) return null
   const texto = ws.join(' ').replace(/\s+/g, ' ')
   return new RegExp(`^${[...texto].map((c) => (c === '*' ? '[^\\u0000]*' : c.replace(/[.+^${}()|[\]\\?]/g, '\\$&'))).join('')}$`)
 }
 
-/** Motivo para negar el comando completo, o null. `ctx`: { rol, raiz, cwd, powershell, externos }. */
+/** Motivo para negar el comando completo, o null. `ctx`: { rol, raiz, cwd, powershell, permisos }. */
 export function evaluarCadena(cmd, ctx) {
   const simples = analizar(cmd, { powershell: ctx.powershell })
   if (bajaYEjecuta(cmd, simples, ctx)) return 'red: bajar algo y ejecutarlo en el mismo comando no se permite (`curl … | sh`, `iex (irm …)`)'
@@ -1332,16 +1394,40 @@ export function evaluarCadena(cmd, ctx) {
 
 // ── Entrada del hook ────────────────────────────────────────────────────────
 
-/** `{ motivo, objetivo }`: motivo para negar (o null) y qué anotar en el registro. */
+/**
+ * Motivo para negar un `Read` de un `.env` (salvo plantillas) o de un secreto del proyecto, o un `Grep` con `path` o `glob`
+ * que los nombre; null si no. El `pattern` de un Grep es libre y `Glob` no se revisa.
+ */
+export function motivoLectura(evento, raiz = RAIZ) {
+  const herramienta = evento?.tool_name ?? ''
+  const entrada = evento?.tool_input ?? {}
+  const cwd = typeof evento?.cwd === 'string' && evento.cwd ? path.resolve(rutaNativa(evento.cwd)) : raiz
+  const nombrados = herramienta === 'Read' ? [entrada.file_path] : herramienta === 'Grep' ? [entrada.path, entrada.glob] : []
+  for (const n of nombrados) {
+    if (typeof n !== 'string' || !n) continue
+    if (SECRETO.test(n)) return `${n} es un .env (secretos)`
+    if (nombraSecreto(n, { raiz, cwd })) return `${n} guarda secretos o claves (secreto del proyecto)`
+  }
+  return null
+}
+
+/** `{ motivo, objetivo, permiso }`: motivo para negar (o null), qué anotar en el registro y si un permiso aprobado lo levantaría. */
 export function evaluar(evento, rol, raiz = RAIZ) {
   const herramienta = evento?.tool_name ?? ''
   const entrada = evento?.tool_input ?? {}
   const cwd = typeof evento?.cwd === 'string' && evento.cwd ? path.resolve(rutaNativa(evento.cwd)) : raiz
   if (herramienta === 'Bash' || herramienta === 'PowerShell') {
     const comando = String(entrada.command ?? '')
-    const externos = rol === 'ejecutor' ? externosAprobados(raiz).map(regexDeExterno).filter(Boolean) : []
-    const motivo = evaluarCadena(comando, { rol, raiz, cwd, powershell: herramienta === 'PowerShell', externos })
-    return { motivo, objetivo: comando.replace(/\s*\r?\n\s*/g, ' ⏎ ').slice(0, 300) }
+    const powershell = herramienta === 'PowerShell'
+    const permisos = rol === 'ejecutor' ? permisosAprobados(raiz).map(regexDePermiso).filter(Boolean) : []
+    const motivo = evaluarCadena(comando, { rol, raiz, cwd, powershell, permisos })
+    // Con un permiso que lo cubra todo, ¿pasaría? Entonces el ejecutor puede pedirlo (NECESITA_PERMISO).
+    const permiso = Boolean(motivo) && rol === 'ejecutor' && evaluarCadena(comando, { rol, raiz, cwd, powershell, permisos: [/^[^]*$/] }) === null
+    return { motivo, objetivo: comando.replace(/\s*\r?\n\s*/g, ' ⏎ ').slice(0, 300), permiso }
+  }
+  if (herramienta === 'Read' || herramienta === 'Grep') {
+    const motivo = motivoLectura(evento, raiz)
+    return { motivo, objetivo: motivo ? lecturaDe(evento, raiz)?.objetivo ?? null : null }
   }
   if (['Edit', 'Write', 'NotebookEdit', 'MultiEdit'].includes(herramienta)) {
     const ruta = String(entrada.file_path ?? entrada.notebook_path ?? '')
@@ -1453,11 +1539,13 @@ async function main() {
   const lectura = ROLES_LECTURA.includes(rol)
   const raiz = raizDe(process.env.CLAUDE_PROJECT_DIR || evento?.cwd || process.cwd())
   if (lectura) {
-    // Anota; solo niega al explorador que pasó el tope de contexto. Cualquier error deja pasar.
+    // Anota; niega un .env o un secreto del proyecto y, al explorador, el pasar el tope de contexto. Cualquier error deja pasar.
     let excedido = null
+    let secreto = null
     try {
+      secreto = motivoLectura(evento, raiz)
       const l = lecturaDe(evento, raiz)
-      if (!l) return
+      if (!l && !secreto) return
       const contexto = rol === 'explorador' ? contextoDelAgente(evento) : null
       excedido = contexto !== null && contexto > TOPE_CONTEXTO_EXPLORADOR ? Math.round(contexto / 1000) : null
       registrar(raiz, {
@@ -1466,11 +1554,21 @@ async function main() {
         agente: evento.agent_id ?? null,
         esfuerzo: evento.effort?.level ?? evento.effort ?? null,
         herramienta: evento.tool_name,
-        objetivo: l.objetivo,
-        ...(excedido !== null ? { decision: 'negado', motivo: `contexto ${excedido}k` } : { decision: 'lectura' }),
+        objetivo: l?.objetivo ?? null,
+        ...(secreto ? { decision: 'negado', motivo: secreto } : excedido !== null ? { decision: 'negado', motivo: `contexto ${excedido}k` } : { decision: 'lectura' }),
       })
     } catch {
-      // Una lectura nunca se frena.
+      // Una lectura nunca se frena por un error.
+    }
+    if (secreto) {
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: `Guardia /impl: ${secreto}. No lo rodees: para buscar el texto en el código, usa Grep sin ese path; si no, anótalo en tu reporte.`,
+        },
+      }))
+      return
     }
     if (excedido !== null) {
       process.stdout.write(JSON.stringify({
@@ -1538,7 +1636,9 @@ async function main() {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: `Guardia /impl: ${resultado.motivo}. No lo rodees: anótalo en BLOQUEOS de tu reporte.`,
+        permissionDecisionReason: resultado.permiso
+          ? `Guardia /impl: ${resultado.motivo}. No lo rodees: si tu subtarea necesita ese comando, pide en BLOQUEOS de tu reporte \`NECESITA_PERMISO: <comando exacto> · <servicio> · reversible: sí|no · Qué hace: … · Para qué: …\` (ESTADO: BLOQUEADO); el usuario lo aprueba en el plan.`
+          : `Guardia /impl: ${resultado.motivo}. No lo rodees: anótalo en BLOQUEOS de tu reporte.`,
       },
     }))
   }

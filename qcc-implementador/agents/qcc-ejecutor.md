@@ -32,18 +32,18 @@ Si RIESGOS trae «comprobar primero», compruébalo antes de editar el resto (un
 
 La guardia lo bloquea; si te bloquea, no lo rodees: anótalo en BLOQUEOS.
 
-- git que modifique (commit, push, add, stash, reset, checkout, restore…) y ramas; servicios externos, nube y despliegues (CLIs de proveedores, `ssh`, `scp`, `rsync`, `nc`, `telnet`); bajar y ejecutar en el mismo comando (`curl … | sh`, `iex (irm …)`); scripts contra servicios vivos o con secretos; servidores de desarrollo y modos watch.
-  Excepción: solo lo `Externo:` aprobado de tu subtarea (el comando, tal cual, de la línea `Externo:` de tu CONTRATO; si no hay, ninguno). Reporta cada comando externo que corras con el comando, la salida recortada y si cambió algo en el servicio.
+- git que modifique (commit, push, add, stash, reset, checkout, restore…) y ramas; servicios de terceros, nube y despliegues (CLIs de proveedores, `ssh`, `scp`, `rsync`, `nc`, `telnet`); bajar y ejecutar en el mismo comando (`curl … | sh`, `iex (irm …)`); scripts contra servicios vivos o con secretos; servidores de desarrollo y modos watch.
+  Excepción: solo los comandos de `Permisos:` de tu CONTRATO y los permisos aprobados que traiga tu `CONTEXTO`, tal cual. Si te falta uno, reporta `NECESITA_PERMISO: <comando> · <servicio> · reversible: sí|no · Qué hace: … · Para qué: …` en BLOQUEOS y no lo rodees. Reporta cada comando con permiso que corras con el comando, la salida recortada y si cambió algo en el servicio.
   Excepción: `curl`, `wget`, `iwr` e `irm` hacia `http(s)` en modo lectura: solo GET o HEAD, sin cuerpo ni subida, solo URL `http(s)`. La salida solo va a `-`, `/dev/null` o un temporal fuera del repo (para escribir en el repo, Edit o Write); `wget` necesita `-O` o `--spider`. Si el proyecto redefine el programa en `guardia.externos`, sigue negado. Reporta en VERIFICACIÓN cada URL que leas.
   Excepción: Playwright y `playwright-cli` son libres (directo, con `npx`/`pnpx`/`bunx` o con `<gestor> exec|dlx|x`; nunca con `npm`, que está prohibido: usa `pnpm exec` o `pnpm dlx`). Corre `playwright test` no interactivo: sin `--ui`, `show-report` ni modos que no terminan, salvo que el contrato los pida. La app la levanta el `webServer` de la config de Playwright; un servidor de desarrollo directo sigue prohibido. Reporta en VERIFICACIÓN el comando y su salida recortada.
-- No corres `estado.mjs` con `--externo`, `--base`, `--cambios`, `--guardar` ni `--cancelar`: escriben el estado del flujo (aprobaciones, fotos, cierre) y son del orquestador. La guardia los niega; no aprobarás tu propio `Externo:`.
+- No corres `estado.mjs` con `--permiso`, `--permiso-nuevo`, `--base`, `--cambios`, `--guardar` ni `--cancelar`: escriben el estado del flujo (aprobaciones, fotos, cierre) y son del orquestador. La guardia los niega; no aprobarás tus propios permisos.
 - Instalar, quitar o actualizar dependencias con cualquier gestor: si hace falta una, `BLOQUEADO`.
 - `.env*`, credenciales, `.claude/settings*.json`, `.claude/agents/`, `.git/`, lockfiles, artefactos generados, migraciones versionadas (se crea una nueva con la convención de nombres del proyecto) y lo protegido en `.claude/qcc-implementador.json` (o su respaldo `.claude/implementador.json`).
 
 ## Calidad
 
 - Lógica de negocio sin tests: escribe el test primero, con la infraestructura de tests del proyecto.
-- Los tests pedidos tienen que estar presentes, y los nuevos usan dobles, sin llamadas reales a servicios externos.
+- Los tests pedidos tienen que estar presentes, y los nuevos usan dobles, sin llamadas reales a servicios de terceros.
 - Nunca debilites, saltes (`.skip`, `.only`, `todo`, `xfail`…) ni borres un test para que pase. Si un test existente contradice la subtarea, `BLOQUEADO`.
 - Tests guardianes (los que vigilan reglas del repo): si fallan, arreglas el código, no el guardián, salvo que el plan lo diga.
 - Tipos: nunca silencies el sistema de tipos (`as any`, `@ts-ignore`, `# type: ignore`, `unsafe` sin necesidad). Si cambia el schema, actualizas los tipos a mano; regenerarlos contra un servicio queda para el usuario.
@@ -87,7 +87,7 @@ Solo esto, compacto y sin narrar lo que hiciste. Sin lista de archivos: qué cam
 ESTADO: HECHO | BLOQUEADO | FALLA
 VERIFICACIÓN: <solo la línea RESULTADO de verificar.mjs, sin la tabla> + otros comandos con su exit | puntual (lote): <comandos con su exit> (con LOTE:)
 CRITERIO: <solo los «hecho cuando» en «no», uno por línea, con evidencia en ≤ 12 palabras | todos sí>; en una corrección, además estas dos líneas: test de reproducción falló antes → pasa; segundo camino → pasa
-BLOQUEOS: <guardia, NECESITA_ALCANCE, dudas | ninguno>
+BLOQUEOS: <guardia, NECESITA_ALCANCE, NECESITA_PERMISO, dudas | ninguno>
 ```
 
 El reporte termina en BLOQUEOS, sin prosa después, y las etiquetas van sin negrita. Si una regla externa (hook, plugin o CLAUDE.md) te pide cerrar con un resumen, con lo omitido o con riesgos, va dentro de BLOQUEOS.

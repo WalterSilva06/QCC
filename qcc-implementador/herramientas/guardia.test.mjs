@@ -1,4 +1,4 @@
-// Casos de la guardia de /impl: qué niega y qué deja pasar cada rol, el hook por agent_type y los externos aprobados.
+// Casos de la guardia de /impl: qué niega y qué deja pasar cada rol, el hook por agent_type y los permisos aprobados.
 // Correr: node --test qcc-implementador/herramientas/guardia.test.mjs
 //
 // Arma dos repos de prueba en el temporal: uno con `.claude/implementador.json` estricto (nombre viejo, que se
@@ -14,7 +14,7 @@ import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { evaluar, rolDeAgente, analizar, raizDe, registroDe, flujoDe, nombreDe, gitDirDe, carpetaGlobal, configDe, coincide, regexDeExterno } from './guardia.mjs'
+import { evaluar, rolDeAgente, analizar, raizDe, registroDe, flujoDe, nombreDe, gitDirDe, carpetaGlobal, configDe, coincide, regexDePermiso, motivoFijoDe } from './guardia.mjs'
 import { listaPermitidos, enAlcance } from './estado.mjs'
 import { pasosDe } from './verificar.mjs'
 
@@ -609,7 +609,7 @@ test('PowerShell y herramientas que la guardia no vigila', () => {
   niega(ps(R, 'Remove-Item -Recurse src\\x'))
   deja(ps(R, 'Get-ChildItem src'))
   deja(ps(R, 'Write-Output "a`nb"'))
-  deja(ev(R, 'Read', { file_path: '.env' }))
+  niega(ev(R, 'Read', { file_path: '.env' }))
   deja(ev(R, 'Grep', { pattern: 'x' }))
 })
 
@@ -843,8 +843,8 @@ test('guardia como hook: niega y anota por el agent_type; la sesión principal y
   }
 })
 
-/** Repo de prueba con el `estado.json` de un flujo que tiene `en_curso` y `externos` (la forma que escribe estado.mjs). */
-function repoConExternos(nombre, estado) {
+/** Repo de prueba con el `estado.json` de un flujo que tiene `en_curso` y `permisos` (la forma que escribe estado.mjs). */
+function repoConPermisos(nombre, estado) {
   const raiz = repo(nombre, { 'package.json': { scripts: { dev: 'vite', build: 'vite build' } }, 'package-lock.json': '{}', 'src/a.ts': '' })
   temporales.push(raiz)
   fs.mkdirSync(flujoDe(raiz), { recursive: true })
@@ -853,15 +853,18 @@ function repoConExternos(nombre, estado) {
 }
 
 const APROBADO = '2026-10-29T10:00:00.000Z'
-const externo = (comando, aprobado = APROBADO) => ({ comando, reversible: true, ...(aprobado ? { aprobado } : {}) })
+/** Un permiso del estado: `sub` es la subtarea a la que pertenece; sin `aprobado` (null) sigue pendiente. */
+const permiso = (sub, comando, aprobado = APROBADO, extra = {}) => ({
+  rol: 'ejecutor', sub, comando, servicio: 'un servicio', reversible: true, queHace: 'hace algo', paraQue: 'lo necesita la subtarea',
+  ...(aprobado ? { aprobado } : {}), ...extra,
+})
+/** Los permisos de `lista` ([sub, comando, aprobado?]) como los guarda estado.mjs: `{ P1: …, P2: … }`. */
+const permisos = (...lista) => Object.fromEntries(lista.map(([sub, comando, aprobado], i) => [`P${i + 1}`, permiso(sub, comando, aprobado)]))
 
-test('externo aprobado: el comando exacto pasa durante su subtarea', () => {
-  const R = repoConExternos('externo-pasa', {
+test('permiso aprobado: el comando exacto pasa durante su subtarea', () => {
+  const R = repoConPermisos('permiso-pasa', {
     en_curso: [2],
-    externos: {
-      2: externo('gh pr list --json number'),
-      3: externo('gh issue view *'),
-    },
+    permisos: permisos([2, 'gh pr list --json number'], [3, 'gh issue view *']),
   })
   for (const c of [
     'gh pr list --json number',
@@ -874,39 +877,39 @@ test('externo aprobado: el comando exacto pasa durante su subtarea', () => {
   // El comodín `*` de otra subtarea que no está en curso no vale.
   niega(bash(R, 'gh issue view 12 --json title'))
 
-  const W = repoConExternos('externo-comodin', {
+  const W = repoConPermisos('permiso-comodin', {
     en_curso: [4],
-    externos: { 4: externo('gh issue view *'), 5: externo('docker compose up -d') },
+    permisos: permisos([4, 'gh issue view *'], [5, 'docker compose up -d']),
   })
   deja(bash(W, 'gh issue view 12 --json title'))
   deja(bash(W, 'cd src && gh issue view 12'))
   niega(bash(W, 'gh issue edit 12'))
   niega(bash(W, 'docker compose up -d'))
 
-  // Un Externo aprobado también deja pasar un `dev`: el comando es exacto.
-  const D = repoConExternos('externo-dev', { en_curso: [1], externos: { 1: externo('npm run dev') } })
+  // Un permiso aprobado también deja pasar un `dev`: el comando es exacto.
+  const D = repoConPermisos('permiso-dev', { en_curso: [1], permisos: permisos([1, 'npm run dev']) })
   deja(bash(D, 'npm run dev'))
   niega(bash(D, 'npm run dev -- --host'))
   niega(bash(D, 'npm start'))
 })
 
-test('externo aprobado: el mismo comando se niega en otra subtarea', () => {
-  const R = repoConExternos('externo-otra', { en_curso: [1], externos: { 2: externo('gh pr list --json number') } })
+test('permiso aprobado: el mismo comando se niega en otra subtarea', () => {
+  const R = repoConPermisos('permiso-otra', { en_curso: [1], permisos: permisos([2, 'gh pr list --json number']) })
   niega(bash(R, 'gh pr list --json number'))
   // Sin subtarea en curso (el estado la borra al cerrar), o con `en_curso` mal formado, tampoco.
   for (const estado of [
-    { externos: { 2: externo('gh pr list --json number') } },
-    { en_curso: [], externos: { 2: externo('gh pr list --json number') } },
-    { en_curso: 2, externos: { 2: externo('gh pr list --json number') } },
-    { en_curso: ['x'], externos: { 2: externo('gh pr list --json number') } },
-  ]) niega(bash(repoConExternos('externo-sin-curso', estado), 'gh pr list --json number'))
+    { permisos: permisos([2, 'gh pr list --json number']) },
+    { en_curso: [], permisos: permisos([2, 'gh pr list --json number']) },
+    { en_curso: 2, permisos: permisos([2, 'gh pr list --json number']) },
+    { en_curso: ['x'], permisos: permisos([2, 'gh pr list --json number']) },
+  ]) niega(bash(repoConPermisos('permiso-sin-curso', estado), 'gh pr list --json number'))
   // La subtarea que sí está en curso lo deja pasar.
-  const E = repoConExternos('externo-en-curso', { en_curso: [2], externos: { 2: externo('gh pr list --json number') } })
+  const E = repoConPermisos('permiso-en-curso', { en_curso: [2], permisos: permisos([2, 'gh pr list --json number']) })
   deja(bash(E, 'gh pr list --json number'))
 })
 
-test('externo aprobado: un comando distinto sigue negado', () => {
-  const R = repoConExternos('externo-distinto', { en_curso: [2], externos: { 2: externo('gh pr list --json number') } })
+test('permiso aprobado: un comando distinto sigue negado', () => {
+  const R = repoConPermisos('permiso-distinto', { en_curso: [2], permisos: permisos([2, 'gh pr list --json number']) })
   for (const c of [
     'gh pr create',
     'gh pr list --json number --limit 5',
@@ -921,38 +924,43 @@ test('externo aprobado: un comando distinto sigue negado', () => {
     'git push',
     'timeout 30 gh pr create',
   ]) niega(bash(R, c))
-  // Un `*` en el programa no habilita nada; ni comandos compuestos o con redirección en el Externo.
-  for (const comando of ['* pr list', 'gh pr list; gh pr create', 'gh pr list > salida.txt', 'echo $(gh pr list)', '']) {
-    const X = repoConExternos('externo-malo', { en_curso: [2], externos: { 2: externo(comando) } })
+  // Un `*` en el programa o en el primer argumento no habilita nada; ni comandos compuestos o con redirección en el permiso.
+  for (const comando of ['* pr list', 'gh * list', 'gh pr list; gh pr create', 'gh pr list > salida.txt', 'echo $(gh pr list)', '']) {
+    const X = repoConPermisos('permiso-malo', { en_curso: [2], permisos: permisos([2, comando]) })
     niega(bash(X, 'gh pr list'))
     niega(bash(X, 'gh pr create'))
   }
 })
 
-test('externo sin aprobar sigue negado', () => {
+test('permiso sin aprobar sigue negado', () => {
+  const p = (extra) => ({ P1: permiso(2, 'gh pr list --json number', APROBADO, extra) })
   for (const estado of [
-    { en_curso: [2], externos: { 2: externo('gh pr list --json number', null) } },
-    { en_curso: [2], externos: { 2: externo('gh pr list --json number', '') } },
-    { en_curso: [2], externos: { 2: { comando: 'gh pr list --json number', reversible: true, aprobado: true } } },
+    { en_curso: [2], permisos: permisos([2, 'gh pr list --json number', null]) },
+    { en_curso: [2], permisos: permisos([2, 'gh pr list --json number', '']) },
+    { en_curso: [2], permisos: p({ aprobado: true }) },
+    // Solo vale el permiso del ejecutor y con `sub` numérico dentro de `en_curso`.
+    { en_curso: [2], permisos: p({ rol: 'revisor' }) },
+    { en_curso: [2], permisos: p({ rol: undefined }) },
+    { en_curso: [2], permisos: p({ sub: '2' }) },
+    { en_curso: [2], permisos: p({ sub: undefined }) },
     { en_curso: [2] },
-    { en_curso: [2], externos: [] },
-    { en_curso: [2], externos: { 2: null } },
-    { en_curso: [2], externos: { 2: { aprobado: APROBADO } } },
+    { en_curso: [2], permisos: [] },
+    { en_curso: [2], permisos: { P1: null } },
+    { en_curso: [2], permisos: { P1: { aprobado: APROBADO } } },
+    // La forma vieja (`externos`) ya no vale.
+    { en_curso: [2], externos: { 2: { comando: 'gh pr list --json number', reversible: true, aprobado: APROBADO } } },
     '{no es json',
     '[]',
     'null',
-  ]) niega(bash(repoConExternos('externo-sin-aprobar', estado), 'gh pr list --json number'))
+  ]) niega(bash(repoConPermisos('permiso-sin-aprobar', estado), 'gh pr list --json number'))
   // Sin flujo abierto ni estado.json.
-  niega(bash(repo('externo-sin-flujo', { 'src/a.ts': '' }), 'gh pr list --json number'))
+  niega(bash(repo('permiso-sin-flujo', { 'src/a.ts': '' }), 'gh pr list --json number'))
 })
 
-test('externo aprobado: .env y secretos siguen negados', () => {
-  const R = repoConExternos('externo-secretos', {
+test('permiso aprobado: .env y secretos siguen negados', () => {
+  const R = repoConPermisos('permiso-secretos', {
     en_curso: [1],
-    externos: {
-      1: externo('gh api *'),
-      2: externo('supabase secrets set --env-file .env'),
-    },
+    permisos: permisos([1, 'gh api *'], [1, 'supabase secrets set --env-file .env']),
   })
   // El Externo coincide por el comodín, pero el comando toca un .env o escribe fuera del repo.
   for (const c of [
@@ -964,25 +972,50 @@ test('externo aprobado: .env y secretos siguen negados', () => {
     `gh api repos/x/y > ${path.join(os.homedir(), 'otro-repo', 'x.json').replace(/\\/g, '/')}`,
   ]) niega(bash(R, c))
   deja(bash(R, 'gh api repos/x/y > /tmp/y.json'))
-  // Un Externo que él mismo nombra un .env tampoco pasa.
-  const S = repoConExternos('externo-secretos-2', { en_curso: [2], externos: { 2: externo('supabase secrets set --env-file .env') } })
+  // Un permiso que él mismo nombra un .env tampoco pasa.
+  const S = repoConPermisos('permiso-secretos-2', { en_curso: [2], permisos: permisos([2, 'supabase secrets set --env-file .env'], [2, 'cat .env']) })
   niega(bash(S, 'supabase secrets set --env-file .env'))
   niega(bash(S, 'cat .env'))
   // Un secreto declarado por el proyecto.
-  const P = repo('externo-secreto-config', {
+  const P = repo('permiso-secreto-config', {
     '.claude/qcc-implementador.json': { guardia: { secretos: ['CUENTAS_PRUEBA.md'] } },
     'package.json': { scripts: {} },
     'package-lock.json': '{}',
   })
   temporales.push(P)
   fs.mkdirSync(flujoDe(P), { recursive: true })
-  fs.writeFileSync(path.join(flujoDe(P), 'estado.json'), JSON.stringify({ en_curso: [1], externos: { 1: externo('gh api *') } }))
+  fs.writeFileSync(path.join(flujoDe(P), 'estado.json'), JSON.stringify({ en_curso: [1], permisos: permisos([1, 'gh api *']) }))
   niega(bash(P, 'gh api repos/x/y --input CUENTAS_PRUEBA.md'))
   deja(bash(P, 'gh api repos/x/y'))
 })
 
-test('externo aprobado: solo aplica al ejecutor', () => {
-  const R = repoConExternos('externo-rol', { en_curso: [2], externos: { 2: externo('gh pr list --json number') } })
+test('permiso aprobado: node --env-file=.env solo con script y el comando entero aprobado', () => {
+  const R = repoConPermisos('permiso-env-file', {
+    en_curso: [1],
+    permisos: permisos(
+      [1, 'node --env-file=.env scripts/x.mjs'],
+      [1, 'node --env-file=.env.local scripts/y.mjs'],
+      [1, 'node --env-file=.env -e "console.log(1)"'],
+      [1, 'node --env-file=.env scripts/x.mjs .env'],
+      [1, 'node scripts/z.mjs --env-file=.env'],
+    ),
+  })
+  deja(bash(R, 'node --env-file=.env scripts/x.mjs'))
+  deja(bash(R, 'node --env-file=.env.local scripts/y.mjs'))
+  deja(ps(R, 'node --env-file=.env scripts/x.mjs'))
+  niega(bash(R, 'node --env-file=.env -e "console.log(1)"'))
+  niega(bash(R, 'node --env-file=.env scripts/x.mjs .env'))
+  // Después del script ya no es de node, y solo vale el comando aprobado entero.
+  niega(bash(R, 'node scripts/z.mjs --env-file=.env'))
+  niega(bash(R, 'node --env-file=.env scripts/otro.mjs'))
+  niega(bash(R, 'node --env-file=.env scripts/x.mjs --flag'))
+  // Sin aprobación, o para otro rol, se niega.
+  niega(bash(repoConPermisos('permiso-env-file-sin', { en_curso: [1] }), 'node --env-file=.env scripts/x.mjs'))
+  niega(bash(R, 'node --env-file=.env scripts/x.mjs'), 'revisor')
+})
+
+test('permiso aprobado: solo aplica al ejecutor', () => {
+  const R = repoConPermisos('permiso-rol', { en_curso: [2], permisos: permisos([2, 'gh pr list --json number']) })
   deja(bash(R, 'gh pr list --json number'), 'ejecutor')
   niega(bash(R, 'gh pr list --json number'), 'revisor')
   // Como hook: el ejecutor pasa y queda anotado; el revisor se niega; planificador y explorador no ejecutan comandos.
@@ -1001,14 +1034,10 @@ test('externo aprobado: solo aplica al ejecutor', () => {
   borrarRegistro(R)
 })
 
-test('externo aprobado: en un lote, el comando de un miembro aprobado pasa al ejecutor del lote', () => {
-  const R = repoConExternos('externo-lote-pasa', {
+test('permiso aprobado: en un lote, el comando de un miembro aprobado pasa al ejecutor del lote', () => {
+  const R = repoConPermisos('permiso-lote-pasa', {
     en_curso: [1, 2, 3],
-    externos: {
-      1: externo('gh pr list --json number'),
-      2: externo('docker compose ps'),
-      3: externo('gh issue view 7', null),
-    },
+    permisos: permisos([1, 'gh pr list --json number'], [2, 'docker compose ps'], [3, 'gh issue view 7', null]),
   })
   deja(bash(R, 'gh pr list --json number'))
   deja(bash(R, 'docker compose ps'))
@@ -1020,41 +1049,133 @@ test('externo aprobado: en un lote, el comando de un miembro aprobado pasa al ej
   borrarRegistro(R)
 })
 
-test('externo aprobado: en un lote, el comando de un miembro sin aprobar sigue negado', () => {
-  const R = repoConExternos('externo-lote-niega', {
+test('permiso aprobado: en un lote, el comando de un miembro sin aprobar sigue negado', () => {
+  const R = repoConPermisos('permiso-lote-niega', {
     en_curso: [1, 2, 3],
-    externos: {
-      1: externo('gh pr list --json number'),
-      2: externo('docker compose ps'),
-      3: externo('gh issue view 7', null),
-    },
+    permisos: permisos([1, 'gh pr list --json number'], [2, 'docker compose ps'], [3, 'gh issue view 7', null]),
   })
   niega(bash(R, 'gh issue view 7'))
   niega(bash(R, 'gh pr create'))
   // Un miembro aprobado que ya no está en el lote (el estado lo quitó) tampoco pasa.
-  fs.writeFileSync(path.join(flujoDe(R), 'estado.json'), JSON.stringify({ en_curso: [3], externos: { 1: externo('gh pr list --json number'), 3: externo('gh issue view 7', null) } }))
+  fs.writeFileSync(path.join(flujoDe(R), 'estado.json'), JSON.stringify({ en_curso: [3], permisos: permisos([1, 'gh pr list --json number'], [3, 'gh issue view 7', null]) }))
   niega(bash(R, 'gh pr list --json number'))
   niega(bash(R, 'gh issue view 7'))
 })
 
-test('externo aprobado: la guardia tolera comillas invertidas en el comando guardado', () => {
-  const R = repoConExternos('externo-comillas', { en_curso: [2], externos: { 2: externo('`gh pr list --json number`'), 3: externo('``gh issue view *``') } })
+test('permiso aprobado: la guardia tolera comillas invertidas en el comando guardado', () => {
+  const R = repoConPermisos('permiso-comillas', { en_curso: [2], permisos: permisos([2, '`gh pr list --json number`'], [3, '``gh issue view *``']) })
   deja(bash(R, 'gh pr list --json number'))
   niega(bash(R, 'gh pr create'))
-  const W = repoConExternos('externo-comillas-2', { en_curso: [3], externos: { 3: externo('`gh issue view *`') } })
+  const W = repoConPermisos('permiso-comillas-2', { en_curso: [3], permisos: permisos([3, '`gh issue view *`']) })
   deja(bash(W, 'gh issue view 12'))
   niega(bash(W, 'gh issue edit 12'))
   // Un comando con una sustitución dentro de las comillas sigue sin valer.
-  assert.equal(regexDeExterno('`echo `date` x`'), null)
-  assert.ok(regexDeExterno('`gh pr list`'))
+  assert.equal(regexDePermiso('`echo `date` x`'), null)
+  assert.ok(regexDePermiso('`gh pr list`'))
 })
 
-test('ejecutor: estado.mjs con opciones que escriben el estado del flujo se niega', () => {
-  const R = repoConExternos('ejecutor-estado', { en_curso: [3], externos: { 3: externo('gh pr list --json number') } })
+test('regexDePermiso: el comodín no cae en el programa ni en el primer argumento', () => {
+  for (const c of ['pnpm *', 'node *', 'node scripts/*', 'pnpm exec *', 'pnpm dlx *', 'pnpm run *', 'npm exec -- *', 'pnpm --filter x exec *', 'gh * list', 'timeout 5 *', 'node --env-file=.env * scripts/x.mjs']) {
+    assert.equal(regexDePermiso(c), null, c)
+  }
+  for (const c of ['pnpm db:push', 'pnpm dev', 'pnpm exec tsc *', 'node --env-file=.env scripts/flow/tunel/ui.mjs sem4 *', 'gh issue view *', 'node scripts/x.mjs *']) {
+    assert.ok(regexDePermiso(c) instanceof RegExp, c)
+  }
+  // El comodín cubre argumentos, no cambia lo que corre.
+  assert.ok(regexDePermiso('gh issue view *').test('gh issue view 12 --json title'))
+  assert.ok(!regexDePermiso('gh issue view *').test('gh issue edit 12'))
+  assert.ok(!regexDePermiso('pnpm db:push').test('pnpm db:push --force'))
+})
+
+test('permiso aprobado: lo que ningún permiso levanta se niega aunque coincida', () => {
+  const comandos = [
+    'git commit -m x', 'git merge main', 'git -C . rebase main', 'git reset --hard', 'git push', 'format c:', 'diskpart', 'mkfs /dev/sda',
+    'node C:/plugin/herramientas/estado.mjs --aprobado --paso 4', 'cat .env',
+    'cp a .claude/settings.json', 'cp a ~/.claude/settings.json', 'cp a .git/x', 'cp a node_modules/x', 'cp a package-lock.json', 'tee .env.local',
+  ]
+  const R = repoConPermisos('permiso-fijo', { en_curso: [1], permisos: permisos(...comandos.map((c) => [1, c])) })
+  for (const c of comandos) {
+    assert.ok(regexDePermiso(c), `el permiso de «${c}» debía ser válido`)
+    niega(bash(R, c))
+    niega(ps(R, c))
+  }
+  // Un permiso válido del mismo repo sigue pasando.
+  fs.writeFileSync(path.join(flujoDe(R), 'estado.json'), JSON.stringify({ en_curso: [1], permisos: permisos([1, 'pnpm db:push'], [1, 'cp a /tmp/b']) }))
+  deja(bash(R, 'cp a /tmp/b'))
+})
+
+test('sin aprobación, los grupos negados siguen negados', () => {
+  const R = repoConPermisos('permiso-grupos', { en_curso: [1] })
+  for (const c of [
+    'git push', 'gh pr create', 'docker ps', 'supabase db push', 'curl -X POST https://example.com', 'ssh host', 'npx cowsay', 'npm install x',
+    'npm run dev', 'node --env-file=.env scripts/x.mjs', 'cp a .git/x', 'format c:', 'cat .env',
+  ]) niega(bash(R, c))
+})
+
+test('motivoFijoDe: git que modifica se niega, un comando sin riesgo fijo no', () => {
+  assert.ok(motivoFijoDe('git commit -m x', { raiz: ESTRICTO }))
+  assert.ok(motivoFijoDe('`git push`', { raiz: ESTRICTO }))
+  assert.ok(motivoFijoDe('cd src && git reset --hard', { raiz: ESTRICTO }))
+  assert.ok(motivoFijoDe('cp a .git/x', { raiz: ESTRICTO }))
+  assert.equal(motivoFijoDe('pnpm db:push', { raiz: ESTRICTO }), null)
+  assert.equal(motivoFijoDe('git status', { raiz: ESTRICTO }), null)
+})
+
+test('motivoLectura: Read de un .env y Grep con path o glob de secretos se niegan a todos los roles', () => {
+  const R = ESTRICTO
+  const lecturas = [
+    ev(R, 'Read', { file_path: '.env' }),
+    ev(R, 'Read', { file_path: path.join(R, '.env.local') }),
+    ev(R, 'Read', { file_path: 'CUENTAS_PRUEBA.md' }),
+    ev(R, 'Grep', { pattern: 'x', path: '.env' }),
+    ev(R, 'Grep', { pattern: 'x', glob: '**/.env*' }),
+    ev(R, 'Grep', { pattern: 'x', path: 'CUENTAS_PRUEBA.md' }),
+  ]
+  const libres = [
+    ev(R, 'Read', { file_path: '.env.example' }),
+    ev(R, 'Read', { file_path: 'src/server/citas.ts' }),
+    ev(R, 'Grep', { pattern: '.env' }),
+    ev(R, 'Grep', { pattern: 'x', path: 'src' }),
+    ev(R, 'Grep', { pattern: 'x', glob: '*.ts' }),
+    ev(R, 'Glob', { pattern: '**/.env*' }),
+  ]
+  for (const rol of ['ejecutor', 'revisor', 'explorador', 'planificador']) {
+    for (const e of lecturas) {
+      const r = hook(R, rol, e)
+      assert.equal(JSON.parse(r.stdout || '{}').hookSpecificOutput?.permissionDecision, 'deny', `${rol}: ${etiqueta(e)}`)
+      assert.equal(filasDe(R).at(-1).decision, 'negado')
+    }
+    for (const e of libres) assert.equal(hook(R, rol, e).stdout, '', `${rol}: ${etiqueta(e)}`)
+  }
+  for (const e of lecturas) niega(e)
+  for (const e of libres) deja(e)
+  borrarRegistro(R)
+})
+
+test('el mensaje de negación pide NECESITA_PERMISO solo si un permiso aprobado levantaría el comando', () => {
+  const R = repoConPermisos('permiso-mensaje', { en_curso: [1] })
+  const razon = (rol, c) => JSON.parse(hook(R, rol, bash(R, c)).stdout).hookSpecificOutput.permissionDecisionReason
+  for (const c of ['gh pr create', 'curl -X POST https://example.com', 'docker ps', 'npm run dev']) assert.match(razon('ejecutor', c), /NECESITA_PERMISO/, c)
+  for (const c of ['git push', 'cat .env', 'cp a .git/x']) assert.doesNotMatch(razon('ejecutor', c), /NECESITA_PERMISO/, c)
+  assert.doesNotMatch(razon('revisor', 'gh pr create'), /NECESITA_PERMISO/)
+  borrarRegistro(R)
+})
+
+test('el mensaje de negación de un comando externo trae el formato completo que acepta --permiso-nuevo', () => {
+  const R = repoConPermisos('permiso-formato', { en_curso: [1] })
+  const razon = JSON.parse(hook(R, 'ejecutor', bash(R, 'docker ps')).stdout).hookSpecificOutput.permissionDecisionReason
+  assert.match(razon, /NECESITA_PERMISO: <comando exacto> · <servicio> · reversible: sí\|no · Qué hace: … · Para qué: …/)
+  assert.doesNotMatch(razon, /NECESITA_PERMISO: <comando exacto> — /)
+  borrarRegistro(R)
+})
+
+test('estado.mjs con opciones que escriben el estado del flujo se niega a todos los roles', () => {
+  const R = repoConPermisos('subagente-estado', { en_curso: [3], permisos: permisos([3, 'gh pr list --json number']) })
   const E = 'node "$HOME/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs"'
   for (const args of [
-    '--externo 3 aprobado --paso 4',
-    '--externo=3 aprobado',
+    '--permiso P1 --paso 4',
+    '--permiso-nuevo gh --paso 4',
+    '--permiso=P1',
     '--base --sub 3',
     '--base --sub 3 --paso 5',
     '--cambios --global',
@@ -1066,21 +1187,22 @@ test('ejecutor: estado.mjs con opciones que escriben el estado del flujo se nieg
     '--aprobado --paso 4',
     '--reanudar --paso 0',
   ]) {
-    niega(bash(R, `${E} ${args}`))
-    niega(ps(R, `node C:/plugin/herramientas/estado.mjs ${args}`))
-    niega(bash(R, `cd src && ${E} ${args}`))
-    niega(bash(R, `bash -c '${E} ${args}'`))
+    for (const rol of ['ejecutor', 'revisor']) {
+      niega(bash(R, `${E} ${args}`), rol)
+      niega(ps(R, `node C:/plugin/herramientas/estado.mjs ${args}`), rol)
+      niega(bash(R, `cd src && ${E} ${args}`), rol)
+      niega(bash(R, `bash -c '${E} ${args}'`), rol)
+    }
   }
-  // El hook también lo niega.
-  const r = hook(R, 'ejecutor', bash(R, `${E} --externo 3 aprobado --paso 4`))
-  assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny')
+  // El hook también lo niega, al revisor igual que al ejecutor.
+  for (const rol of ['ejecutor', 'revisor']) {
+    const r = hook(R, rol, bash(R, `${E} --aprobado --paso 4`))
+    assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, 'deny', rol)
+  }
   borrarRegistro(R)
-  // Lo que solo lee sigue pasando, y el orquestador (que no es ejecutor) sigue pudiendo escribir.
+  // Lo que solo lee sigue pasando.
   for (const args of ['--diff abc --permitidos "src/a.ts"', '--estado --paso 5', '--reglas']) deja(bash(R, `${E} ${args}`))
   deja(bash(R, 'node -e "console.log(1)" --base'))
-  deja(bash(R, `${E} --externo 3 aprobado --paso 4`), 'orquestador')
-  deja(bash(R, `${E} --base --sub 3`), 'orquestador')
-  deja(bash(R, `${E} --reanudar --paso 0`), 'orquestador')
 })
 
 test.after(() => limpiar(ESTRICTO, GENERICO))

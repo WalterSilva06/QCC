@@ -6,8 +6,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { flujoDe, regexDeExterno } from './guardia.mjs'
-import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, hallazgosDe, sinExplorarDe, avisosDeLargo, externoDe, parecenExternas, permitidosDeSubtarea, noPareceRuta, contextoDe, acopladosSinCubrir } from './estado.mjs'
+import { flujoDe, regexDePermiso, evaluar } from './guardia.mjs'
+import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, hallazgosDe, sinExplorarDe, avisosDeLargo, permisosDe, parecenExternas, permitidosDeSubtarea, noPareceRuta, contextoDe, acopladosSinCubrir } from './estado.mjs'
 
 const PLAN = `PREGUNTAS: ¿algo?
 PLAN · Prueba
@@ -308,44 +308,84 @@ test('plan: --guardar plan avisa los permitidos sin ruta o que no parecen una', 
   assert.deepEqual(estadoJson().subtareas.map((s) => s.permitidos), [['src/a.ts y sus tests', 'src/b.ts.', 'src/c.ts'], [], ['src/d.ts', 'src/e.ts']])
 })
 
-const EXTERNO_SEMILLA ='- Externo: node scripts/seed.mjs · contra la base de pruebas · reversible: sí\n'
+const PIE_PERMISOS = [
+  'PERMISOS A APROBAR:',
+  '  P1 · ejecutor S3 · `pnpm db:push` · Supabase dev · reversible: no',
+  '     Qué hace: revisa y aplica las migraciones pendientes en la base linkeada.',
+  '     Para qué: S3 necesita la columna nueva para probar contra datos reales.',
+  '  P2 · ejecutor S5 · `node --env-file=.env scripts/flow/tunel/ui.mjs sem4 *` · Flow sandbox · reversible: no',
+  '     Qué hace: abre Mi suscripción de la cuenta sem4 en el navegador y ejecuta la acción indicada.',
+  '     Para qué: medir qué cobra Flow al subir cupo durante el trial.',
+  '  P3 · orquestador · `pnpm dev` (en fondo, lo cierra al terminar) · local + túnel · reversible: sí',
+  '     Qué hace: levanta Vite y expone la app en dev.horaki.cl.',
+  '     Para qué: que Playwright use la app y lleguen los webhooks de Flow.',
+].join('\n')
+const SUBTAREAS_5 = [1, 2, 3, 4, 5].map((n) => subtareaDePlan(n, `src/${'abcde'[n - 1]}.ts`))
 
-test('plan: Externo se guarda en el resumen de la subtarea', () => {
-  const { salida, estadoJson } = repoConPlanGuardado('externo-resumen', [
-    subtareaDePlan(1, 'src/a.ts'),
-    subtareaDePlan(2, 'src/b.ts', { extra: EXTERNO_SEMILLA }),
-    subtareaDePlan(3, 'src/c.ts', { extra: '- Externo: curl -s http://localhost:3000/salud · contra el servidor local\n' }),
-  ])
-  const [s1, s2, s3] = estadoJson().subtareas
-  assert.equal('externo' in s1, false)
-  assert.deepEqual(s2.externo, { comando: 'node scripts/seed.mjs', servicio: 'la base de pruebas', reversible: true })
-  assert.deepEqual(s3.externo, { comando: 'curl -s http://localhost:3000/salud', servicio: 'el servidor local', reversible: false })
-  assert.match(salida, /^S2 · Tarea 2 · Crítica: no · permitidos: src\/b\.ts · Externo: node scripts\/seed\.mjs \(reversible: sí\) → .*S2\.md$/m)
-  assert.match(salida, /^ {2}- S3 · Externo: le falta «reversible: sí \| no» \(cuenta como no\)$/m)
-  assert.doesNotMatch(salida, /S2 · Externo: le falta/)
-  // Externo no es obligatorio: sin él no hay «falta».
-  assert.doesNotMatch(salida, /falta «Externo»/)
-  assert.deepEqual(externoDe('ninguno', 1), {})
-  assert.deepEqual(externoDe(null, 1), {})
-  assert.deepEqual(externoDe('', 1), {})
-  // El plan escribe los comandos entre comillas invertidas: se quitan de los extremos y la guardia puede leerlos.
-  const conComillas = externoDe('`gh pr list --json number` · contra GitHub · reversible: sí', 1).externo
-  assert.equal(conComillas.comando, 'gh pr list --json number')
-  assert.equal(conComillas.servicio, 'GitHub')
-  assert.ok(regexDeExterno(conComillas.comando))
-  assert.equal(externoDe('``gh pr list`` · contra GitHub · reversible: sí', 1).externo.comando, 'gh pr list')
-  assert.equal(externoDe('echo `date` · contra x · reversible: sí', 1).externo.comando, 'echo `date`')
+test('plan: permisosDe lee el bloque del pie', () => {
+  const [p1, p2, p3] = permisosDe(PIE_PERMISOS.split('\n'))
+  assert.deepEqual(p1, { id: 'P1', rol: 'ejecutor', sub: 3, comando: 'pnpm db:push', servicio: 'Supabase dev', reversible: false, queHace: 'revisa y aplica las migraciones pendientes en la base linkeada.', paraQue: 'S3 necesita la columna nueva para probar contra datos reales.' })
+  assert.deepEqual([p2.sub, p2.comando], [5, 'node --env-file=.env scripts/flow/tunel/ui.mjs sem4 *'])
+  assert.deepEqual([p3.rol, 'sub' in p3, p3.comando, p3.servicio, p3.reversible], ['orquestador', false, 'pnpm dev', 'local + túnel', true])
+  assert.deepEqual(permisosDe(['Costo: x']), [])
+  // Sin «reversible» cuenta como no y queda marcado; sin comillas invertidas no hay comando.
+  const [q1, q2] = permisosDe(['PERMISOS A APROBAR:', '  P1 · ejecutor S1 · `gh pr list` · GitHub', '  P2 · revisor · sin comillas · x · reversible: sí'])
+  assert.deepEqual([q1.reversible, q1.sinReversible, q2.rol, q2.comando], [false, true, 'revisor', ''])
+  assert.ok(regexDePermiso(p1.comando) && regexDePermiso(p2.comando) && regexDePermiso(p3.comando))
 })
 
-test('plan: AVISO si una subtarea sin Externo parece externa', () => {
+test('plan: los permisos del ejemplo salen en PARA APROBAR, normal y compacto, sin AVISOS', () => {
+  const { salida, estadoJson, raiz } = repoConPlanGuardado('permisos-resumen', [...SUBTAREAS_5, PIE_PERMISOS])
+  assert.match(salida, /^AVISOS: ninguno$/m)
+  const aprobar = salida.slice(salida.indexOf('PARA APROBAR'))
+  assert.match(aprobar, /^PERMISOS A APROBAR:\n {2}P1 · ejecutor S3 · `pnpm db:push` · Supabase dev · reversible: no\n {5}Qué hace: revisa/m)
+  assert.match(aprobar, /P3 · orquestador · `pnpm dev` \(en fondo[^\n]*\n {5}Qué hace: levanta Vite[^\n]*\n {5}Para qué: que Playwright/)
+  const { P1, P2, P3 } = estadoJson().permisos
+  assert.deepEqual(P1, { rol: 'ejecutor', sub: 3, comando: 'pnpm db:push', servicio: 'Supabase dev', reversible: false, queHace: 'revisa y aplica las migraciones pendientes en la base linkeada.', paraQue: 'S3 necesita la columna nueva para probar contra datos reales.' })
+  assert.deepEqual([P2.sub, P3.rol, P3.reversible], [5, 'orquestador', true])
+  assert.equal('externo' in estadoJson().subtareas[2], false)
+  // S<n>.md lista sus permisos.
+  const sn = (n) => fs.readFileSync(path.join(flujoDe(raiz), `S${n}.md`), 'utf8')
+  assert.match(sn(3), /^Permisos \(.*\):\n- P1 · `pnpm db:push` · Supabase dev · reversible: no · Qué hace: revisa .* · Para qué: S3 necesita/m)
+  assert.match(sn(5), /^- P2 · `node --env-file=\.env scripts\/flow\/tunel\/ui\.mjs sem4 \*`/m)
+  assert.match(sn(1), /^Permisos: ninguno$/m)
+  assert.doesNotMatch(sn(1) + sn(2) + sn(4), /pnpm dev/)
+
+  // Compacto (más de 20 subtareas): el bloque también va completo.
+  const muchas = Array.from({ length: 21 }, (_, i) => subtareaDePlan(i + 1, `src/${'abc'[i % 3]}.ts`))
+  const c = repoConPlanGuardado('permisos-compacto', [...muchas, PIE_PERMISOS.replace('S3', 'S1').replace('S5', 'S2')]).salida
+  assert.match(c, /^AVISOS: ninguno$/m)
+  assert.match(c.slice(c.indexOf('PARA APROBAR')), /^PERMISOS A APROBAR:\n {2}P1 · ejecutor S1 .*\n {5}Qué hace:.*\n {5}Para qué:.*\n {2}P2 · ejecutor S2/m)
+})
+
+test('plan: AVISOS de permisos', () => {
+  const pie = (...lineas) => ['PERMISOS A APROBAR:', ...lineas].join('\n')
+  const hace = ['     Qué hace: x', '     Para qué: y']
+  const avisos = (lineas) => repoConPlanGuardado('permisos-avisos', [...SUBTAREAS_5.slice(0, 2), pie(...lineas)]).salida
+  // Campos que faltan, quién inválido y subtarea inexistente.
+  let s = avisos(['  P1 · ejecutor S1 · `pnpm db:push` · Supabase', '  P2 · revisor · `pnpm dev` · local · reversible: sí', ...hace, '  P3 · ejecutor S9 · `pnpm dev` · local · reversible: sí', ...hace])
+  assert.match(s, /^ {2}- P1 · le falta «reversible: sí \| no» \(cuenta como no\), «Qué hace», «Para qué»$/m)
+  assert.match(s, /^ {2}- P2 · quién «revisor» no vale/m)
+  assert.match(s, /^ {2}- P3 · quién «ejecutor S9» no vale/m)
+  // Comodín inválido, lo que se niega aun aprobado y un script que la subtarea puede editar.
+  s = avisos(['  P1 · ejecutor S1 · `pnpm *` · x · reversible: sí', ...hace, '  P2 · ejecutor S1 · `git commit -m x` · x · reversible: sí', ...hace, '  P3 · ejecutor S2 · `node src/b.ts` · x · reversible: sí', ...hace])
+  assert.match(s, /^ {2}- P1 · «pnpm \*» no se puede aprobar/m)
+  assert.match(s, /^ {2}- P2 · «git commit -m x» se niega aun aprobado/m)
+  assert.match(s, /^ {2}- P3 · «src\/b\.ts» está en los permitidos de una subtarea/m)
+  // Bloque sin permisos leídos (quedó tras «Costo:»).
+  s = repoConPlanGuardado('permisos-costo', [...SUBTAREAS_5.slice(0, 1), 'Costo: x\nPERMISOS A APROBAR:\n  P1 · ejecutor S1 · `pnpm dev` · x · reversible: sí\n     Qué hace: x\n     Para qué: y']).salida
+  assert.match(s, /^ {2}- PERMISOS A APROBAR: el bloque está pero no se leyó ningún permiso/m)
+})
+
+test('plan: AVISO si una subtarea sin permiso parece externa', () => {
   const { salida } = repoConPlanGuardado('externo-aviso', [
     subtareaDePlan(1, 'src/a.ts', { hecho: 'node --test → verde' }),
     subtareaDePlan(2, 'src/b.ts', { hecho: 'abre el servidor y Playwright ve el botón' }),
     subtareaDePlan(3, 'src/c.ts', { hecho: 'verde\n  - corre `supabase db push --linked` y responde 200' }),
   ])
   assert.doesNotMatch(salida, /S1 parece externa/)
-  assert.match(salida, /^ {2}- S2 parece externa y no está marcada \(menciona «servidor»\)/m)
-  assert.match(salida, /^ {2}- S3 parece externa y no está marcada \(menciona «--linked»\)/m)
+  assert.match(salida, /^ {2}- S2 parece externa y no tiene permiso \(menciona «servidor»\)/m)
+  assert.match(salida, /^ {2}- S3 parece externa y no tiene permiso \(menciona «--linked»\)/m)
   for (const [texto, palabra] of [['localhost', 'localhost'], ['--env-file', '--env-file'], ['deploy', 'deploy'], ['GET a /salud', 'GET a']]) {
     assert.equal(parecenExternas([`- Tests: prueba con ${texto}`]), palabra, texto)
   }
@@ -356,69 +396,175 @@ test('plan: AVISO si una subtarea sin Externo parece externa', () => {
   assert.equal(parecenExternas(['- Riesgos: r', '  - sub: deploy', '- Reversión: v']), 'deploy')
 })
 
-test('plan: sin AVISO con Externo marcado', () => {
+test('plan: sin AVISO con permiso en la subtarea', () => {
   const { salida } = repoConPlanGuardado('externo-sin-aviso', [
     subtareaDePlan(1, 'src/a.ts'),
-    subtareaDePlan(2, 'src/b.ts', { extra: EXTERNO_SEMILLA, hecho: 'curl a localhost responde 200 contra el servidor' }),
+    subtareaDePlan(2, 'src/b.ts', { hecho: 'curl a localhost responde 200 contra el servidor' }),
+    'PERMISOS A APROBAR:\n  P1 · ejecutor S2 · `node scripts/seed.mjs` · base de pruebas · reversible: sí\n     Qué hace: siembra.\n     Para qué: probar.',
   ])
   assert.doesNotMatch(salida, /parece externa/)
   assert.match(salida, /^AVISOS: ninguno$/m)
 })
 
-test('--externo n aprobado anota la aprobación', () => {
-  const plan = [subtareaDePlan(1, 'src/a.ts'), subtareaDePlan(2, 'src/b.ts', { extra: EXTERNO_SEMILLA })]
-  const otroExterno = subtareaDePlan(2, 'src/b.ts', { extra: '- Externo: node scripts/otro.mjs · contra la base de pruebas · reversible: sí\n' })
-  const { raiz, entorno, estadoJson } = repoConPlanGuardado('externo-aprobado', plan, otroExterno)
-  assert.equal('externos' in estadoJson(), false)
+const PLAN_P = [subtareaDePlan(1, 'src/a.ts'), subtareaDePlan(2, 'src/b.ts'), 'PERMISOS A APROBAR:\n  P1 · ejecutor S2 · `node scripts/seed.mjs` · base de pruebas · reversible: sí\n     Qué hace: siembra.\n     Para qué: probar.']
+const aprobadoDe = (e, id) => e.permisos[id].aprobado
 
-  const r = estadoEn(raiz, ['--externo', '2', 'aprobado', '--paso', '4'], entorno)
+test('--permiso id aprobado anota la aprobación y el re-plan la conserva solo si no cambia', () => {
+  const { raiz, entorno, estadoJson } = repoConPlanGuardado('permiso-aprobado', PLAN_P, [
+    // renumera P1 → P4 (mismo quién y comando) y suma un permiso nuevo
+    PLAN_P[1], 'PERMISOS A APROBAR:\n  P4 · ejecutor S2 · `node scripts/seed.mjs` · base de pruebas · reversible: sí\n     Qué hace: siembra.\n     Para qué: probar.',
+  ].join('\n\n'))
+  assert.equal('aprobado' in estadoJson().permisos.P1, false)
+
+  const r = estadoEn(raiz, ['--permiso', 'p1', 'aprobado', '--paso', '4'], entorno)
   assert.equal(r.codigo, 0)
-  assert.match(r.salida, /^EXTERNO: S2 aprobado$/m)
-  const { aprobado, ...resto } = estadoJson().externos['2']
-  assert.deepEqual(resto, { comando: 'node scripts/seed.mjs', servicio: 'la base de pruebas', reversible: true })
-  assert.ok(Number.isFinite(Date.parse(aprobado)))
-  assert.equal(estadoJson().subtareas.length, 2)
+  assert.match(r.salida, /^PERMISO: P1 aprobado$/m)
+  assert.ok(Number.isFinite(Date.parse(aprobadoDe(estadoJson(), 'P1'))))
+  assert.match(estadoEn(raiz, ['--estado'], entorno).salida, /^ {2}PERMISO P1 · ejecutor S2 · node scripts\/seed\.mjs \(reversible: sí\) · aprobado \S+$/m)
+  assert.match(estadoEn(raiz, ['--reanudar'], entorno).salida, /PERMISO P1 · ejecutor S2 .* · aprobado /)
 
-  // Repetir la aprobación o ver --estado no la pierde.
-  assert.match(estadoEn(raiz, ['--estado'], entorno).salida, /^ {4}Externo: node scripts\/seed\.mjs \(reversible: sí\) · aprobado \S+$/m)
-  assert.match(estadoEn(raiz, ['--externo', '2', 'aprobado', '--paso', '4'], entorno).salida, /^EXTERNO: S2 aprobado$/m)
-
-  // Un re-plan que cambia el Externo de S2 anula su aprobación.
+  // Un re-plan que solo renumera conserva la aprobación.
+  const antes = aprobadoDe(estadoJson(), 'P1')
   estadoEn(raiz, ['--guardar', 'ajuste', 'plan', '--ajuste'], entorno)
-  assert.deepEqual(estadoJson().externos, {})
-  assert.equal(estadoJson().subtareas[1].externo.comando, 'node scripts/otro.mjs')
+  assert.deepEqual(Object.keys(estadoJson().permisos), ['P4'])
+  assert.equal(aprobadoDe(estadoJson(), 'P4'), antes)
 })
 
-test('--externo rechaza una subtarea sin Externo', () => {
-  const { raiz, entorno, estadoJson } = repoConPlanGuardado('externo-rechaza', [subtareaDePlan(1, 'src/a.ts'), subtareaDePlan(2, 'src/b.ts', { extra: EXTERNO_SEMILLA })])
+test('un re-plan que cambia el comando deja el permiso sin aprobar; --ajuste sin bloque conserva los permisos', () => {
+  const cambia = `${PLAN_P[1]}\n\nPERMISOS A APROBAR:\n  P1 · ejecutor S2 · \`node scripts/otro.mjs\` · base de pruebas · reversible: sí\n     Qué hace: siembra.\n     Para qué: probar.`
+  const { raiz, entorno, estadoJson } = repoConPlanGuardado('permiso-cambia', PLAN_P, cambia)
+  estadoEn(raiz, ['--permiso', 'P1', 'aprobado', '--paso', '4'], entorno)
+  estadoEn(raiz, ['--guardar', 'ajuste', 'plan', '--ajuste'], entorno)
+  assert.equal(estadoJson().permisos.P1.comando, 'node scripts/otro.mjs')
+  assert.equal('aprobado' in estadoJson().permisos.P1, false)
+
+  // Un ajuste que solo trae una subtarea (sin pie ni bloque) no pierde los permisos.
+  const sin = repoConPlanGuardado('permiso-sin-bloque', PLAN_P, subtareaDePlan(1, 'src/a.ts'))
+  estadoEn(sin.raiz, ['--permiso', 'P1', 'aprobado', '--paso', '4'], sin.entorno)
+  estadoEn(sin.raiz, ['--guardar', 'ajuste', 'plan', '--ajuste'], sin.entorno)
+  assert.equal(sin.estadoJson().permisos.P1.comando, 'node scripts/seed.mjs')
+  assert.ok(sin.estadoJson().permisos.P1.aprobado)
+  // Con pie propio pero sin bloque, tampoco: el bloque anterior se conserva.
+  assert.match(fusionarPlanes(`PLAN · x\nClasificación: c\n\n${PLAN_P.join('\n\n')}\nCosto: 1`, `${subtareaDePlan(1, 'src/a.ts')}\n\nCosto: 2`), /PERMISOS A APROBAR:\n {2}P1 · ejecutor S2[^]*Costo: 2$/)
+})
+
+test('--permiso rechaza ids que no existen o que no son «aprobado»', () => {
+  const { raiz, entorno, estadoJson } = repoConPlanGuardado('permiso-rechaza', PLAN_P)
   for (const [args, mensaje] of [
-    [['1', 'aprobado'], /^ERROR: S1 no tiene «Externo:» en el plan/m],
-    [['9', 'aprobado'], /^ERROR: S9 no está en el plan guardado$/m],
-    [['2', 'rechazado'], /^ERROR: --externo 2: solo vale «aprobado»/m],
-    [['2'], /^ERROR: --externo 2: solo vale «aprobado»/m],
-    [['x', 'aprobado'], /^ERROR: --externo necesita el número de la subtarea/m],
+    [['P9', 'aprobado'], /^ERROR: P9 no está en los permisos del plan guardado$/m],
+    [['P1', 'rechazado'], /^ERROR: --permiso P1: solo vale «aprobado»/m],
+    [['P1'], /^ERROR: --permiso P1: solo vale «aprobado»/m],
+    [['x', 'aprobado'], /^ERROR: --permiso necesita el id del permiso/m],
   ]) {
-    const r = estadoEn(raiz, ['--externo', ...args, '--paso', '4'], entorno)
+    const r = estadoEn(raiz, ['--permiso', ...args, '--paso', '4'], entorno)
     assert.match(r.salida, mensaje, args.join(' '))
     assert.equal(r.codigo, 2, args.join(' '))
-    assert.doesNotMatch(r.salida, /EXTERNO: S/, args.join(' '))
+    assert.doesNotMatch(r.salida, /PERMISO: /, args.join(' '))
   }
-  assert.equal('externos' in estadoJson(), false)
+  assert.equal('aprobado' in estadoJson().permisos.P1, false)
 
   // Sin flujo abierto no hay dónde anotar.
   const sinFlujo = repo('externo-sin-flujo', { 'src/a.ts': 'a\n' })
   temporales.push(sinFlujo)
-  const s = estadoEn(sinFlujo, ['--externo', '2', 'aprobado', '--paso', '4'], entorno)
+  const s = estadoEn(sinFlujo, ['--permiso', 'P1', 'aprobado', '--paso', '4'], entorno)
   assert.match(s.salida, /^ERROR: el flujo no está abierto/m)
   assert.equal(s.codigo, 2)
   assert.equal(fs.existsSync(path.join(flujoDe(sinFlujo), 'estado.json')), false)
 
-  // opcionesDe: las claves de --externo son condicionales y el modo no se confunde con el preflight.
-  assert.equal('externo' in opcionesDe([]) || 'accion' in opcionesDe([]), false)
-  const o = opcionesDe(['--externo', '2', 'aprobado', '--paso', '4'])
-  assert.deepEqual([o.modo, o.externo, o.accion, o.paso], ['externo', 2, 'aprobado', 4])
-  assert.deepEqual([opcionesDe(['--externo']).externo, opcionesDe(['--externo']).accion], [null, ''])
-  assert.equal(opcionesDe(['--externo', '0', 'aprobado']).externo, null)
+  // opcionesDe: las claves de --permiso son condicionales y el modo no se confunde con el preflight.
+  assert.equal('permiso' in opcionesDe([]) || 'accion' in opcionesDe([]), false)
+  const o = opcionesDe(['--permiso', 'n2', 'aprobado', '--paso', '4'])
+  assert.deepEqual([o.modo, o.permiso, o.accion, o.paso], ['permiso', 'N2', 'aprobado', 4])
+  assert.deepEqual([opcionesDe(['--permiso']).permiso, opcionesDe(['--permiso']).accion], [null, ''])
+  assert.equal(opcionesDe(['--permiso', 'P0', 'aprobado']).permiso, null)
+})
+
+test('permisos de punta a punta: --guardar plan, --permiso, --base --sub y la guardia', () => {
+  const { raiz, entorno } = repoConPlanGuardado('permiso-punta', [
+    subtareaDePlan(1, 'src/a.ts'),
+    'PERMISOS A APROBAR:\n  P1 · ejecutor S1 · `docker ps -a` · docker local · reversible: sí\n     Qué hace: siembra.\n     Para qué: probar.',
+  ])
+  const pasa = (comando) => evaluar(ev(raiz, 'Bash', { command: comando }), 'ejecutor', raiz).motivo === null
+  const cmd = 'docker ps -a'
+  assert.equal(pasa(cmd), false)
+  estadoEn(raiz, ['--permiso', 'P1', 'aprobado', '--paso', '4'], entorno)
+  assert.equal(pasa(cmd), false, 'aprobado pero sin subtarea en curso')
+  estadoEn(raiz, ['--base', '--sub', '1', '--paso', '5'], entorno)
+  assert.equal(pasa(cmd), true)
+  assert.equal(pasa('docker ps'), false)
+  estadoEn(raiz, ['--cambios', '--sub', '1', '--paso', '5'], entorno)
+  assert.equal(pasa(cmd), false)
+})
+
+const NUEVO = (comando, reversible = 'sí') => `${comando} · docker local · reversible: ${reversible} · Qué hace: lista · con · puntos. · Para qué: probar.`
+
+test('--permiso-nuevo crea N1 aprobado, falla con lo que no se puede aprobar y sobrevive a un re-plan', () => {
+  const { raiz, entorno, estadoJson } = repoConPlanGuardado('permiso-nuevo', PLAN_P, PLAN_P[1])
+  const nuevo = (texto, ...resto) => estadoEn(raiz, ['--permiso-nuevo', texto, ...resto, '--paso', '5'], entorno)
+  const r = nuevo(NUEVO('docker ps -a'), '--sub', '1')
+  assert.equal(r.codigo, 0)
+  assert.match(r.salida, /^PERMISO: N1 aprobado$/m)
+  const { aprobado, ...n1 } = estadoJson().permisos.N1
+  assert.deepEqual(n1, { rol: 'ejecutor', sub: 1, comando: 'docker ps -a', servicio: 'docker local', reversible: true, queHace: 'lista · con · puntos.', paraQue: 'probar.', nuevo: true })
+  assert.ok(Number.isFinite(Date.parse(aprobado)))
+  assert.match(nuevo(NUEVO('docker images', 'no'), '--sub', '2').salida, /^PERMISO: N2 aprobado$/m)
+  assert.equal(estadoJson().permisos.N2.reversible, false)
+  assert.match(estadoEn(raiz, ['--estado'], entorno).salida, /^ {2}PERMISO N1 · ejecutor S1 · docker ps -a \(reversible: sí\) · aprobado \S+$/m)
+
+  for (const [args, mensaje] of [
+    [[NUEVO('pnpm *'), '--sub', '1'], /^ERROR: «pnpm \*» no se puede aprobar/m],
+    [[NUEVO('git commit -m x'), '--sub', '1'], /^ERROR: «git commit -m x» se niega aun aprobado/m],
+    [[NUEVO('docker ps'), '--sub', '9'], /^ERROR: S9 no está en el plan guardado$/m],
+    [[NUEVO('docker ps')], /^ERROR: --permiso-nuevo necesita --sub <n>/m],
+    [[NUEVO('docker ps'), '--sub', '1,2'], /^ERROR: --permiso-nuevo necesita --sub <n>/m],
+    [['docker ps · docker local · reversible: sí · Qué hace: x', '--sub', '1'], /^ERROR: --permiso-nuevo: el texto debe ser/m],
+    [['docker ps · docker local · Qué hace: x · Para qué: y', '--sub', '1'], /^ERROR: --permiso-nuevo: el texto debe ser/m],
+  ]) {
+    const f = nuevo(...args)
+    assert.match(f.salida, mensaje, args.join(' '))
+    assert.equal(f.codigo, 2, args.join(' '))
+  }
+  assert.deepEqual(Object.keys(estadoJson().permisos).sort(), ['N1', 'N2', 'P1'])
+
+  // Un re-plan que deja a S1 y S2 en el plan conserva N1 y N2.
+  estadoEn(raiz, ['--guardar', 'ajuste', 'plan', '--ajuste'], entorno)
+  assert.deepEqual(Object.keys(estadoJson().permisos).sort(), ['N1', 'N2', 'P1'])
+  assert.equal(estadoJson().permisos.N1.aprobado, aprobado)
+
+  // Sin flujo abierto no hay dónde anotar; opcionesDe reconoce el modo.
+  const sinFlujo = repo('permiso-nuevo-sin-flujo', { 'src/a.ts': 'a\n' })
+  temporales.push(sinFlujo)
+  assert.match(estadoEn(sinFlujo, ['--permiso-nuevo', NUEVO('docker ps'), '--sub', '1'], entorno).salida, /^ERROR: el flujo no está abierto/m)
+  const o = opcionesDe(['--permiso-nuevo', 'x', '--sub', '2', '--paso', '5'])
+  assert.deepEqual([o.modo, o.permisoNuevo, o.sub, o.paso], ['permisoNuevo', 'x', 2, 5])
+  assert.equal('permisoNuevo' in opcionesDe([]), false)
+})
+
+test('--permiso-nuevo: N<k> sigue al mayor y la guardia lo deja pasar solo en la subtarea en curso', () => {
+  const { raiz, entorno } = repoConPlanGuardado('permiso-nuevo-guardia', [subtareaDePlan(1, 'src/a.ts')])
+  estadoEn(raiz, ['--permiso-nuevo', NUEVO('docker ps -a'), '--sub', '1'], entorno)
+  const pasa = (comando) => evaluar(ev(raiz, 'Bash', { command: comando }), 'ejecutor', raiz).motivo === null
+  assert.equal(pasa('docker ps -a'), false, 'sin subtarea en curso')
+  estadoEn(raiz, ['--base', '--sub', '1', '--paso', '5'], entorno)
+  assert.equal(pasa('docker ps -a'), true)
+})
+
+test('plan: una subtarea con permiso irreversible queda sola en LOTES', () => {
+  const sin = { extra: '- Depende de: ninguna\n' }
+  const permiso = (reversible) => `PERMISOS A APROBAR:\n  P1 · ejecutor S2 · \`node scripts/seed.mjs\` · base de pruebas · reversible: ${reversible}\n     Qué hace: siembra.\n     Para qué: probar.`
+  const subtareas = [subtareaDePlan(1, 'src/a.ts', sin), subtareaDePlan(2, 'src/b.ts', sin), subtareaDePlan(3, 'src/c.ts', sin)]
+  const reversible = repoConPlanGuardado('lotes-reversible', [...subtareas, permiso('sí')])
+  assert.match(reversible.salida, /^LOTES: S1\+S2\+S3$/m)
+  assert.equal(reversible.estadoJson().subtareas.some((s) => 'sola' in s), false)
+  const irreversible = repoConPlanGuardado('lotes-irreversible', [...subtareas, permiso('no')])
+  assert.match(irreversible.salida, /^LOTES: S1 \| S2 \| S3$/m)
+  assert.deepEqual(irreversible.estadoJson().subtareas.map((s) => s.sola), [undefined, true, undefined])
+  // --reanudar lee las subtareas del estado: las mismas barreras.
+  assert.match(estadoEn(irreversible.raiz, ['--reanudar'], irreversible.entorno).salida, /^SIGUE: paso 4/m)
+  // Pura: `sola` hace de barrera con las demás, antes y después.
+  const s = (n, permitidos, extra = {}) => ({ n, permitidos, depende: [], ...extra })
+  assert.deepEqual(lotesDe([s(1, ['a.ts']), s(2, ['b.ts'], { sola: true }), s(3, ['c.ts'])]), [[1], [2], [3]])
+  assert.deepEqual(lotesDe([s(1, ['a.ts']), s(2, ['b.ts'], { sola: false }), s(3, ['c.ts'])]), [[1, 2, 3]])
 })
 
 test('estado: fusionarExploraciones une secciones sin repetir ruta:línea (pura)', () => {

@@ -828,6 +828,27 @@ test('estado: --cambios marca FUERA lo que cambió durante verificar en una tand
   assert.equal(typeof estadoJson().paralelos[0].hasta, 'string')
 })
 
+test('estado: --tanda con --sub anota en_curso y --cambios --global lo borra', () => {
+  const { estadoJson, estado } = repoParalelo('paralelo-tanda-sub', PASO_DE_OTRO)
+  // Sin --sub ningún permiso queda vigente.
+  assert.match(estado('--tanda', '2', '--paso', '6').salida, /^TANDA=2 DESDE=\S+$/m)
+  assert.equal('en_curso' in estadoJson(), false)
+  const t = estado('--tanda', '2', '--sub', '1,3', '--paso', '6')
+  assert.match(t.salida, /^TANDA=2 DESDE=\S+$/m)
+  assert.equal(t.codigo, 0)
+  assert.deepEqual(estadoJson().en_curso, [1, 3])
+  // Una tanda de 1 también anota la subtarea.
+  assert.match(estado('--tanda', '1', '--sub', '2', '--paso', '6').salida, /^AVISO: una tanda de 1/m)
+  assert.deepEqual(estadoJson().en_curso, [2])
+  estado('--tanda', '2', '--sub', '1,3', '--paso', '6')
+  const mala = estado('--tanda', '2', '--sub', 'x', '--paso', '6')
+  assert.match(mala.salida, /^ERROR: --sub necesita/m)
+  assert.equal(mala.codigo, 2)
+  assert.deepEqual(estadoJson().en_curso, [1, 3])
+  estado('--cambios', '--global', '--paso', '6')
+  assert.equal('en_curso' in estadoJson(), false)
+})
+
 test('estado: --tanda de 1 solo avisa y sin flujo abierto falla', () => {
   const { estadoJson, estado } = repoParalelo('paralelo-uno', PASO_DE_OTRO)
   const uno = estado('--tanda', '1', '--paso', '6')
