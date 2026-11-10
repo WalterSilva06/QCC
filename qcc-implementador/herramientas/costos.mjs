@@ -517,14 +517,15 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
     return is.length ? is.map((i) => ({ veredicto: i.veredicto, items: problemasDe(i.texto) })) : [{ veredicto: null, items: problemasDe(ultimoTexto(a.filas)) }]
   }
   const exploradores = agentes.filter((a) => a.rol === 'explorador')
-  const herramientasDe = (nombre) => exploradores.reduce((s, a) => s + a.filas.reduce((n, f) => n + bloquesDe(f, 'tool_use').filter((c) => c.name === nombre).length, 0), 0)
+  // El transcript puede repetir un mismo bloque en varias filas: cada tool_use y cada tool_result cuentan una vez.
+  const herramientasDe = (nombre) => exploradores.reduce((s, a) => s + new Set(a.filas.flatMap((f) => bloquesDe(f, 'tool_use')).filter((c) => c.name === nombre).map((c) => c.id)).size, 0)
   // Líneas de los resultados de Read y Grep, sin los `<system-reminder>` que el harness pega al final.
   const lineasLeidas = (filas) => {
     const lectores = new Set(filas.flatMap((f) => bloquesDe(f, 'tool_use')).filter((c) => c.name === 'Read' || c.name === 'Grep').map((c) => c.id))
     let n = 0
     for (const f of filas) {
       for (const c of bloquesDe(f, 'tool_result')) {
-        if (!lectores.has(c.tool_use_id)) continue
+        if (!lectores.delete(c.tool_use_id)) continue
         const t = textoDe(c.content).replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
         if (t) n += t.split('\n').length
       }

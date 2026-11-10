@@ -176,7 +176,7 @@ test('costos: métricas del flujo desde transcripts armados', () => {
   assert.equal(costoDelFlujo(raiz, en(0), opciones).usd, m.costo.usd)
 })
 
-test('costos: explorador.agentes da el contexto máximo y las líneas de Read y Grep sin system-reminder', () => {
+test('costos: explorador.agentes da el contexto máximo y las líneas de Read y Grep sin system-reminder ni repetidos', () => {
   const raiz = path.join(os.tmpdir(), 'repo-metricas-agentes')
   const claude = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
   temporales.push(claude)
@@ -195,16 +195,24 @@ test('costos: explorador.agentes da el contexto máximo y las líneas de Read y 
     turno('o1', 5, [{ type: 'text', text: 'x' }], uso({ input: 1 })),
   ]))
   fs.writeFileSync(path.join(subagentes, 'agent-e1.meta.json'), JSON.stringify({ agentType: 'explorador' }))
+  const pedido = turno('e1', 20, [usa('r1', 'Read'), usa('g1', 'Grep'), usa('b1', 'Bash')], uso({ input: 100, leido: 4000, escrito: 900 }))
+  const lectura = resultado(25, 'r1', 'a\nb\nc\n<system-reminder>\nmalware?\notro\n</system-reminder>')
+  const busqueda = resultado(26, 'g1', [{ type: 'text', text: 'x.ts:1:a\ny.ts:2:b' }])
   fs.writeFileSync(path.join(subagentes, 'agent-e1.jsonl'), jsonl([
     { type: 'user', timestamp: en(10), message: { role: 'user', content: 'PEDIDO: x' } },
-    turno('e1', 20, [usa('r1', 'Read'), usa('g1', 'Grep'), usa('b1', 'Bash')], uso({ input: 100, leido: 4000, escrito: 900 })),
-    resultado(25, 'r1', 'a\nb\nc\n<system-reminder>\nmalware?\notro\n</system-reminder>'),
-    resultado(26, 'g1', [{ type: 'text', text: 'x.ts:1:a\ny.ts:2:b' }]),
+    pedido,
+    lectura,
+    busqueda,
     resultado(27, 'b1', '1\n2\n3\n4'),
+    // El transcript repite los mismos bloques: no suman.
+    pedido,
+    lectura,
+    busqueda,
     turno('e2', 30, [{ type: 'text', text: 'ARCHIVOS' }], uso({ input: 50, leido: 100 })),
   ]))
   const m = metricasDelFlujo(raiz, en(0), { proyectos: path.join(claude, 'projects'), hasta: en(100), base: null })
   assert.deepEqual(m.explorador.agentes, [{ id: 'e1', contexto: 5000, lineas: 5 }])
+  assert.equal(m.explorador.read, 1)
 })
 
 test('costos: reconoce /impl y agentType qcc-ejecutor como rol ejecutor', () => {
