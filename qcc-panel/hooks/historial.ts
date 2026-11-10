@@ -1,4 +1,5 @@
-// Historial de flujos: lee `~/.claude/flujos/registros/flujos.jsonl` y arma las líneas de la pestaña «Historial». Puro: sin `$`, para poder probarlo solo.
+// Historial de flujos: lee `~/.claude/flujos/registros/flujos.jsonl` y arma las líneas de la pestaña «Historial»; arma también el snapshot de
+// límites que lee /impl (`qcc-limites.json`). Puro: sin `$`, para poder probarlo solo.
 
 import type { FilaHistorial } from '../types'
 import { tokens } from './formato'
@@ -61,15 +62,17 @@ export function filaDeRegistro(r: unknown): FilaHistorial | null {
     clasificacion: clasificacionCorta(r.clasificacion),
     aviso: cancelado || bloqueada,
   }
-  const usd = numero(costo.usd)
+  // Las filas viejas traen `costo.usd`: se ignora.
   const minutos = activo !== undefined ? activo / 60 : numero(costo.minutos)
 
-  if (usd !== undefined) fila.usd = usd
   if (minutos !== undefined) fila.minutos = minutos
   if (subtareas !== undefined) fila.subtareas = subtareas
 
   const titulo = tituloDe(r)
-  const roles = rolesDe(costo.roles)
+  const limites = esObjeto(r.limites) ? r.limites : {}
+  const cinco = esObjeto(limites.five_hour) ? limites.five_hour : {}
+  // Solo un gasto completo: sin dato, con reinicio o con un tramo sin lectura no se muestra.
+  const cincoHoras = cinco.incompleto === true ? undefined : numero(cinco.gasto)
   const espera = r.v === 2 ? numero(tiempos.espera) : undefined
   const lineas = Array.isArray(r.subtareas) ? r.subtareas.filter(esObjeto) : []
   const suma = (clave: 'mas' | 'menos'): number | undefined => {
@@ -89,7 +92,7 @@ export function filaDeRegistro(r: unknown): FilaHistorial | null {
   if (total !== undefined) fila.tokens = total
   if (salida !== undefined) fila.salida = salida
   if (titulo !== undefined) fila.titulo = titulo
-  if (roles.length > 0) fila.roles = roles
+  if (cincoHoras !== undefined) fila.cincoHoras = cincoHoras
   if (espera !== undefined && espera > 0) fila.espera = espera / 60
   if (mas !== undefined) fila.mas = mas
   if (menos !== undefined) fila.menos = menos
@@ -120,22 +123,6 @@ function tokensDe(t: unknown): number | undefined {
   const valores = [t.entrada, t.leidos, t.escritos, t.salida].flatMap(x => numero(x) ?? [])
 
   return valores.length === 0 ? undefined : valores.reduce((a, b) => a + b, 0)
-}
-
-/** Los roles de `costo.roles` con `usd` numérico mayor que 0, del que más gastó al que menos, con sus `tokens` si los trae. */
-function rolesDe(roles: unknown): { rol: string; usd: number; tokens?: number }[] {
-  if (!esObjeto(roles)) return []
-
-  return Object.entries(roles)
-    .flatMap(([rol, v]) => {
-      const usd = esObjeto(v) ? numero(v.usd) : undefined
-      if (usd === undefined || usd <= 0) return []
-
-      const total = esObjeto(v) ? tokensDe(v.tokens) : undefined
-
-      return [total === undefined ? { rol, usd } : { rol, usd, tokens: total }]
-    })
-    .sort((a, b) => b.usd - a.usd)
 }
 
 /**
@@ -173,22 +160,38 @@ export function unirHistorial(listas: readonly (readonly FilaHistorial[])[], cua
     .slice(0, Math.max(cuantos, 0))
 }
 
-/** La media de los dólares y de los minutos de las filas que traen cada valor; el campo falta si ninguna lo trae. */
-export function promedioHistorial(filas: readonly FilaHistorial[]): { usd?: number; minutos?: number } {
-  const media = (valores: number[]): number | undefined => (valores.length === 0 ? undefined : valores.reduce((s, v) => s + v, 0) / valores.length)
-  const usd = media(filas.flatMap(f => (f.usd === undefined ? [] : [f.usd])))
-  const minutos = media(filas.flatMap(f => (f.minutos === undefined ? [] : [f.minutos])))
-  const promedio: { usd?: number; minutos?: number } = {}
+/** La media de los minutos de las filas que los traen; el campo falta si ninguna los trae. */
+export function promedioHistorial(filas: readonly FilaHistorial[]): { minutos?: number } {
+  const valores = filas.flatMap(f => (f.minutos === undefined ? [] : [f.minutos]))
 
-  if (usd !== undefined) promedio.usd = usd
-  if (minutos !== undefined) promedio.minutos = minutos
-
-  return promedio
+  return valores.length === 0 ? {} : { minutos: valores.reduce((s, v) => s + v, 0) / valores.length }
 }
 
-/** `$0,98`: dos decimales con coma; `$—` sin dato. */
-export function cifraUsd(n?: number): string {
-  return n === undefined ? '$—' : `$${n.toFixed(2).replace('.', ',')}`
+/** `5h +7%` o `5h +7,5%`: el % de la ventana de 5 h que gastó un flujo. */
+function cifraCincoHoras(n: number): string {
+  return `5h +${String(Math.round(n * 10) / 10).replace('.', ',')}%`
+}
+
+/** `<config>/qcc-limites.json`, el snapshot de límites que lee /impl: la carpeta de la cuenta es `configDir` (`CLAUDE_CONFIG_DIR`) o `<home>/.claude`; `null` sin ninguna. */
+export function rutaLimites(home: string, configDir?: string): string | null {
+  const config = configDir?.trim() ?? ''
+  if (config !== '') return [config.replace(/[\\/]+$/, ''), 'qcc-limites.json'].join(config.includes('\\') ? '\\' : '/')
+
+  const base = home.trim()
+  if (base === '') return null
+
+  return [base.replace(/[\\/]+$/, ''), '.claude', 'qcc-limites.json'].join(base.includes('\\') ? '\\' : '/')
+}
+
+/**
+ * El snapshot que lee `estado.mjs` de /impl al abrir y al cerrar cada flujo: `{ t, five_hour?: { pct, resetsAt }, seven_day?: … }`, con `t` en ISO.
+ * Cada ventana va solo si la medición la trae; `null` si no trae ninguna (sin suscripción o antes de la 1.ª respuesta).
+ */
+export function snapshotLimites(limites: readonly { kind: string; percentUsed: number; resetsAt?: string }[], t: number): Record<string, unknown> | null {
+  const ventanas = limites.filter(l => (l.kind === 'five_hour' || l.kind === 'seven_day') && Number.isFinite(l.percentUsed))
+  if (ventanas.length === 0) return null
+
+  return Object.fromEntries([['t', new Date(t).toISOString()], ...ventanas.map(l => [l.kind, { pct: l.percentUsed, resetsAt: l.resetsAt }])])
 }
 
 /** `12m`: minutos redondeados; `—m` sin dato. */
@@ -255,18 +258,20 @@ export function lineaIdentidad(f: FilaHistorial, ancho: number): string {
 }
 
 /**
- * La línea de cifras de un flujo: `$x,xx · <min> · <tokens> tok · sal <salida>` (un dato sin valor es `—`) y, detrás, cada uno solo si cabe,
- * `+<mas> −<menos>`, `×<subtareas>` y, en un flujo reanudado, `<n> sesiones`. Las cifras van con ` · ` y, si así no caben en `ancho`, con un espacio; si ni así, se cortan a `ancho`.
+ * La línea de cifras de un flujo: `<min> · <tokens> tok · sal <salida>` (un dato sin valor es `—`) y, detrás, cada uno solo si cabe,
+ * `5h +<n>%` (el % de la ventana de 5 h que gastó), `+<mas> −<menos>`, `×<subtareas>` y, en un flujo reanudado, `<n> sesiones`. Las cifras van
+ * con ` · ` y, si así no caben en `ancho`, con un espacio; si ni así, se cortan a `ancho`.
  */
 export function lineaCifras(f: FilaHistorial, ancho: number): string {
   const dato = (n?: number): string => (n === undefined ? '—' : tokens(n))
-  const cifras = (sep: string): string => [cifraUsd(f.usd), cifraMinutos(f.minutos), `${dato(f.tokens)} tok`, `sal ${dato(f.salida)}`].join(sep)
+  const cifras = (sep: string): string => [cifraMinutos(f.minutos), `${dato(f.tokens)} tok`, `sal ${dato(f.salida)}`].join(sep)
   const sep = medir(cifras(' · ')) <= ancho ? ' · ' : ' '
   const base = cifras(sep)
 
   if (medir(base) > ancho) return Array.from(base).slice(0, Math.max(ancho, 0)).join('')
 
   const cola = [
+    f.cincoHoras === undefined ? '' : cifraCincoHoras(f.cincoHoras),
     f.mas === undefined && f.menos === undefined ? '' : `+${f.mas ?? 0} −${f.menos ?? 0}`,
     f.subtareas === undefined ? '' : `×${f.subtareas}`,
     f.sesiones === undefined ? '' : `${f.sesiones} sesiones`,
@@ -308,7 +313,7 @@ function partir(texto: string, ancho: number, lineas: number): string[] {
 
 /**
  * Las líneas de un flujo, ninguna más larga que `ancho` caracteres: la de `lineaIdentidad`, el título en hasta 2 líneas (con `⚠ ` antes si el
- * flujo se canceló o quedó bloqueado; `sin título` si falta; lo que no cabe se corta con «…») y la de `lineaCifras`. Los roles y la espera no se dibujan.
+ * flujo se canceló o quedó bloqueado; `sin título` si falta; lo que no cabe se corta con «…») y la de `lineaCifras`. La espera no se dibuja.
  */
 export function lineasHistorial(f: FilaHistorial, ancho: number): string[] {
   const titulo = `${f.aviso ? '⚠ ' : ''}${f.titulo ?? 'sin título'}`

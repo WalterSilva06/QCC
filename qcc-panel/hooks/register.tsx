@@ -46,7 +46,7 @@ import {
   terminarFlujo,
 } from './flujo'
 import type { Senal } from './flujo'
-import { cifraMinutos, cifraUsd, leerHistorial, lineasHistorial, promedioHistorial, rutaHistorial, unirHistorial } from './historial'
+import { cifraMinutos, leerHistorial, lineasHistorial, promedioHistorial, rutaHistorial, rutaLimites, snapshotLimites, unirHistorial } from './historial'
 import { COPIA_NORMAL, detectar, rutaSkill, vistaDe } from './instalados'
 import {
   aDesglose,
@@ -337,7 +337,7 @@ async function leerArchivoHistorial($: EngineInterface) {
     if (mtimeMs === null) return
 
     const actual = (await read($, historial)) ?? null
-    // Una caché sin `v: 6` viene de una versión anterior (con filas de otro registro, sin los tokens de cada fila o con `totales`): se vuelve a leer.
+    // Una caché sin `v: 7` viene de una versión anterior (con filas de otro registro, sin los tokens o el % de 5 h de cada fila, con dólares o con `totales`): se vuelve a leer.
     if (historialVigente(actual, mtimeMs)) return
 
     // Un archivo que existe y no se deja leer deja el historial como estaba (lanza).
@@ -347,7 +347,7 @@ async function leerArchivoHistorial($: EngineInterface) {
     // En pantalla van solo las 10 filas más recientes.
     const filas = unirHistorial([leerHistorial(texto, 10)], 10)
 
-    await update($, historial, () => ({ v: 6, mtimeMs, filas }))
+    await update($, historial, () => ({ v: 7, mtimeMs, filas }))
   } catch {
     // Sin archivo o sin lectura el historial queda como estaba.
   }
@@ -362,6 +362,33 @@ function releerHistorial($: EngineInterface): Promise<void> {
   }
 
   return lecturaHistorial
+}
+
+/** Lo último que se escribió en `qcc-limites.json` (sin su hora) y cuándo: con los mismos límites se reescribe a lo sumo una vez por minuto. */
+let snapshotEscrito: { clave: string; t: number } | null = null
+
+/**
+ * Escribe en la carpeta de la cuenta (`CLAUDE_CONFIG_DIR`, o `~/.claude`) el % de 5 h y semanal de la última medición: `estado.mjs` de /impl lo
+ * lee al abrir y al cerrar cada flujo, porque no recibe los límites de otro modo. Nunca rechaza: sin ruta o sin escritura, /impl anota «s/d».
+ */
+async function escribirLimites($: EngineInterface, limites: readonly SessionRateLimit[]) {
+  try {
+    const t = await $.clock.now()
+    const snapshot = snapshotLimites(limites, t)
+    if (snapshot === null) return
+
+    const clave = JSON.stringify({ ...snapshot, t: 0 })
+    if (snapshotEscrito !== null && snapshotEscrito.clave === clave && t - snapshotEscrito.t < 60_000) return
+
+    const config = await $.env.get('CLAUDE_CONFIG_DIR')
+    const ruta = rutaLimites(config ? '' : await carpetaPersonal($), config)
+    if (ruta === null) return
+
+    await $.fs.write(ruta, `${JSON.stringify(snapshot)}\n`)
+    snapshotEscrito = { clave, t }
+  } catch {
+    // Sin snapshot, /impl anota los límites como «s/d».
+  }
 }
 
 /** Si existe `ruta`: `true` o `false`; `null` si no se pudo comprobar (dudoso, no «no está»). */
@@ -782,6 +809,8 @@ export const register: Register = on => {
 
   on('session.measure', async ($, e, next) => {
     await update($, medida, () => aMedida(e.context, e.rateLimits))
+    // En segundo plano: la medición no espera al archivo.
+    void escribirLimites($, e.rateLimits)
     // Un toast al cruzar 80 % y otro al cruzar 95 %; bajo 80 % se rearma. Un error aquí no frena la medición.
     try {
       const decision: { aviso: string | null } = { aviso: null }
@@ -1416,7 +1445,7 @@ export const register: Register = on => {
         ) : (
           <Box flexDirection="column">
             <Text dimColor wrap="truncate-end">
-              {`promedio ${cifraUsd(promedio.usd)} · ${cifraMinutos(promedio.minutos)} · ${his.filas.length} flujos`}
+              {`promedio ${cifraMinutos(promedio.minutos)} · ${his.filas.length} flujos`}
             </Text>
             {his.filas.map((f, i) => (
               <Box key={`historial-${i}`} flexDirection="column" marginTop={i === 0 ? 0 : 1}>

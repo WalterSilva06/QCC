@@ -175,8 +175,6 @@ export type FilaHistorial = {
   t: string
   /** Nombre de la carpeta del repo (último tramo de `raiz`); `?` si falta. */
   repo: string
-  /** Costo real en dólares; falta si no se anotó. */
-  usd?: number
   /** Minutos activos; falta si no se anotaron. */
   minutos?: number
   /** Revisión final: `✓` aprobó a la primera, `↻` hubo rechazos, `✗` flujo detenido o cancelado, `·` sin dato. */
@@ -189,8 +187,8 @@ export type FilaHistorial = {
   aviso: boolean
   /** Título del flujo (o la primera línea del pedido); falta si no hay. */
   titulo?: string
-  /** Costo por rol (`orquestador`, `ejecutor`…) en dólares, del mayor al menor y solo con `usd` mayor que 0; falta si no hay. `tokens` es el total de entrada, leídos, escritos y salida del rol; falta si la fila no lo anotó. */
-  roles?: { rol: string; usd: number; tokens?: number }[]
+  /** % de la ventana de 5 h que gastó el flujo (`limites.five_hour.gasto` de la fila); falta sin dato, con reinicio o si le faltó algún tramo. */
+  cincoHoras?: number
   /** Minutos de espera (v2), solo si son más de 0. */
   espera?: number
   /** Líneas añadidas en total por las subtareas; falta si ninguna lo anotó. */
@@ -207,8 +205,8 @@ export type FilaHistorial = {
 
 /** El historial leído de `flujos.jsonl`: su fecha de modificación (ms) y las últimas filas, la más reciente primero. */
 export type Historial = {
-  /** Forma de lo guardado: `6` trae solo filas de `flujos.jsonl`, con los tokens de cada una y sin `totales`. Una caché sin `v`, o con `2`, `3`, `4` o `5`, se vuelve a leer. */
-  v?: 6
+  /** Forma de lo guardado: `7` trae solo filas de `flujos.jsonl`, con los tokens y el % de 5 h de cada una, sin dólares ni `totales`. Una caché sin `v`, o con `2` a `6`, se vuelve a leer. */
+  v?: 7
   mtimeMs: number
   filas: FilaHistorial[]
 }
