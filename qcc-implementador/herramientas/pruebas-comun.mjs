@@ -15,6 +15,8 @@ process.env.FLUJOS_REGISTROS = path.join(PRUEBAS, 'registros')
 // El preflight no lanza la verificación inicial en segundo plano: un proceso suelto impediría borrar los temporales
 // (en Windows). Los tests que la prueban quitan esta variable de su entorno.
 process.env.FLUJOS_INICIAL = '0'
+// El snapshot de límites del panel: uno de prueba (no existe hasta que un test lo escribe), nunca el de la cuenta real.
+process.env.QCC_LIMITES = path.join(PRUEBAS, 'qcc-limites.json')
 
 export function repo(nombre, archivos) {
   const raiz = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `guardia-${nombre}-`)))

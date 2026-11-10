@@ -37,9 +37,12 @@
 // que otro flujo del repo siga abierto (sin cierre y con actividad en los últimos 20 min, o 6 h si ya tiene
 // plan): entonces avisa con el título del plan y pide `--forzar`. Un flujo con plan y sin cierre nunca se vacía solo:
 // pasadas 6 h sin actividad avisa que quedó cortado, y `--forzar` lo archiva en `historial/` antes de vaciarlo.
-// El cierre (`--cambios … --paso 7`) anota en `<carpeta global>/flujos.jsonl` (`~/.claude/flujos/registros`) una fila v2 (costo real, veredictos, tiempos,
-// subtareas y calidad: costos.mjs), imprime el CONTEXTO del hilo principal y archiva el flujo en `<carpeta global>/historial/`
-// (las 30 carpetas más recientes).
+// El cierre (`--cambios … --paso 7`) anota en `<carpeta global>/flujos.jsonl` (`~/.claude/flujos/registros`) una fila v2 (consumo en tokens,
+// veredictos, tiempos, subtareas y calidad: costos.mjs; y el % de los límites de uso que gastó, ver LIMITES.md), imprime el CONTEXTO del
+// hilo principal y archiva el flujo en `<carpeta global>/historial/` (las 30 carpetas más recientes).
+// Límites: el preflight y cada `--reanudar` anotan en `limites` del estado un tramo con la lectura inicial del snapshot del panel
+// (`<config de la cuenta>/qcc-limites.json`); cada comando con `--paso` pone al día su lectura final (y, si cambió el paso, anota
+// una lectura por fase), y el cierre la fija, suma los tramos e imprime el % de cada fase (`LÍMITES POR FASE:`).
 // `--guardar` toma el informe de un agente de su transcript, en `projects/*/*/subagents/agent-<id>.jsonl`
 // dentro de `CLAUDE_CONFIG_DIR` (o `~/.claude`). Con `exploracion` acepta varios ids separados por coma y une sus informes.
 
@@ -50,7 +53,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { evaluar, rolDeAgente, registroDe, flujoDe, nombreDe, carpetaGlobal, arbolDe, configDe, coincide, relativaAlRepo, rutaNativa, regexDePermiso, motivoFijoDe, RAIZ } from './guardia.mjs'
 import { pasosDe, ultimaVerde, vivo, salidasDe, cambiosDe } from './verificar.mjs'
-import { metricasDelFlujo, pedidoDelFlujo, ejecutoresDelProyecto, precioDe, resumenDeCosto, resumenDeVeredictos } from './costos.mjs'
+import { metricasDelFlujo, pedidoDelFlujo, ejecutoresDelProyecto, resumenDeCosto, resumenDeVeredictos, leerLimites, gastoDeLimites, resumenDeLimites, fasesDeLimites, resumenDeFases } from './costos.mjs'
 
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
 const AGENTES = path.join(CLAUDE, 'agents')
@@ -213,6 +216,33 @@ function sesionActual(desde) {
   if (!id) return { desde }
   const transcript = path.join(CLAUDE, 'projects', RAIZ.replace(/[^a-zA-Z0-9]/g, '-'), `${id}.jsonl`)
   return { id, ...(fs.existsSync(transcript) ? { transcript } : {}), desde }
+}
+
+/** Los tramos de límites del flujo (`[{ inicio, fin? }]`, uno por sesión), sin las entradas rotas; vacía en un flujo viejo. */
+const tramosDeLimites = (estado) => (Array.isArray(estado.limites) ? estado.limites : []).filter((t) => t && typeof t === 'object')
+
+/** Un tramo de límites nuevo (preflight o `--reanudar` en otra sesión): su lectura inicial, que es también la primera por fase, la de `paso`. */
+function tramoNuevo(paso) {
+  const inicio = leerLimites()
+  return { inicio, fases: [{ paso, ...inicio }] }
+}
+
+/**
+ * Pone `lectura` como la lectura final del último tramo de límites del flujo abierto, si trae dato y cambió. Así un tramo
+ * cortado (sesión cerrada, límite de uso) conserva lo último visto. Si `paso` (0–6) no es el de la última lectura por fase
+ * del tramo, la suma a `fases`, también sin dato (deja `s/d` las fases que toca, ver LIMITES.md); el 7 no abre fase: lo
+ * cierra el `fin`. Un tramo sin `fases` (flujo de antes de la 0.5.1) no las empieza a mitad. Nunca rompe el comando.
+ */
+function anotarLimites(paso, lectura = leerLimites()) {
+  const e = leerEstado()
+  const tramos = tramosDeLimites(e)
+  if (!e.base_global || e.cierre || !tramos.length) return
+  const ultimo = tramos.at(-1)
+  const fases = Array.isArray(ultimo.fases) ? ultimo.fases : null
+  const nueva = Boolean(fases) && paso !== null && paso < 7 && fases.at(-1)?.paso !== paso
+  const fin = ultimo.fin
+  const igual = Boolean(lectura.sinDato) || (fin && ['five_hour', 'seven_day'].every((k) => fin[k]?.pct === lectura[k]?.pct && fin[k]?.resetsAt === lectura[k]?.resetsAt))
+  if (nueva || !igual) anotarEstado({ limites: [...tramos.slice(0, -1), { ...ultimo, ...(igual ? {} : { fin: lectura }), ...(nueva ? { fases: [...fases, { paso, ...lectura }] } : {}) }] })
 }
 
 /** El avance de la ejecución (`{ "<n>": { estado, ciclos, t } }`), sin las entradas rotas. */
@@ -1252,7 +1282,12 @@ function reanudar() {
   const actual = sesionActual(ahora)
   // Dos ids ausentes nunca cuentan como la misma sesión.
   const misma = Boolean(actual.id) && sesiones[sesiones.length - 1]?.id === actual.id
-  anotarEstado({ en_curso: undefined, ...(misma ? {} : { sesiones: [...(sesiones.length ? sesiones : [{ desde: e.desde_global }]), actual] }) })
+  // Una sesión nueva abre otro tramo de límites (su % se suma al del anterior), con su primera lectura por fase en el paso
+  // que dice SIGUE; la misma sigue con el suyo.
+  const tramos = tramosDeLimites(e)
+  const pasoQueSigue = Number(/paso (\d)/.exec(siguienteDe(e).sigue)?.[1])
+  anotarEstado({ en_curso: undefined, ...(misma ? {} : { sesiones: [...(sesiones.length ? sesiones : [{ desde: e.desde_global }]), actual], limites: [...tramos, tramoNuevo(pasoQueSigue)] }) })
+  if (misma) anotarLimites(null)
   const archivoPedido = path.join(FLUJO, 'pedido.md')
   let pedido = leerTexto(archivoPedido)
   if (pedido === null) {
@@ -1358,15 +1393,9 @@ function autoprueba() {
 const BYTES_POR_TOKEN = 3.5
 const TOPE_IMPORTS = 5
 const UMBRAL_CONTEXTO = 10_000
-// Agentes típicos de un flujo que escriben el contexto del proyecto en caché: [modelo, escritura, cuántos].
-// Explorador (Haiku), planificador y revisión final (Opus) y 3 ejecutores (Sonnet), todos con caché de 5 min;
-// el orquestador (Sonnet) la escribe con 1 h.
-const AGENTES_TIPICOS = [
-  ['claude-haiku-5-5', 'escritura5m', 1],
-  ['claude-opus-5-5', 'escritura5m', 2],
-  ['claude-sonnet-5-5', 'escritura5m', 3],
-  ['claude-sonnet-5-5', 'escritura1h', 1],
-]
+// Agentes típicos de un flujo que escriben el contexto del proyecto en caché: explorador, planificador, revisión final,
+// 3 ejecutores y el orquestador.
+const AGENTES_TIPICOS = 7
 
 /** Rutas `@ruta` que importa un CLAUDE.md, fuera de bloques ``` y de `código`. */
 function importsDe(texto) {
@@ -1417,9 +1446,7 @@ function lineasDelProyecto(raiz) {
   const { tokens, archivos } = contextoDelProyecto(raiz)
   const lineas = [`CONTEXTO DEL PROYECTO: ~${tokens} tokens por agente (${archivos.length ? archivos.join(', ') : 'ningún CLAUDE.md ni AGENTS.md'})`]
   if (tokens > UMBRAL_CONTEXTO) {
-    const porMillon = AGENTES_TIPICOS.reduce((s, [modelo, escritura, n]) => s + n * (precioDe(modelo)?.[escritura] ?? 0), 0)
-    const usd = ((tokens * porMillon) / 1e6).toFixed(2).replace('.', ',')
-    lineas.push(`AVISO: contexto del proyecto pesado: ~$${usd} por flujo solo en escribirlo en caché; acórtalo o mueve lo largo a archivos que se lean a demanda`)
+    lineas.push(`AVISO: contexto del proyecto pesado: ~${tokens * AGENTES_TIPICOS} tokens por flujo solo en escribirlo en caché (${AGENTES_TIPICOS} agentes típicos); acórtalo o mueve lo largo a archivos que se lean a demanda`)
   }
   return lineas
 }
@@ -1466,7 +1493,7 @@ function preflight(forzar) {
       // Un flujo con plan y sin cierre no se pierde: con --forzar se archiva (sin fila en flujos.jsonl) antes de vaciarlo.
       const previo = forzar ? leerEstado() : {}
       if (previo.base_global && previo.plan && !previo.cierre) archivarFlujo(new Date().toISOString())
-      nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [], sesiones: [sesionActual(desde)] })
+      nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [], sesiones: [sesionActual(desde)], limites: [tramoNuevo(0)] })
       const escrito = escribirMapa()
       mapa = escrito.linea
       preparada = true
@@ -1870,13 +1897,13 @@ const sinNulos = (obj) => {
  * `negados` (cuántas negaciones de la guardia hubo) y `cortados` (ids de los agentes que la guardia cortó por contexto;
  * cada explorador sale con `cortado: true|false`). Omite lo que falte; `uso` suma pedidos y tokens de todos los roles.
  * `sesiones` (de las métricas) es cuántas sesiones sumó el flujo: 1 sin corte, más si se reanudó con `--reanudar`.
+ * `limites` (de `gastoDeLimites` más sus `tramos`) es el % de la ventana de 5 h y de la semanal que gastó el flujo.
  */
-export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado = {}, metricas = null, cambios = {}, negados, cortados = [] } = {}) {
+export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado = {}, metricas = null, cambios = {}, negados, cortados = [], limites } = {}) {
   const m = metricas ?? {}
   const roles = Object.values(m.costo?.roles ?? {})
   const suma = (clave) => roles.reduce((s, r) => s + (r.tokens?.[clave] ?? 0), 0)
   const uso = m.costo ? { pedidos: roles.reduce((s, r) => s + (r.pedidos ?? 0), 0), tokens: { entrada: suma('entrada'), leidos: suma('leidos'), escritos: suma('escritos'), salida: suma('salida'), thinking: suma('thinking') } } : undefined
-  const redondeo = (n) => (typeof n === 'number' ? Math.round(n * 10_000) / 10_000 : undefined)
   const subtareas = Array.isArray(estado.subtareas)
     ? estado.subtareas.map((s) => {
       const ejecutor = m.ejecutores?.[s.n] ?? {}
@@ -1888,7 +1915,6 @@ export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado
         archivos: c.archivos,
         mas: c.mas,
         menos: c.menos,
-        usd: redondeo(ejecutor.usd),
         segundos: ejecutor.segundos,
         correcciones: ejecutor.correcciones,
         estado: estado.avance?.[String(s.n)]?.estado === 'OMITIDA' ? 'OMITIDA' : ejecutor.estado,
@@ -1909,6 +1935,7 @@ export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado
     clasificacion: estado.clasificacion,
     costo: m.costo,
     uso,
+    limites,
     contexto: sinNulos({ primero: m.contexto?.primero }),
     tiempos: m.tiempos,
     subtareas,
@@ -1923,13 +1950,26 @@ export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado
   })
 }
 
-/** `CONTEXTO: …` del cierre: tokens del último pedido del hilo principal y lo que costaría reescribirlos en Opus con caché de 1 h. */
+/** `CONTEXTO: …` del cierre: tokens del último pedido del hilo principal (lo que el próximo pedido vuelve a mandar). */
 function lineaDeContexto(metricas) {
   if (!metricas) return 'CONTEXTO: sin datos (no encontré la sesión del flujo en los transcripts)'
   const n = metricas.contexto?.ultimo
-  const precio = precioDe('claude-opus-5-5')
-  if (typeof n !== 'number' || !precio) return 'CONTEXTO: sin datos (el hilo principal no tiene pedidos en el tramo del flujo)'
-  return `CONTEXTO: ${n} tokens en el último pedido del hilo principal · reescribirlo en Opus con caché de 1 h: $${((n * precio.escritura1h) / 1e6).toFixed(2).replace('.', ',')}`
+  if (typeof n !== 'number') return 'CONTEXTO: sin datos (el hilo principal no tiene pedidos en el tramo del flujo)'
+  return `CONTEXTO: ${n} tokens en el último pedido del hilo principal`
+}
+
+/**
+ * Cierra los tramos de límites del estado con `lectura` (si trae dato; si no, el último tramo sin lectura final queda con
+ * ella, que dice el motivo) y da `{ ...gastoDeLimites(tramos), fases?, tramos }`, con `fases` (de `fasesDeLimites`) si
+ * todos los tramos traen lecturas por fase. Un flujo viejo sin tramos queda «sin dato».
+ */
+function limitesDelCierre(e, lectura) {
+  const tramos = tramosDeLimites(e)
+  if (!tramos.length) tramos.push({})
+  const ultimo = tramos.at(-1)
+  if (!lectura.sinDato || !ultimo.fin) tramos[tramos.length - 1] = { ...ultimo, fin: lectura }
+  const fases = fasesDeLimites(tramos)
+  return { ...gastoDeLimites(tramos), ...(fases ? { fases } : {}), tramos }
 }
 
 /**
@@ -1957,7 +1997,8 @@ function archivarFlujo(t) {
 }
 
 /**
- * Cierre: imprime el costo real del flujo, sus veredictos y el CONTEXTO del hilo principal (de los transcripts), fija
+ * Cierre: imprime el consumo del flujo, sus veredictos y el CONTEXTO del hilo principal (de los transcripts) y el % de los
+ * LÍMITES que gastó (del snapshot del panel), fija
  * `cierre` y `resultado` en el estado, anota la fila v2 en `registros/flujos.jsonl` (`filaDelFlujo`, con los `--tokens` si
  * vinieron) y archiva el flujo en el historial. Cada parte falla sola: nunca rompe el cierre. `cancelado` (solo `--cancelar`)
  * fija el resultado `CANCELADO`, que `--resultado` no acepta.
@@ -1973,10 +2014,19 @@ function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
   }
   const costo = metricas?.costo ?? null
   if (costo) {
-    console.log(`COSTO: ${resumenDeCosto(costo)} (sin el mensaje de cierre)`)
+    console.log(`CONSUMO: ${resumenDeCosto(costo)} (sin el mensaje de cierre)`)
     console.log(`VEREDICTOS: ${resumenDeVeredictos(costo)}`)
-  } else console.log('COSTO: no encontré la sesión del flujo en los transcripts; el gasto está en «Flujo» del panel')
+  } else console.log('CONSUMO: no encontré la sesión del flujo en los transcripts; el gasto está en «Flujo» del panel')
   console.log(lineaDeContexto(metricas))
+  let limites
+  try {
+    const lectura = leerLimites()
+    limites = limitesDelCierre(e, lectura)
+    console.log(`LÍMITES: ${resumenDeLimites(limites)}${lectura.sinDato ? ` (lectura del cierre: ${lectura.sinDato})` : ''}`)
+    console.log(`LÍMITES POR FASE: ${limites.fases ? resumenDeFases(limites.fases) : 's/d (el flujo empezó sin lecturas por fase)'}`)
+  } catch {
+    // Sin límites, la fila sigue.
+  }
   let porRol = null
   if (tokens !== undefined) {
     porRol = tokensDe(tokens)
@@ -1988,7 +2038,7 @@ function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
     if (RE_RESULTADO.test(resultado)) valido = resultado
     else console.log(`AVISO: --resultado ${resultado || '(vacío)'} no es COMPLETO ni DETENIDO:<0-7>; el flujo se anota sin él`)
   }
-  anotarEstado({ cierre: t, resultado: valido })
+  anotarEstado({ cierre: t, resultado: valido, ...(limites ? { limites: limites.tramos } : {}) })
   if (valido === 'COMPLETO' && metricas) {
     // `subtareas` [{ n, estado }] si la métrica lo trae; si no, los ejecutores por subtarea (`1`, `2`…; `final` y `?` no cuentan).
     const lista = Array.isArray(metricas.subtareas) ? metricas.subtareas : Object.entries(metricas.ejecutores ?? {}).filter(([n]) => /^\d+$/.test(n)).map(([n, g]) => ({ n, estado: g?.estado }))
@@ -2010,7 +2060,7 @@ function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
     // Sin el registro, la fila sigue.
   }
   try {
-    anotarFlujo(path.join(carpetaGlobal(), 'flujos.jsonl'), filaDelFlujo({ t, raiz: RAIZ, base, version: versionInstalada(), resultado: valido, tokens: porRol ?? undefined, estado: e, metricas, cambios: cambiosDeSubtareas, negados, cortados }))
+    anotarFlujo(path.join(carpetaGlobal(), 'flujos.jsonl'), filaDelFlujo({ t, raiz: RAIZ, base, version: versionInstalada(), resultado: valido, tokens: porRol ?? undefined, estado: e, metricas, cambios: cambiosDeSubtareas, negados, cortados, limites }))
   } catch (err) {
     console.log(`AVISO: no se pudo anotar el flujo: ${err.message}`)
   }
@@ -2409,6 +2459,8 @@ function main() {
     imprimirGuia(guia, parte)
     return
   }
+  // Cada comando del orquestador (lleva `--paso`) pone al día la lectura final de límites del flujo abierto.
+  if (paso !== null && modo !== 'preflight' && modo !== 'reanudar') anotarLimites(paso)
   if (modo === 'estado') {
     mostrarEstado()
     return

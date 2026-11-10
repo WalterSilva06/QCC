@@ -533,25 +533,27 @@ test('estado: filaDelFlujo omite lo que falta y arma subtareas, calidad y uso', 
   assert.equal(reanudada.sesiones, 2)
   assert.equal(reanudada.subtareas[0].estado, 'OMITIDA')
   const roles = {
-    orquestador: { pedidos: 2, usd: 1, sinPrecio: 0, agentes: 0, tokens: { entrada: 1, leidos: 2, escritos: 3, salida: 4, thinking: 5 } },
-    ejecutor: { pedidos: 1, usd: 1, sinPrecio: 0, agentes: 1, tokens: { entrada: 10, leidos: 20, escritos: 30, salida: 40, thinking: 50 } },
+    orquestador: { pedidos: 2, agentes: 0, tokens: { entrada: 1, leidos: 2, escritos: 3, salida: 4, thinking: 5 } },
+    ejecutor: { pedidos: 1, agentes: 1, tokens: { entrada: 10, leidos: 20, escritos: 30, salida: 40, thinking: 50 } },
   }
   const fila = filaDelFlujo({
     t: 'T', raiz: 'R', base: 'B', version: 'abc', resultado: 'COMPLETO', tokens: { final: [1] }, negados: 2,
     estado: { titulo: 'Titulo', clasificacion: 'sin criterios', subtareas: [{ n: 1, critica: 'sí (#1)' }, { n: 2, critica: 'No — texto' }, { n: 3 }], verificacion_inicial: { resultado: 'RESULTADO: VERDE' } },
     metricas: {
-      costo: { inicio: 'I', minutos: 1, usd: 2, roles, veredictos: {} },
+      costo: { inicio: 'I', minutos: 1, roles, veredictos: {} },
       sesion: 'S.jsonl', pedido: 'p', contexto: { primero: 10, ultimo: 99 }, tiempos: { fases: {}, activo: 1, espera: 0 },
-      ejecutores: { 1: { usd: 0.123456, segundos: 7, correcciones: 1, estado: 'HECHO', esfuerzo: 'medium' } },
+      ejecutores: { 1: { segundos: 7, correcciones: 1, estado: 'HECHO', esfuerzo: 'medium' } },
       problemas: { final: [{ veredicto: 'APROBADO', items: [] }] }, alcanceFuera: [], explorador: { pedidos: 1, glob: 0, read: 0, mapa: false },
     },
     cambios: { 1: { archivos: 2, mas: 5, menos: 1 } },
+    limites: { five_hour: { gasto: 7 }, seven_day: { gasto: null, motivo: 'sin dato' }, tramos: [] },
   })
-  assert.deepEqual(Object.keys(fila), ['v', 't', 'raiz', 'base', 'version', 'sesion', 'pedido', 'titulo', 'resultado', 'clasificacion', 'costo', 'uso', 'contexto', 'tiempos', 'subtareas', 'calidad', 'explorador', 'tokens'])
+  assert.deepEqual(Object.keys(fila), ['v', 't', 'raiz', 'base', 'version', 'sesion', 'pedido', 'titulo', 'resultado', 'clasificacion', 'costo', 'uso', 'limites', 'contexto', 'tiempos', 'subtareas', 'calidad', 'explorador', 'tokens'])
   assert.deepEqual(fila.uso, { pedidos: 3, tokens: { entrada: 11, leidos: 22, escritos: 33, salida: 44, thinking: 55 } })
+  assert.deepEqual(fila.limites.five_hour, { gasto: 7 })
   assert.deepEqual(fila.contexto, { primero: 10 })
   assert.deepEqual(fila.subtareas, [
-    { n: 1, critica: true, esfuerzo: 'medium', archivos: 2, mas: 5, menos: 1, usd: 0.1235, segundos: 7, correcciones: 1, estado: 'HECHO' },
+    { n: 1, critica: true, esfuerzo: 'medium', archivos: 2, mas: 5, menos: 1, segundos: 7, correcciones: 1, estado: 'HECHO' },
     { n: 2, critica: false },
     { n: 3, critica: true },
   ])
@@ -613,7 +615,10 @@ test('cierre: anota la fila v2, imprime CONTEXTO y archiva en historial', () => 
 
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
   const salida = estadoEn(raiz, ['--cambios', sha, '--paso', '7', '--resultado', 'COMPLETO'], { CLAUDE_CONFIG_DIR: transcriptDelFlujo(raiz) }).salida
-  assert.match(salida, /^CONTEXTO: 100000 tokens en el último pedido del hilo principal · reescribirlo en Opus con caché de 1 h: \$0,80$/m)
+  assert.match(salida, /^CONTEXTO: 100000 tokens en el último pedido del hilo principal$/m)
+  // Sin snapshot del panel, los límites quedan «s/d» (nunca en cero) y la fila lo anota.
+  assert.match(salida, /^LÍMITES: 5h s\/d · sem s\/d \(lectura del cierre: sin snapshot del panel\)$/m)
+  assert.doesNotMatch(salida, /\$\d/)
   assert.doesNotMatch(salida, /AVISO: --resultado/)
   const fila = filasDeFlujos(raiz).at(-1)
   assert.equal(fila.v, 2)

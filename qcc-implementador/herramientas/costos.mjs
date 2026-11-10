@@ -1,20 +1,19 @@
 #!/usr/bin/env node
-// Costo real de los flujos /impl, leído de los transcripts de Claude Code.
+// Consumo de los flujos /impl, leído de los transcripts de Claude Code, y el % de los límites de uso que gastó cada uno.
 //
 //   node <plugin>/herramientas/costos.mjs [--ultimos <n>] [--archivo <flujos.jsonl>]
 //   node <plugin>/herramientas/costos.mjs --fuga [--ultimos <n>] [--archivo <flujos.jsonl>]
 //   node <plugin>/herramientas/costos.mjs --anotar <t> "<texto>" [--archivo <flujos.jsonl>]
 //
-// Lista los últimos flujos anotados en `registros/flujos.jsonl` (10 por defecto), de la versión 1 y de la 2: costo,
-// minutos, pedidos del orquestador, costo por rol, Clasificación, subtareas y veredictos (en la 2, además el resultado
-// y los defectos anotados), con el promedio al final. `--fuga` mide, por flujo v2, lo gastado en su sesión después del
-// cierre y hasta el siguiente `/impl`. `--anotar` suma un defecto al flujo cuyo `t` empieza con `<t>` (exit 2
-// si no es uno solo). estado.mjs usa `costoDelFlujo` en el cierre (`--cambios … --paso 7`) para anotar cada flujo;
-// `metricasDelFlujo` suma al costo lo que se lee de los mismos transcripts (tokens, tiempos por fase, ejecutores,
-// problemas de los revisores).
-//
-// Precios por millón de tokens de la página oficial de Anthropic (octubre de 2026): entrada, salida, lectura de
-// caché y escritura de caché de 5 min y de 1 h. El hilo principal de Claude Code escribe con 1 h; los subagentes, con 5 min.
+// Lista los últimos flujos anotados en `registros/flujos.jsonl` (10 por defecto), de la versión 1 y de la 2: minutos,
+// tokens, pedidos por rol, el % de la ventana de 5 h y de la semanal que gastó (`5h +7 % · sem +1 %`, `s/d` sin dato),
+// Clasificación, subtareas y veredictos (en la 2, además el resultado y los defectos anotados), con el promedio al final.
+// Bajo cada flujo con lecturas por fase, una línea `por fase:` con el % de cada fase (`fasesDeLimites`).
+// `--fuga` mide, por flujo v2, lo gastado en su sesión después del cierre y hasta el siguiente `/impl`. `--anotar` suma
+// un defecto al flujo cuyo `t` empieza con `<t>` (exit 2 si no es uno solo). estado.mjs usa `metricasDelFlujo` en el
+// cierre (`--cambios … --paso 7`) para anotar cada flujo (tokens, tiempos por fase, ejecutores, problemas de los
+// revisores) y `leerLimites`/`gastoDeLimites` para el % de los límites (ver LIMITES.md). No calcula dólares: el plan de
+// suscripción gasta % de ventana, no dinero. Las filas viejas con `usd` se leen igual y el campo se ignora.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -23,36 +22,105 @@ import { fileURLToPath } from 'node:url'
 import { carpetaGlobal, RAIZ } from './guardia.mjs'
 
 const WIN = process.platform === 'win32'
-const PRECIOS = {
-  'claude-opus-5-5': { entrada: 4, salida: 20, lectura: 0.2, escritura5m: 5, escritura1h: 8 },
-  'claude-sonnet-5-5': { entrada: 2, salida: 10, lectura: 0.1, escritura5m: 2.5, escritura1h: 4 },
-  'claude-haiku-5-5': { entrada: 0.1, salida: 0.5, lectura: 0.01, escritura5m: 0.125, escritura1h: 0.2 },
-}
-// Haiku 5.5 cobra más con prompts de más de 100.000 tokens.
-const HAIKU_LARGO = { entrada: 0.5, salida: 2.5, lectura: 0.05, escritura5m: 0.625, escritura1h: 1 }
 
-const proyectosDe = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')
-const dolares = (n) => `$${n.toFixed(2).replace('.', ',')}`
+const configDe = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
+const proyectosDe = () => path.join(configDe(), 'projects')
 const decimal = (n) => n.toFixed(1).replace('.', ',')
 const textoDe = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x?.type === 'text' ? x.text : '')).join('') : '')
 
-/** Precio por millón del modelo (id con o sin sufijos), según el tamaño del prompt; null si no se conoce. */
-export function precioDe(modelo, prompt = 0) {
-  const clave = Object.keys(PRECIOS).find((k) => String(modelo ?? '').startsWith(k))
-  if (!clave) return null
-  return clave === 'claude-haiku-5-5' && prompt > 100_000 ? HAIKU_LARGO : PRECIOS[clave]
+// ── Límites de uso (% de la ventana de 5 h y de la semanal) ────────────────
+
+/** Ventanas que se anotan por flujo. */
+const VENTANAS = ['five_hour', 'seven_day']
+/** Más vieja que esto (segundos), la lectura del snapshot es «sin dato». */
+export const LIMITES_MAX_SEG = 10 * 60
+
+/** El snapshot que escribe el panel en la carpeta de la cuenta que corre (`QCC_LIMITES` lo cambia, para los tests). */
+export const rutaLimites = () => process.env.QCC_LIMITES || path.join(configDe(), 'qcc-limites.json')
+
+/**
+ * Lectura del % usado de cada ventana, del snapshot del panel: `{ t, edad, cuenta, five_hour?: { pct, resetsAt }, seven_day?: … }`,
+ * con `t` la hora de la lectura, `edad` los segundos del snapshot y `cuenta` la carpeta de configuración. Sin snapshot, roto o
+ * con más de `LIMITES_MAX_SEG`, `{ t, cuenta, sinDato: <motivo> }`: nunca rellena con ceros.
+ */
+export function leerLimites(archivo = rutaLimites(), ahora = Date.now()) {
+  const base = { t: new Date(ahora).toISOString(), cuenta: path.basename(configDe()) }
+  let s
+  try {
+    s = JSON.parse(fs.readFileSync(archivo, 'utf8'))
+  } catch {
+    return { ...base, sinDato: 'sin snapshot del panel' }
+  }
+  const edad = Math.round((ahora - Date.parse(s?.t)) / 1000)
+  if (!Number.isFinite(edad)) return { ...base, sinDato: 'snapshot roto' }
+  if (edad > LIMITES_MAX_SEG) return { ...base, edad, sinDato: 'snapshot viejo' }
+  const lectura = { ...base, edad }
+  for (const k of VENTANAS) if (Number.isFinite(s[k]?.pct)) lectura[k] = { pct: s[k].pct, resetsAt: s[k].resetsAt }
+  return lectura
 }
 
-/** Costo en USD de un pedido según su `usage`; null si el modelo no tiene precio. */
-export function costoDePedido(uso, modelo) {
-  const u = uso ?? {}
-  const prompt = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
-  const p = precioDe(modelo, prompt)
-  if (!p) return null
-  const w1h = u.cache_creation?.ephemeral_1h_input_tokens ?? 0
-  const w5m = u.cache_creation ? (u.cache_creation.ephemeral_5m_input_tokens ?? 0) : (u.cache_creation_input_tokens ?? 0)
-  return ((u.input_tokens ?? 0) * p.entrada + (u.cache_read_input_tokens ?? 0) * p.lectura + w5m * p.escritura5m + w1h * p.escritura1h + (u.output_tokens ?? 0) * p.salida) / 1e6
+/** Lo gastado de la ventana `k` entre dos lecturas: el número, `'reinicio'` si se reinició en medio o `'sin dato'`. */
+function tramoDeVentana(inicio, fin, k) {
+  const a = inicio?.[k]
+  const b = fin?.[k]
+  if (!a || !b) return 'sin dato'
+  const ra = Date.parse(a.resetsAt)
+  const rb = Date.parse(b.resetsAt)
+  // Se reinició si bajó el %, si la lectura final es posterior al reinicio previsto o si cambió la hora de reinicio.
+  if (b.pct < a.pct || (Number.isFinite(ra) && Date.parse(fin.t) >= ra) || (Number.isFinite(ra) && Number.isFinite(rb) && Math.abs(ra - rb) > 60_000)) return 'reinicio'
+  return b.pct - a.pct
 }
+
+/**
+ * El gasto de cada ventana en los tramos del flujo (`[{ inicio, fin }]`, uno por sesión): `{ five_hour: { gasto, incompleto? }, seven_day: … }`.
+ * `gasto` suma los tramos válidos (a 0,1) y lleva `incompleto: true` si a alguno le faltó dato o se reinició; sin ninguno
+ * válido, `{ gasto: null, motivo: 'reinicio' | 'sin dato' }`.
+ */
+export function gastoDeLimites(tramos) {
+  const gasto = {}
+  for (const k of VENTANAS) {
+    const partes = (Array.isArray(tramos) ? tramos : []).map((t) => tramoDeVentana(t?.inicio, t?.fin, k))
+    const validos = partes.filter((p) => typeof p === 'number')
+    if (!validos.length) gasto[k] = { gasto: null, motivo: partes.includes('reinicio') ? 'reinicio' : 'sin dato' }
+    else gasto[k] = { gasto: Math.round(validos.reduce((s, n) => s + n, 0) * 10) / 10, ...(validos.length < partes.length ? { incompleto: true } : {}) }
+  }
+  return gasto
+}
+
+/** «5h +7 % · sem +1,5 %»: `≥+` si faltó algún tramo, `reinicio` si la ventana se reinició en medio y `s/d` sin dato (también en filas viejas). */
+export function resumenDeLimites(limites) {
+  return [['5h', 'five_hour'], ['sem', 'seven_day']].map(([nombre, k]) => {
+    const v = limites?.[k]
+    if (typeof v?.gasto === 'number') return `${nombre} ${v.incompleto ? '≥' : ''}+${String(v.gasto).replace('.', ',')} %`
+    return `${nombre} ${v?.motivo === 'reinicio' ? 'reinicio' : 's/d'}`
+  }).join(' · ')
+}
+
+/**
+ * La fase de /impl de cada `--paso` (pasos.md): el único mapa paso → fase. El 1 no lo lleva ningún comando (la exploración
+ * va entre el preflight y el primer `--paso 2`) y el 3 está sin uso; el 7 solo nombra lo que sigue a un `--reanudar` en el cierre.
+ */
+export const FASES = { 0: 'exploración', 1: 'exploración', 2: 'plan', 3: 'plan', 4: 'aprobación', 5: 'ejecución', 6: 'revisión', 7: 'cierre' }
+
+/**
+ * El gasto de cada fase en los tramos del flujo, de las lecturas por fase de cada tramo (`fases: [{ paso, ...lectura }]`,
+ * la primera igual a su `inicio`): lo de entre una lectura y la siguiente (o el `fin` del tramo) es de la fase de la primera.
+ * Los pasos repetidos y los tramos se suman con `gastoDeLimites` (una lectura sin dato deja `s/d` las dos fases que toca; un
+ * reinicio, `reinicio` la suya). `[{ fase, five_hour, seven_day }]` en el orden de FASES; `null` si algún tramo no trae lecturas por fase.
+ */
+export function fasesDeLimites(tramos) {
+  const porFase = new Map(Object.values(FASES).map((f) => [f, []]))
+  for (const t of Array.isArray(tramos) ? tramos : []) {
+    const lecturas = (Array.isArray(t?.fases) ? t.fases : []).filter((l) => FASES[l?.paso])
+    if (!lecturas.length) return null
+    lecturas.forEach((l, i) => porFase.get(FASES[l.paso]).push({ inicio: l, fin: lecturas[i + 1] ?? t.fin }))
+  }
+  const fases = [...porFase].filter(([, partes]) => partes.length).map(([fase, partes]) => ({ fase, ...gastoDeLimites(partes) }))
+  return fases.length ? fases : null
+}
+
+/** «exploración: 5h +0,5 % · sem +0,1 % | plan: …», con las mismas marcas que `resumenDeLimites`. */
+export const resumenDeFases = (fases) => fases.map((f) => `${f.fase}: ${resumenDeLimites(f)}`).join(' | ')
 
 function filasDe(archivo) {
   let texto
@@ -87,16 +155,11 @@ function mensajesDe(filas) {
 
 const tokensVacios = () => ({ entrada: 0, leidos: 0, escritos: 0, salida: 0, thinking: 0 })
 
-/** Pedidos al modelo de esas filas de transcript, cada mensaje una vez y con su uso final: `{ pedidos, usd, sinPrecio, tokens }`. */
+/** Pedidos al modelo de esas filas de transcript, cada mensaje una vez y con su uso final: `{ pedidos, tokens }`. */
 export function usoDe(filas) {
   const porMensaje = mensajesDe(filas)
   const tokens = tokensVacios()
-  let usd = 0
-  let sinPrecio = 0
-  for (const { uso, modelo } of porMensaje.values()) {
-    const c = costoDePedido(uso, modelo)
-    if (c === null) sinPrecio++
-    else usd += c
+  for (const { uso } of porMensaje.values()) {
     const u = uso ?? {}
     tokens.entrada += u.input_tokens ?? 0
     tokens.leidos += u.cache_read_input_tokens ?? 0
@@ -104,7 +167,7 @@ export function usoDe(filas) {
     tokens.salida += u.output_tokens ?? 0
     tokens.thinking += u.output_tokens_details?.thinking_tokens ?? u.thinking_tokens ?? 0
   }
-  return { pedidos: porMensaje.size, usd, sinPrecio, tokens }
+  return { pedidos: porMensaje.size, tokens }
 }
 
 /** Qué línea de su informe trae el veredicto de cada rol; los demás (explorador, planificador) no dan uno. */
@@ -285,27 +348,27 @@ function leerTramo(sesion, hasta) {
   return { sesion, hasta, todas, principal, agentes }
 }
 
-/** El costo del flujo ya leído: `{ inicio, minutos, usd, roles, veredictos }`. Los minutos no cuentan el corte entre sesiones. */
+/**
+ * El consumo del flujo ya leído: `{ inicio, minutos, roles, veredictos }`, con cada rol como `{ pedidos, agentes, tokens }`.
+ * Los minutos no cuentan el corte entre sesiones. Va en el campo `costo` de la fila (nombre histórico: ya no trae dólares).
+ */
 function costoDe({ sesion, hasta, principal, agentes, tramos = [] }) {
   const roles = { orquestador: { ...usoDe(principal), agentes: 0 } }
   const veredictos = {}
   for (const { rol, filas } of agentes) {
     const u = usoDe(filas)
-    roles[rol] ??= { pedidos: 0, usd: 0, sinPrecio: 0, agentes: 0, tokens: tokensVacios() }
+    roles[rol] ??= { pedidos: 0, agentes: 0, tokens: tokensVacios() }
     roles[rol].pedidos += u.pedidos
-    roles[rol].usd += u.usd
-    roles[rol].sinPrecio += u.sinPrecio
     for (const k of Object.keys(u.tokens)) roles[rol].tokens[k] += u.tokens[k]
     roles[rol].agentes++
     const vs = informesDe(filas, rol).map((i) => i.veredicto)
     if (vs.length) (veredictos[rol] ??= []).push(...vs)
   }
-  const usd = Object.values(roles).reduce((s, r) => s + r.usd, 0)
-  return { inicio: sesion.inicio, minutos: Math.max(0, Date.parse(hasta) - Date.parse(sesion.inicio) - corteDe(tramos) * 1000) / 60_000, usd, roles, veredictos }
+  return { inicio: sesion.inicio, minutos: Math.max(0, Date.parse(hasta) - Date.parse(sesion.inicio) - corteDe(tramos) * 1000) / 60_000, roles, veredictos }
 }
 
 /**
- * Costo real del flujo de `raiz` que empezó en `desde` (con `base`, su BASE_GLOBAL), hasta `hasta`: el hilo principal
+ * Consumo del flujo de `raiz` que empezó en `desde` (con `base`, su BASE_GLOBAL), hasta `hasta`: el hilo principal
  * (orquestador) y cada subagente lanzado en ese tramo, por rol (`final` es la revisión final), con sus veredictos y
  * sus `tokens` (`entrada`, `leidos`, `escritos`, `salida`, `thinking`). null si no se encuentra la sesión.
  */
@@ -316,14 +379,15 @@ export function costoDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = 
 
 /**
  * Lo gastado en la sesión `archivo` después de `cierre` (la hora del cierre del flujo): el hilo principal y los
- * subagentes desde ahí hasta el siguiente `/impl` de la sesión, o hasta el final. `{ usd, pedidos }`; null si no se puede leer.
+ * subagentes desde ahí hasta el siguiente `/impl` de la sesión, o hasta el final. `{ pedidos, tokens }`; null si no se puede leer.
  */
 export function fugaDe(archivo, cierre) {
   if (!archivo || !fs.existsSync(archivo)) return null
   const siguiente = comienzosDe(filasDe(archivo)).find((f) => f.timestamp > cierre)?.timestamp
   const { principal, agentes } = leerTramo({ archivo, inicio: cierre }, siguiente ?? '9999-12-31T23:59:59.999Z')
   const usos = [usoDe(principal), ...agentes.map((a) => usoDe(a.filas))]
-  return { usd: usos.reduce((s, u) => s + u.usd, 0), pedidos: usos.reduce((s, u) => s + u.pedidos, 0) }
+  const tokens = usos.reduce((s, u) => s + u.tokens.entrada + u.tokens.leidos + u.tokens.escritos + u.tokens.salida, 0)
+  return { pedidos: usos.reduce((s, u) => s + u.pedidos, 0), tokens }
 }
 
 /** Texto de cada bloque de la fila que sea de ese `tipo`, en orden. */
@@ -457,13 +521,12 @@ export function ejecutoresDelProyecto(raiz, desde, proyectos = proyectosDe()) {
   return ejecutores.sort((a, b) => Date.parse(a.inicio) - Date.parse(b.inicio))
 }
 
-/** Los ejecutores agrupados por subtarea (`1`, `2`… o `final`): `{ usd, segundos, correcciones, estado, esfuerzo }`. */
+/** Los ejecutores agrupados por subtarea (`1`, `2`… o `final`): `{ segundos, correcciones, estado, esfuerzo }`. */
 function ejecutoresDe(agentes, lanzamientos) {
   const grupos = {}
   for (const a of agentes.filter((x) => x.rol === 'ejecutor')) {
-    const g = (grupos[claveDe(a.prompt)] ??= { usd: 0, segundos: 0, correcciones: 0, estado: null, esfuerzo: null, base: null })
+    const g = (grupos[claveDe(a.prompt)] ??= { segundos: 0, correcciones: 0, estado: null, esfuerzo: null, base: null })
     const tiempos = a.filas.map((f) => Date.parse(f.timestamp)).filter(Number.isFinite)
-    g.usd += usoDe(a.filas).usd
     g.segundos += tiempos.length ? (Math.max(...tiempos) - Math.min(...tiempos)) / 1000 : 0
     if (a.prompt.includes('CORRECCIÓN')) g.correcciones++
     else g.base ??= a.prompt
@@ -496,7 +559,7 @@ export function pedidoDelFlujo(raiz, desde, { proyectos = proyectosDe(), base = 
 
 /**
  * Métricas del flujo de `raiz` que empezó en `desde` leídas de sus transcripts: `{ costo, sesion, sesiones, pedido, contexto,
- * tiempos, ejecutores, problemas, alcanceFuera, explorador }`, con el costo de `costoDelFlujo` y lo demás como lo
+ * tiempos, ejecutores, problemas, alcanceFuera, explorador }`, con el consumo de `costoDelFlujo` y lo demás como lo
  * describen `tiemposDe`, `ejecutoresDe` y `problemasDe`. `pedido` es el texto que se escribió tras `/impl`
  * (≤ 120 caracteres), `contexto` los tokens del primer y del último pedido del hilo principal, `alcanceFuera` las
  * líneas `ALCANCE: FUERA` que vio el orquestador, `explorador.mapa` si algún prompt trajo un `MAPA:` útil y
@@ -560,10 +623,13 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
 /** Cifra de tokens abreviada: «950», «844k», «12,4M». */
 const abreviar = (n) => (n < 1000 ? String(n) : n < 999_500 ? `${Math.round(n / 1000)}k` : `${decimal(n / 1e6)}M`)
 
+/** Total de un `tokens` (entrada, leídos, escritos y salida; el thinking ya va dentro de la salida). */
+const totalDe = (t) => (t?.entrada ?? 0) + (t?.leidos ?? 0) + (t?.escritos ?? 0) + (t?.salida ?? 0)
+
 /**
  * «12,4M tokens (91 % caché) · sal 844k» con los tokens de todos los roles, o '' si no hay (los flujos viejos no los
  * anotaban). La caché es lo leído sobre todo el prompt (entrada + leídos + escritos); `sal` es la salida, que ya
- * incluye el thinking (el costo cobra `output_tokens` y el thinking es parte de ellos).
+ * incluye el thinking (`output_tokens` lo cuenta).
  */
 function tokensDeCosto(roles) {
   const t = { entrada: 0, leidos: 0, escritos: 0, salida: 0 }
@@ -574,15 +640,14 @@ function tokensDeCosto(roles) {
   return `${abreviar(total)} tokens${prompt ? ` (${Math.round((t.leidos / prompt) * 100)} % caché)` : ''} · sal ${abreviar(t.salida)}`
 }
 
-/** «$0,98 · 9,6 min · 12,4M tokens (91 % caché) · sal 844k · ejecutor $0,60 (×2, 20 pedidos) · orquestador $0,39 (10 pedidos) · …», con los roles de mayor a menor costo. */
+/** «9,6 min · 12,4M tokens (91 % caché) · sal 844k · ejecutor 8,1M tok (×2, 20 pedidos) · orquestador 4,3M tok (10 pedidos) · …», con los roles de más a menos tokens. */
 export function resumenDeCosto(c) {
   const partes = Object.entries(c.roles)
     .filter(([, r]) => r.pedidos > 0)
-    .sort((a, b) => b[1].usd - a[1].usd)
-    .map(([rol, r]) => `${rol} ${dolares(r.usd)} (${r.agentes > 1 ? `×${r.agentes}, ` : ''}${r.pedidos} ${r.pedidos === 1 ? 'pedido' : 'pedidos'})`)
+    .sort((a, b) => totalDe(b[1].tokens) - totalDe(a[1].tokens))
+    .map(([rol, r]) => `${rol}${totalDe(r.tokens) ? ` ${abreviar(totalDe(r.tokens))} tok` : ''} (${r.agentes > 1 ? `×${r.agentes}, ` : ''}${r.pedidos} ${r.pedidos === 1 ? 'pedido' : 'pedidos'})`)
   const tokens = tokensDeCosto(c.roles)
-  const sinPrecio = Object.values(c.roles).reduce((s, r) => s + r.sinPrecio, 0)
-  return `${dolares(c.usd)} · ${decimal(c.minutos)} min${tokens ? ` · ${tokens}` : ''}${partes.length ? ` · ${partes.join(' · ')}` : ' · sin pedidos'}${sinPrecio ? ` · ${sinPrecio} pedido(s) de un modelo sin precio` : ''}`
+  return `${decimal(c.minutos)} min${tokens ? ` · ${tokens}` : ''}${partes.length ? ` · ${partes.join(' · ')}` : ' · sin pedidos'}`
 }
 
 /** «ejecutor HECHO, HECHO · final RECHAZADO, APROBADO», o «ninguno». */
@@ -630,7 +695,7 @@ function fuga(flujos, n) {
   for (const f of conSesion) {
     const gasto = fugaDe(f.sesion, f.t)
     const proyecto = path.basename(String(f.raiz ?? '?'))
-    console.log(gasto ? `FUGA: ${fechaDe(f)} · ${proyecto} · ${dolares(gasto.usd)} (${gasto.pedidos} pedidos) después del cierre` : `FUGA: ${fechaDe(f)} · ${proyecto} · no se pudo leer la sesión ${f.sesion}`)
+    console.log(gasto ? `FUGA: ${fechaDe(f)} · ${proyecto} · ${gasto.pedidos} pedidos · ${abreviar(gasto.tokens)} tokens después del cierre` : `FUGA: ${fechaDe(f)} · ${proyecto} · no se pudo leer la sesión ${f.sesion}`)
   }
 }
 
@@ -654,19 +719,27 @@ function main() {
   }
   const flujos = todas.filter((f) => f?.costo && !f.tipo)
   if (!flujos.length) {
-    console.log(`COSTOS: no hay flujos con costo en ${archivo}`)
+    console.log(`FLUJOS: no hay flujos con consumo en ${archivo}`)
     return
   }
   const ultimos = flujos.slice(-n)
-  console.log(`FLUJOS (últimos ${ultimos.length} de ${flujos.length} con costo):`)
+  console.log(`FLUJOS (últimos ${ultimos.length} de ${flujos.length}):`)
   for (const f of ultimos) {
     const datos = [f.clasificacion && clasificacionCorta(f.clasificacion), subtareasDe(f) && `${subtareasDe(f)} subtarea(s)`].filter(Boolean).join(' · ')
     const defectos = f.v === 2 ? todas.filter((d) => d?.tipo === 'defecto' && d.flujo === f.t).length : 0
     const v2 = f.v === 2 ? `${f.resultado ? ` · ${f.resultado}` : ''}${defectos ? ` · defectos: ${defectos}` : ''}` : ''
-    console.log(`  ${fechaDe(f)} · ${path.basename(String(f.raiz ?? '?'))} · ${resumenDeCosto(f.costo)}${datos ? ` · ${datos}` : ''} · ${resumenDeVeredictos(f.costo)}${v2}`)
+    console.log(`  ${fechaDe(f)} · ${path.basename(String(f.raiz ?? '?'))} · ${resumenDeCosto(f.costo)} · ${resumenDeLimites(f.limites)}${datos ? ` · ${datos}` : ''} · ${resumenDeVeredictos(f.costo)}${v2}`)
+    // Las filas sin lecturas por fase (las de antes de la 0.5.1) no imprimen nada más.
+    const fases = Array.isArray(f.limites?.fases) ? f.limites.fases.filter((x) => typeof x?.fase === 'string') : []
+    if (fases.length) console.log(`    por fase: ${resumenDeFases(fases)}`)
   }
-  const promedio = (valorDe) => ultimos.reduce((s, f) => s + valorDe(f.costo), 0) / ultimos.length
-  console.log(`PROMEDIO: ${dolares(promedio((c) => c.usd))} · ${decimal(promedio((c) => c.minutos))} min · orquestador ${decimal(promedio((c) => c.roles.orquestador?.pedidos ?? 0))} pedidos`)
+  const promedio = (valorDe) => ultimos.reduce((s, f) => s + valorDe(f), 0) / ultimos.length
+  // El promedio de cada ventana, solo de los flujos con su gasto completo.
+  const medias = [['5h', 'five_hour'], ['sem', 'seven_day']].map(([nombre, k]) => {
+    const conDato = ultimos.map((f) => f.limites?.[k]).filter((v) => typeof v?.gasto === 'number' && !v.incompleto)
+    return `${nombre} ${conDato.length ? `+${decimal(conDato.reduce((s, v) => s + v.gasto, 0) / conDato.length)} % (${conDato.length})` : 's/d'}`
+  })
+  console.log(`PROMEDIO: ${decimal(promedio((f) => f.costo.minutos))} min · orquestador ${decimal(promedio((f) => f.costo.roles.orquestador?.pedidos ?? 0))} pedidos · ${medias.join(' · ')}`)
 }
 
 function esPrincipal() {

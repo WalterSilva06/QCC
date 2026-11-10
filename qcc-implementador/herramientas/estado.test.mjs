@@ -460,7 +460,7 @@ test('estado: listaPermitidos no parte en comas entre paréntesis', () => {
 test('estado: preflight avisa el contexto del proyecto por encima de 10k tokens', () => {
   const grande = estadoCon({}, () => [], { 'CLAUDE.md': '# Reglas\n' + 'x'.repeat(40_000) })
   assert.match(grande.salida, /^CONTEXTO DEL PROYECTO: ~11\d{3} tokens por agente \(CLAUDE\.md\)$/m)
-  assert.match(grande.salida, /^AVISO: contexto del proyecto pesado: ~\$0,25 por flujo solo en escribirlo en caché; /m)
+  assert.match(grande.salida, /^AVISO: contexto del proyecto pesado: ~\d+ tokens por flujo solo en escribirlo en caché \(7 agentes típicos\); /m)
   assert.match(grande.salida, /^REGLAS DEL PROYECTO: .*\n^CONTEXTO DEL PROYECTO: /m)
   assert.equal(grande.codigo, 0)
 })

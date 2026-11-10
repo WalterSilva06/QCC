@@ -1,7 +1,7 @@
-// Casos de costos.mjs: precio por pedido, métricas del flujo desde transcripts y problemas de la revisión.
+// Casos de costos.mjs: consumo y métricas del flujo desde transcripts, problemas de la revisión y el % de los límites de uso.
 // Correr: node --test qcc-implementador/herramientas/costos.test.mjs
 
-import { temporales, estadoEn, estadoCon, limpiar } from './pruebas-comun.mjs'
+import { temporales, estadoEn, estadoCon, limpiar, repoConPlanGuardado } from './pruebas-comun.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -10,15 +10,9 @@ import path from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { registroDe, flujoDe } from './guardia.mjs'
-import { costoDelFlujo, costoDePedido, metricasDelFlujo, precioDe, problemasDe, resumenDeCosto } from './costos.mjs'
+import { costoDelFlujo, FASES, fasesDeLimites, gastoDeLimites, leerLimites, LIMITES_MAX_SEG, metricasDelFlujo, problemasDe, resumenDeCosto, resumenDeFases, resumenDeLimites } from './costos.mjs'
 
-test('costos: precio por pedido, y el cierre anota costo y veredictos del flujo', () => {
-  assert.equal(precioDe('claude-sonnet-5-5').lectura, 0.1)
-  assert.equal(precioDe('claude-haiku-5-5', 150_000).entrada, 0.5)
-  assert.equal(precioDe('otro-modelo'), null)
-  // Sonnet: 1000 de lectura, 100.000 escritos con caché de 1 h y 1000 de salida.
-  assert.equal(costoDePedido({ cache_read_input_tokens: 1000, cache_creation_input_tokens: 100_000, cache_creation: { ephemeral_1h_input_tokens: 100_000 }, output_tokens: 1000 }, 'claude-sonnet-5-5'), (1000 * 0.1 + 100_000 * 4 + 1000 * 10) / 1e6)
-
+test('costos: el cierre anota consumo y veredictos del flujo, sin dólares', () => {
   const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
   const { raiz } = estadoCon(config, () => ['--paso', '0'])
   const { inicio, base_global: global } = JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8'))
@@ -52,49 +46,50 @@ test('costos: precio por pedido, y el cierre anota costo y veredictos del flujo'
 
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
   const cierre = estadoEn(raiz, ['--cambios', sha, '--paso', '7'], { CLAUDE_CONFIG_DIR: claude }).salida
-  assert.match(cierre, /^COSTO: \$0,51 · [\d,]+ min · 264k tokens \(38 % caché\) · sal 4k · orquestador \$0,43 \(2 pedidos\) · final \$0,07 \(1 pedido\) · explorador \$0,01 \(1 pedido\) \(sin el mensaje de cierre\)$/m)
+  assert.match(cierre, /^CONSUMO: [\d,]+ min · 264k tokens \(38 % caché\) · sal 4k · orquestador 202k tok \(2 pedidos\) · explorador 51k tok \(1 pedido\) · final 11k tok \(1 pedido\) \(sin el mensaje de cierre\)$/m)
   assert.match(cierre, /^VEREDICTOS: final APROBADO$/m)
-  assert.match(cierre, /^CONTEXTO: 100000 tokens en el último pedido del hilo principal · reescribirlo en Opus con caché de 1 h: \$0,80$/m)
+  assert.match(cierre, /^CONTEXTO: 100000 tokens en el último pedido del hilo principal$/m)
+  assert.doesNotMatch(cierre, /\$\d/)
   assert.match(cierre, /ALCANCE: [^\n]*\s*$/)
   const flujos = path.join(path.dirname(registroDe(raiz)), 'flujos.jsonl')
   const fila = fs.readFileSync(flujos, 'utf8').trimEnd().split('\n').map((l) => JSON.parse(l)).at(-1)
   assert.equal(fila.v, 2)
   assert.equal(fila.raiz, raiz)
-  assert.equal(Math.round(fila.costo.usd * 1000), 507)
+  assert.equal(fila.costo.usd, undefined)
+  assert.equal(fila.costo.roles.orquestador.usd, undefined)
   assert.deepEqual(fila.costo.veredictos, { final: ['APROBADO'] })
 
   const historial = spawnSync(process.execPath, [fileURLToPath(new URL('./costos.mjs', import.meta.url)), '--archivo', flujos], { encoding: 'utf8' }).stdout
-  assert.match(historial, /^FLUJOS \(últimos \d+ de \d+ con costo\):$/m)
-  assert.match(historial, /· \$0,51 · [\d,]+ min · 264k tokens \(38 % caché\) · sal 4k · orquestador \$0,43 \(2 pedidos\) · final \$0,07 \(1 pedido\) · explorador \$0,01 \(1 pedido\) · final APROBADO$/m)
-  assert.match(historial, /^PROMEDIO: \$[\d,]+ · /m)
+  assert.match(historial, /^FLUJOS \(últimos \d+ de \d+\):$/m)
+  assert.match(historial, /· [\d,]+ min · 264k tokens \(38 % caché\) · sal 4k · orquestador 202k tok \(2 pedidos\) · explorador 51k tok \(1 pedido\) · final 11k tok \(1 pedido\) · 5h s\/d · sem s\/d · final APROBADO$/m)
+  assert.match(historial, /^PROMEDIO: [\d,]+ min · orquestador [\d,]+ pedidos · 5h s\/d · sem s\/d$/m)
 })
 
 test('resumenDeCosto muestra tokens, caché y pedidos por rol', () => {
-  const rol = (usd, pedidos, agentes, tokens) => ({ pedidos, usd, sinPrecio: 0, agentes, tokens: { entrada: 0, leidos: 0, escritos: 0, salida: 0, thinking: 0, ...tokens } })
+  const rol = (pedidos, agentes, tokens) => ({ pedidos, agentes, tokens: { entrada: 0, leidos: 0, escritos: 0, salida: 0, thinking: 0, ...tokens } })
   const costo = {
-    usd: 15.3,
     minutos: 42.5,
     roles: {
       // thinking ya va dentro de la salida: no se suma aparte.
-      orquestador: rol(0.66, 10, 0, { entrada: 100_000, leidos: 1_000_000, escritos: 200_000, salida: 44_000, thinking: 30_000 }),
-      ejecutor: rol(14.64, 388, 12, { entrada: 300_000, leidos: 10_900_000, escritos: 900_000, salida: 800_000, thinking: 500_000 }),
-      explorador: rol(0, 0, 0, {}),
-      revisor: rol(0.5, 1, 1, { leidos: 950 }),
+      orquestador: rol(10, 0, { entrada: 100_000, leidos: 1_000_000, escritos: 200_000, salida: 44_000, thinking: 30_000 }),
+      ejecutor: rol(388, 12, { entrada: 300_000, leidos: 10_900_000, escritos: 900_000, salida: 800_000, thinking: 500_000 }),
+      explorador: rol(0, 0, {}),
+      revisor: rol(1, 1, { leidos: 950 }),
     },
   }
   const linea = resumenDeCosto(costo)
-  // Total 14,244M; prompt 13,4M (leídos 11,9M = 88,8 → 89 %); salida 844k.
-  assert.equal(linea, '$15,30 · 42,5 min · 14,2M tokens (89 % caché) · sal 844k · ejecutor $14,64 (×12, 388 pedidos) · orquestador $0,66 (10 pedidos) · revisor $0,50 (1 pedido)')
+  // Total 14,244M; prompt 13,4M (leídos 11,9M = 88,8 → 89 %); salida 844k. Los roles, de más a menos tokens.
+  assert.equal(linea, '42,5 min · 14,2M tokens (89 % caché) · sal 844k · ejecutor 12,9M tok (×12, 388 pedidos) · orquestador 1,3M tok (10 pedidos) · revisor 950 tok (1 pedido)')
 
-  // Sin tokens (flujos viejos) el tramo no aparece, y sin pedidos queda «sin pedidos».
+  // Una fila vieja con dólares y sin tokens: el `usd` se ignora, el tramo de tokens no aparece, y sin pedidos queda «sin pedidos».
   const viejo = { usd: 0.5, minutos: 2, roles: { orquestador: { pedidos: 3, usd: 0.5, sinPrecio: 0, agentes: 0 } } }
-  assert.equal(resumenDeCosto(viejo), '$0,50 · 2,0 min · orquestador $0,50 (3 pedidos)')
-  assert.equal(resumenDeCosto({ usd: 0, minutos: 0, roles: { orquestador: rol(0, 0, 0, {}) } }), '$0,00 · 0,0 min · sin pedidos')
+  assert.equal(resumenDeCosto(viejo), '2,0 min · orquestador (3 pedidos)')
+  assert.equal(resumenDeCosto({ minutos: 0, roles: { orquestador: rol(0, 0, {}) } }), '0,0 min · sin pedidos')
 
   // Solo salida: sin prompt no hay porcentaje de caché.
-  assert.equal(resumenDeCosto({ usd: 0.01, minutos: 1, roles: { orquestador: rol(0.01, 1, 0, { salida: 1000 }) } }), '$0,01 · 1,0 min · 1k tokens · sal 1k · orquestador $0,01 (1 pedido)')
+  assert.equal(resumenDeCosto({ minutos: 1, roles: { orquestador: rol(1, 0, { salida: 1000 }) } }), '1,0 min · 1k tokens · sal 1k · orquestador 1k tok (1 pedido)')
   // Un solo agente con un pedido, y varios agentes con un pedido en total: singular con y sin «×N».
-  assert.equal(resumenDeCosto({ usd: 1, minutos: 1, roles: { ejecutor: rol(1, 1, 3, {}) } }), '$1,00 · 1,0 min · ejecutor $1,00 (×3, 1 pedido)')
+  assert.equal(resumenDeCosto({ minutos: 1, roles: { ejecutor: rol(1, 3, {}) } }), '1,0 min · ejecutor (×3, 1 pedido)')
 })
 
 test('costos: métricas del flujo desde transcripts armados', () => {
@@ -159,21 +154,21 @@ test('costos: métricas del flujo desde transcripts armados', () => {
   assert.deepEqual(m.costo.roles.ejecutor.tokens, { entrada: 30, leidos: 3000, escritos: 1500, salida: 300, thinking: 120 })
   assert.equal(m.costo.roles.ejecutor.agentes, 3)
   assert.deepEqual(m.costo.veredictos, { ejecutor: ['FALLA', 'HECHO', 'HECHO'], final: ['RECHAZADO'] })
-  assert.deepEqual(Object.keys(m.costo).sort(), ['inicio', 'minutos', 'roles', 'usd', 'veredictos'])
+  assert.deepEqual(Object.keys(m.costo).sort(), ['inicio', 'minutos', 'roles', 'veredictos'])
+  assert.deepEqual(Object.keys(m.costo.roles.ejecutor).sort(), ['agentes', 'pedidos', 'tokens'])
   assert.deepEqual(m.contexto, { primero: 1510, ultimo: 3020 })
   // Tiempos: el preflight a los 60 s es la fase 0; el AskUserQuestion «Plan» tarda 300 s dentro de la fase 4.
   assert.deepEqual(m.tiempos, { fases: { 0: 60, 1: 70, 2: 140, 4: 10, 5: 320, 7: 0 }, espera: 300, activo: 600 })
   assert.equal(Object.values(m.tiempos.fases).reduce((s, n) => s + n, 0), m.tiempos.activo)
   assert.deepEqual(Object.keys(m.ejecutores), ['1', '2'])
-  assert.deepEqual({ ...m.ejecutores['1'], usd: undefined }, { usd: undefined, segundos: 180, correcciones: 1, estado: 'HECHO', esfuerzo: 'medium' })
-  assert.ok(m.ejecutores['1'].usd > 0)
-  assert.deepEqual({ ...m.ejecutores['2'], usd: undefined }, { usd: undefined, segundos: 48, correcciones: 0, estado: 'HECHO', esfuerzo: 'high' })
+  assert.deepEqual(m.ejecutores['1'], { segundos: 180, correcciones: 1, estado: 'HECHO', esfuerzo: 'medium' })
+  assert.deepEqual(m.ejecutores['2'], { segundos: 48, correcciones: 0, estado: 'HECHO', esfuerzo: 'high' })
   assert.deepEqual(m.problemas, { final: [{ veredicto: 'RECHAZADO', items: ['Falla X'] }] })
   assert.deepEqual(m.alcanceFuera, ['ALCANCE: FUERA (a.ts)'])
   assert.deepEqual(m.explorador, { pedidos: 2, glob: 1, read: 2, mapa: true, agentes: [{ id: 'e', contexto: 200, lineas: 0 }] })
-  // Sin sesión en ese repo, no hay métricas; el costo sigue siendo el mismo que con costoDelFlujo.
+  // Sin sesión en ese repo, no hay métricas; el consumo sigue siendo el mismo que con costoDelFlujo.
   assert.equal(metricasDelFlujo(path.join(os.tmpdir(), 'repo-sin-sesion'), en(0), opciones), null)
-  assert.equal(costoDelFlujo(raiz, en(0), opciones).usd, m.costo.usd)
+  assert.deepEqual(costoDelFlujo(raiz, en(0), opciones).roles, m.costo.roles)
 })
 
 test('costos: explorador.agentes da el contexto máximo y las líneas de Read y Grep sin system-reminder ni repetidos', () => {
@@ -330,16 +325,21 @@ test('costos: lista filas v1 y v2 juntas', () => {
   const costo = { inicio: '2026-01-01T10:00:00.000Z', minutos: 2, usd: 0.5, roles: { orquestador: { pedidos: 3, usd: 0.5, sinPrecio: 0, agentes: 0 } }, veredictos: { final: ['APROBADO'] } }
   const v1 = { t: '2026-01-01T10:05:00.000Z', raiz: '/x/repo', base: 'abc', costo, clasificacion: 'CRÍTICO (#1) porque sí', subtareas: 2 }
   const t2 = '2026-01-02T11:30:00.000Z'
-  const v2 = { v: 2, t: t2, raiz: '/x/otro', base: 'def', costo, resultado: 'HECHO', sesion: '/no/existe.jsonl', subtareas: [{ n: 1 }, { n: 2 }, { n: 3 }] }
+  const fases = [{ fase: 'plan', five_hour: { gasto: 2 }, seven_day: { gasto: 0.5 } }, { fase: 'ejecución', five_hour: { gasto: 5 }, seven_day: { gasto: null, motivo: 'sin dato' } }, 'roto']
+  const limites = { five_hour: { gasto: 7 }, seven_day: { gasto: 1.5, incompleto: true }, fases }
+  const v2 = { v: 2, t: t2, raiz: '/x/otro', base: 'def', costo, limites, resultado: 'HECHO', sesion: '/no/existe.jsonl', subtareas: [{ n: 1 }, { n: 2 }, { n: 3 }] }
   const filas = [v1, v2, { v: 2, tipo: 'defecto', flujo: t2, texto: 'faltó un test', t: '2026-01-02T12:00:00.000Z' }]
   fs.writeFileSync(archivo, filas.map((f) => JSON.stringify(f)).join('\n') + '\n')
 
   const lineas = costosCon('--archivo', archivo).salida.split('\n')
-  assert.equal(lineas[0], 'FLUJOS (últimos 2 de 2 con costo):')
-  // La línea v1 queda como siempre: sin resultado ni defectos.
-  assert.equal(lineas[1], '  2026-01-01 10:05 · repo · $0,50 · 2,0 min · orquestador $0,50 (3 pedidos) · CRÍTICO (#1) · 2 subtarea(s) · final APROBADO')
-  assert.equal(lineas[2], '  2026-01-02 11:30 · otro · $0,50 · 2,0 min · orquestador $0,50 (3 pedidos) · 3 subtarea(s) · final APROBADO · HECHO · defectos: 1')
-  assert.match(lineas[3], /^PROMEDIO: \$0,50 · 2,0 min · orquestador 3,0 pedidos$/)
+  assert.equal(lineas[0], 'FLUJOS (últimos 2 de 2):')
+  // Las filas viejas traen `usd`: se leen igual y el dinero no sale. La v1 queda sin resultado ni defectos y sin límites (s/d).
+  assert.equal(lineas[1], '  2026-01-01 10:05 · repo · 2,0 min · orquestador (3 pedidos) · 5h s/d · sem s/d · CRÍTICO (#1) · 2 subtarea(s) · final APROBADO')
+  assert.equal(lineas[2], '  2026-01-02 11:30 · otro · 2,0 min · orquestador (3 pedidos) · 5h +7 % · sem ≥+1,5 % · 3 subtarea(s) · final APROBADO · HECHO · defectos: 1')
+  // Bajo el flujo con lecturas por fase, su línea (la entrada rota se salta); la v1, sin ellas, no imprime nada más.
+  assert.equal(lineas[3], '    por fase: plan: 5h +2 % · sem +0,5 % | ejecución: 5h +5 % · sem s/d')
+  // El promedio de cada ventana cuenta solo los gastos completos (el semanal incompleto no entra).
+  assert.equal(lineas[4], 'PROMEDIO: 2,0 min · orquestador 3,0 pedidos · 5h +7,0 % (1) · sem s/d')
 })
 
 test('costos: --anotar suma un defecto y --fuga mide lo gastado después del cierre', () => {
@@ -350,7 +350,7 @@ test('costos: --anotar suma un defecto y --fuga mide lo gastado después del cie
   const inicio = Date.parse('2026-01-01T10:00:00.000Z')
   const en = (s) => new Date(inicio + s * 1000).toISOString()
   const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
-  // Cada pedido: 1000 tokens de salida de Sonnet = $0,01.
+  // Cada pedido: 1000 tokens de salida.
   const pedido = (id, s) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-sonnet-5-5', usage: { output_tokens: 1000 }, content: [{ type: 'text', text: '' }] } })
   const comando = (s) => ({ type: 'user', timestamp: en(s), message: { role: 'user', content: '<command-name>/impl</command-name>' } })
   const sesion = path.join(carpeta, 's1.jsonl')
@@ -383,7 +383,7 @@ test('costos: --anotar suma un defecto y --fuga mide lo gastado después del cie
   // --fuga: solo los flujos v2 con sesión, y el tramo cortado en el siguiente /impl.
   const fuga = costosCon('--fuga', '--archivo', archivo)
   assert.equal(fuga.codigo, 0)
-  assert.equal(fuga.salida.trimEnd(), 'FUGA: 2026-01-01 10:01 · repo · $0,03 (3 pedidos) después del cierre')
+  assert.equal(fuga.salida.trimEnd(), 'FUGA: 2026-01-01 10:01 · repo · 3 pedidos · 3k tokens después del cierre')
 
   // --anotar: un prefijo con espacio o con T, y exit 2 si no es una sola coincidencia.
   const ok = costosCon('--anotar', '2026-01-01 10:01', 'faltó un test', '--archivo', archivo)
@@ -404,7 +404,7 @@ test('costos: --anotar suma un defecto y --fuga mide lo gastado después del cie
   assert.equal(lineas.length, 4)
   // Las filas de defecto no cuentan como flujos y el listado muestra cuántos tiene cada uno.
   const listado = costosCon('--archivo', archivo).salida
-  assert.match(listado, /^FLUJOS \(últimos 2 de 2 con costo\):$/m)
+  assert.match(listado, /^FLUJOS \(últimos 2 de 2\):$/m)
   assert.match(listado, /2026-01-01 10:01 · repo · .* · HECHO · defectos: 2$/m)
 })
 
@@ -541,6 +541,175 @@ test('costos: problemasDe acepta viñetas y ruta:línea sin numeración', () => 
 })
 
 test.after(() => limpiar())
+
+test('límites: leerLimites lee el snapshot del panel y marca «sin dato» sin archivo, roto o viejo, nunca con ceros', () => {
+  const carpeta = fs.mkdtempSync(path.join(os.tmpdir(), 'limites-'))
+  temporales.push(carpeta)
+  const archivo = path.join(carpeta, 'qcc-limites.json')
+  const ahora = Date.parse('2026-11-10T12:00:00.000Z')
+  assert.equal(leerLimites(archivo, ahora).sinDato, 'sin snapshot del panel')
+  fs.writeFileSync(archivo, '{roto')
+  assert.equal(leerLimites(archivo, ahora).sinDato, 'sin snapshot del panel')
+  fs.writeFileSync(archivo, JSON.stringify({ five_hour: { pct: 3 } }))
+  assert.equal(leerLimites(archivo, ahora).sinDato, 'snapshot roto')
+  // Fresco: cada ventana por separado (la semanal puede faltar) y con su antigüedad.
+  fs.writeFileSync(archivo, JSON.stringify({ t: new Date(ahora - 30_000).toISOString(), five_hour: { pct: 23.5, resetsAt: '2026-11-10T15:00:00.000Z' } }))
+  const fresca = leerLimites(archivo, ahora)
+  assert.deepEqual({ ...fresca, cuenta: undefined }, { t: '2026-11-10T12:00:00.000Z', cuenta: undefined, edad: 30, five_hour: { pct: 23.5, resetsAt: '2026-11-10T15:00:00.000Z' } })
+  assert.equal(fresca.seven_day, undefined)
+  // Más viejo que el tope: sin dato, con la edad para saber cuánto.
+  fs.writeFileSync(archivo, JSON.stringify({ t: new Date(ahora - (LIMITES_MAX_SEG + 1) * 1000).toISOString(), five_hour: { pct: 1 } }))
+  const vieja = leerLimites(archivo, ahora)
+  assert.equal(vieja.sinDato, 'snapshot viejo')
+  assert.equal(vieja.five_hour, undefined)
+})
+
+test('límites: gastoDeLimites resta, suma los tramos, detecta el reinicio y dice s/d', () => {
+  const R5 = '2026-11-10T15:00:00.000Z'
+  const R7 = '2026-11-14T00:00:00.000Z'
+  const lectura = (t, h, s, r5 = R5) => ({ t, ...(h === null ? {} : { five_hour: { pct: h, resetsAt: r5 } }), ...(s === null ? {} : { seven_day: { pct: s, resetsAt: R7 } }) })
+  const a = lectura('2026-11-10T12:00:00.000Z', 40, 10)
+  const b = lectura('2026-11-10T12:30:00.000Z', 47.5, 11)
+  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: b }]), { five_hour: { gasto: 7.5 }, seven_day: { gasto: 1 } })
+  // Reinicio: cambió la hora de reinicio, bajó el %, o la lectura final es posterior al reinicio previsto. Nunca un negativo.
+  const tras = lectura('2026-11-10T16:00:00.000Z', 5, 12, '2026-11-10T20:00:00.000Z')
+  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: tras }]), { five_hour: { gasto: null, motivo: 'reinicio' }, seven_day: { gasto: 2 } })
+  assert.equal(gastoDeLimites([{ inicio: a, fin: lectura('2026-11-10T13:00:00.000Z', 30, 10) }]).five_hour.motivo, 'reinicio')
+  assert.equal(gastoDeLimites([{ inicio: a, fin: lectura('2026-11-10T15:00:00.000Z', 60, 10) }]).five_hour.motivo, 'reinicio')
+  // Sin lectura (el panel no corrió, o una ventana faltó): s/d, nunca cero.
+  assert.deepEqual(gastoDeLimites([{ inicio: { t: a.t, sinDato: 'sin snapshot del panel' }, fin: b }]), { five_hour: { gasto: null, motivo: 'sin dato' }, seven_day: { gasto: null, motivo: 'sin dato' } })
+  assert.deepEqual(gastoDeLimites([{ inicio: a }]).five_hour, { gasto: null, motivo: 'sin dato' })
+  assert.deepEqual(gastoDeLimites([{ inicio: lectura(a.t, 40, null), fin: b }]).seven_day, { gasto: null, motivo: 'sin dato' })
+  assert.deepEqual(gastoDeLimites(undefined).five_hour, { gasto: null, motivo: 'sin dato' })
+  // Dos sesiones: se suman (el hueco entre ellas no cuenta); si a una le falta dato, el gasto lleva `incompleto`.
+  const c = lectura('2026-11-10T18:00:00.000Z', 3, 20, '2026-11-10T22:00:00.000Z')
+  const d = lectura('2026-11-10T18:40:00.000Z', 10, 22, '2026-11-10T22:00:00.000Z')
+  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: b }, { inicio: c, fin: d }]), { five_hour: { gasto: 14.5 }, seven_day: { gasto: 3 } })
+  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: tras }, { inicio: c, fin: d }]).five_hour, { gasto: 7, incompleto: true })
+  // El resumen.
+  assert.equal(resumenDeLimites({ five_hour: { gasto: 7.5 }, seven_day: { gasto: 1 } }), '5h +7,5 % · sem +1 %')
+  assert.equal(resumenDeLimites({ five_hour: { gasto: 7, incompleto: true }, seven_day: { gasto: null, motivo: 'reinicio' } }), '5h ≥+7 % · sem reinicio')
+  assert.equal(resumenDeLimites(undefined), '5h s/d · sem s/d')
+})
+
+test('límites por fase: cada tramo entre lecturas va a la fase del paso de la primera, se acumula y suma lo mismo que el total', () => {
+  const R5 = '2026-11-10T15:00:00.000Z'
+  const R7 = '2026-11-14T00:00:00.000Z'
+  let minuto = 0
+  /** Lectura del `paso` a la hora siguiente; `h` o `s` null: esa ventana falta; `sinDato`: la lectura no sirvió. */
+  const l = (paso, h, s, r5 = R5) => ({ paso, t: new Date(Date.parse('2026-11-10T12:00:00.000Z') + 60_000 * minuto++).toISOString(), ...(h === 'sinDato' ? { sinDato: 'snapshot viejo' } : { five_hour: { pct: h, resetsAt: r5 }, ...(s === null ? {} : { seven_day: { pct: s, resetsAt: R7 } }) }) })
+  const tramo = (...fases) => ({ inicio: fases[0], fases, fin: fases.at(-1) })
+  const fase = (fases, nombre) => fases.find((f) => f.fase === nombre)
+  // Paso 0 → 2 → 4 → 5 → 6 → 5 → 6 (una corrección tras la revisión) y el fin: la exploración es lo de 0 a 2, y los pasos
+  // repetidos (5 y 6, dos veces cada uno) se acumulan en su fase.
+  const a = tramo(l(0, 10, 1), l(2, 12.5, 1.2), l(4, 15, 1.5), l(5, 15.5, 1.5), l(6, 20, 2.5), l(5, 21, 2.6), l(6, 23, 3))
+  a.fin = l(7, 24.5, 3.1)
+  const fases = fasesDeLimites([a])
+  assert.deepEqual(fases.map((f) => f.fase), ['exploración', 'plan', 'aprobación', 'ejecución', 'revisión'])
+  assert.deepEqual(fase(fases, 'exploración'), { fase: 'exploración', five_hour: { gasto: 2.5 }, seven_day: { gasto: 0.2 } })
+  // Ejecución: 15,5 → 20 y 21 → 23; revisión: 20 → 21 y 23 → 24,5 (el fin).
+  assert.deepEqual(fase(fases, 'ejecución'), { fase: 'ejecución', five_hour: { gasto: 6.5 }, seven_day: { gasto: 1.4 } })
+  assert.deepEqual(fase(fases, 'revisión'), { fase: 'revisión', five_hour: { gasto: 2.5 }, seven_day: { gasto: 0.2 } })
+  // Invariante: con todas las lecturas válidas, la suma por fase de cada ventana es el gasto total (misma resta inicio → fin).
+  const total = gastoDeLimites([a])
+  for (const k of ['five_hour', 'seven_day']) assert.equal(Math.round(fases.reduce((s, f) => s + f[k].gasto, 0) * 10) / 10, total[k].gasto)
+  assert.equal(resumenDeFases(fases), 'exploración: 5h +2,5 % · sem +0,2 % | plan: 5h +2,5 % · sem +0,3 % | aprobación: 5h +0,5 % · sem +0 % | ejecución: 5h +6,5 % · sem +1,4 % | revisión: 5h +2,5 % · sem +0,2 %')
+
+  // Una lectura sin dato (el paso 4) deja s/d las dos fases que toca, sin repartir la diferencia; las demás siguen.
+  const b = tramo(l(0, 10, 1), l(2, 12, 1), l(4, 'sinDato'), l(5, 16, 2), l(6, 20, 3))
+  const sinDato = fasesDeLimites([b])
+  assert.deepEqual(fase(sinDato, 'plan').five_hour, { gasto: null, motivo: 'sin dato' })
+  assert.deepEqual(fase(sinDato, 'aprobación').seven_day, { gasto: null, motivo: 'sin dato' })
+  assert.deepEqual(fase(sinDato, 'exploración').five_hour, { gasto: 2 })
+  assert.deepEqual(fase(sinDato, 'ejecución').five_hour, { gasto: 4 })
+  // Una ventana que falta solo en una lectura: s/d solo en esa ventana.
+  assert.deepEqual(fase(fasesDeLimites([tramo(l(0, 10, 1), l(5, 12, null), l(6, 13, 2))]), 'exploración'), { fase: 'exploración', five_hour: { gasto: 2 }, seven_day: { gasto: null, motivo: 'sin dato' } })
+
+  // Reinicio entre dos lecturas (bajó el % y cambió la hora de reinicio): esa fase de esa ventana queda «reinicio», sin negativos.
+  const c = tramo(l(0, 80, 1), l(5, 90, 2), l(6, 4, 3, '2026-11-10T20:00:00.000Z'))
+  c.fin = l(7, 9, 3.5, '2026-11-10T20:00:00.000Z')
+  const reinicio = fasesDeLimites([c])
+  assert.deepEqual(fase(reinicio, 'ejecución'), { fase: 'ejecución', five_hour: { gasto: null, motivo: 'reinicio' }, seven_day: { gasto: 1 } })
+  assert.deepEqual(fase(reinicio, 'revisión').five_hour, { gasto: 5 })
+  assert.deepEqual(fase(reinicio, 'exploración').five_hour, { gasto: 10 })
+
+  // --reanudar: el segundo tramo empieza en el paso que dice SIGUE (5) y se suma a la misma fase; si a un pedazo de la
+  // fase le faltó dato y a otro no, el de la fase queda incompleto (≥).
+  const d = tramo(l(0, 10, 1), l(5, 12, 1.5))
+  d.fin = l(5, 14, 1.6)
+  const e = tramo(l(5, 'sinDato'), l(6, 30, 5))
+  e.fin = l(6, 33, 5.5)
+  const reanudado = fasesDeLimites([d, e])
+  assert.deepEqual(fase(reanudado, 'ejecución').five_hour, { gasto: 2, incompleto: true })
+  assert.deepEqual(fase(reanudado, 'revisión').five_hour, { gasto: 3 })
+  assert.equal(resumenDeFases(reanudado), 'exploración: 5h +2 % · sem +0,5 % | ejecución: 5h ≥+2 % · sem ≥+0,1 % | revisión: 5h +3 % · sem +0,5 %')
+  const d2 = tramo(l(0, 10, 1), l(5, 12, 1.5))
+  d2.fin = l(5, 14, 1.6)
+  const e2 = tramo(l(5, 20, 4), l(6, 30, 5))
+  e2.fin = l(6, 33, 5.5)
+  const dos = fasesDeLimites([d2, e2])
+  assert.deepEqual(fase(dos, 'ejecución').five_hour, { gasto: 12 })
+  assert.equal(Math.round(dos.reduce((s, f) => s + f.five_hour.gasto, 0) * 10) / 10, gastoDeLimites([d2, e2]).five_hour.gasto)
+
+  // Un tramo sin lecturas por fase (flujo de antes de la 0.5.1, o un paso inválido) deja todo el desglose en null.
+  assert.equal(fasesDeLimites([{ inicio: a.inicio, fin: a.fin }]), null)
+  assert.equal(fasesDeLimites([a, { inicio: a.inicio, fin: a.fin }]), null)
+  assert.equal(fasesDeLimites([{ inicio: a.inicio, fases: [{ ...a.inicio, paso: null }], fin: a.fin }]), null)
+  assert.equal(fasesDeLimites(undefined), null)
+  assert.deepEqual(Object.values(FASES).filter((f, i, todas) => todas.indexOf(f) === i), ['exploración', 'plan', 'aprobación', 'ejecución', 'revisión', 'cierre'])
+})
+
+test('límites: el preflight, cada --paso, --reanudar y el cierre anotan el % gastado en la fila del flujo', () => {
+  const futuro = (h) => new Date(Date.now() + h * 3_600_000).toISOString()
+  const R5 = futuro(3)
+  const R5b = futuro(4.5)
+  const R7 = futuro(72)
+  const snapshot = (h, s, r5 = R5) => fs.writeFileSync(process.env.QCC_LIMITES, JSON.stringify({ t: new Date().toISOString(), five_hour: { pct: h, resetsAt: r5 }, seven_day: { pct: s, resetsAt: R7 } }))
+  try {
+    // Sesión A: el preflight lee 40/10 y un --paso posterior, 45/12.
+    snapshot(40, 10)
+    const { raiz, entorno, estadoJson } = repoConPlanGuardado('limites', ['S1 · Tarea\n- Crítica: no\n- Archivos permitidos: src/a.ts\n- Hecho cuando: x\n- Tests: t\n- Riesgos: r\n- Reversión: v'])
+    assert.equal(estadoJson().limites[0].inicio.five_hour.pct, 40)
+    // Una lectura por cambio de paso: 0 (el preflight), 2 y 5; el segundo --paso 5 solo pone al día el fin.
+    snapshot(42, 11)
+    estadoEn(raiz, ['--estado', '--paso', '2'], entorno)
+    snapshot(44, 12)
+    estadoEn(raiz, ['--estado', '--paso', '5'], entorno)
+    snapshot(45, 12)
+    estadoEn(raiz, ['--estado', '--paso', '5'], entorno)
+    assert.equal(estadoJson().limites[0].fin.five_hour.pct, 45)
+    assert.deepEqual(estadoJson().limites[0].fases.map((l) => [l.paso, l.five_hour.pct]), [[0, 40], [2, 42], [5, 44]])
+    // Sin snapshot, el cambio de paso igual deja su lectura (sin dato) y el fin no se toca; con el snapshot de vuelta, sigue.
+    fs.rmSync(process.env.QCC_LIMITES, { force: true })
+    estadoEn(raiz, ['--estado', '--paso', '6'], entorno)
+    assert.equal(estadoJson().limites[0].fases.at(-1).sinDato, 'sin snapshot del panel')
+    assert.equal(estadoJson().limites[0].fin.five_hour.pct, 45)
+    snapshot(45, 12)
+    estadoEn(raiz, ['--estado', '--paso', '5'], entorno)
+    assert.deepEqual(estadoJson().limites[0].fases.map((l) => l.paso), [0, 2, 5, 6, 5])
+    // Sesión B, tras el reinicio de la ventana de 5 h: otro tramo, 3 → 10 y 20 → 22. Lo de entre sesiones no cuenta.
+    snapshot(3, 20, R5b)
+    const b = { ...entorno, CLAUDE_CODE_SESSION_ID: 'sesion-b' }
+    assert.match(estadoEn(raiz, ['--reanudar', '--paso', '5'], b).salida, /REANUDADO/)
+    assert.equal(estadoJson().limites.length, 2)
+    // El tramo nuevo empieza en la fase del paso que dice SIGUE (el plan no se aprobó: 4).
+    assert.deepEqual(estadoJson().limites[1].fases.map((l) => [l.paso, l.five_hour.pct]), [[4, 3]])
+    snapshot(10, 22, R5b)
+    const cierre = estadoEn(raiz, ['--cambios', '--global', '--paso', '7', '--resultado', 'COMPLETO'], b).salida
+    assert.match(cierre, /^LÍMITES: 5h \+12 % · sem \+4 %$/m)
+    // Ejecución: 44 → (sin dato) no cuenta y 45 → 45 sí, así que ≥+0; la revisión empieza en la lectura sin dato: s/d.
+    assert.match(cierre, /^LÍMITES POR FASE: exploración: 5h \+2 % · sem \+1 % \| plan: 5h \+2 % · sem \+1 % \| aprobación: 5h \+7 % · sem \+2 % \| ejecución: 5h ≥\+0 % · sem ≥\+0 % \| revisión: 5h s\/d · sem s\/d$/m)
+    // El 7 no abre fase: lo cierra el fin del tramo.
+    assert.deepEqual(estadoJson().limites[1].fases.map((l) => l.paso), [4])
+    const fila = fs.readFileSync(path.join(path.dirname(registroDe(raiz)), 'flujos.jsonl'), 'utf8').trimEnd().split('\n').map((l) => JSON.parse(l)).filter((f) => f.raiz === raiz).at(-1)
+    assert.deepEqual({ five_hour: fila.limites.five_hour, seven_day: fila.limites.seven_day }, { five_hour: { gasto: 12 }, seven_day: { gasto: 4 } })
+    assert.deepEqual(fila.limites.tramos.map((t) => [t.inicio.five_hour.pct, t.fin.five_hour.pct, t.fin.five_hour.resetsAt]), [[40, 45, R5], [3, 10, R5b]])
+    assert.deepEqual(fila.limites.fases.find((f) => f.fase === 'aprobación'), { fase: 'aprobación', five_hour: { gasto: 7 }, seven_day: { gasto: 2 } })
+    assert.deepEqual(fila.limites.fases.map((f) => f.fase), ['exploración', 'plan', 'aprobación', 'ejecución', 'revisión'])
+  } finally {
+    fs.rmSync(process.env.QCC_LIMITES, { force: true })
+  }
+})
 
 test('costos: el cierre desde otra cuenta suma la primera sesión, que está en la cuenta de A', () => {
   const { raiz, en, turno, texto, usuario, escribir, opciones } = transcripts('repo-metricas-otra-cuenta')
