@@ -558,6 +558,15 @@ test('estado: filaDelFlujo omite lo que falta y arma subtareas, calidad y uso', 
   assert.deepEqual(fila.calidad, { final: [{ veredicto: 'APROBADO', items: [] }], negados: 2, alcanceFuera: [], inicial: 'RESULTADO: VERDE' })
 })
 
+test('estado: filaDelFlujo marca cortado solo en los exploradores que la guardia cortó', () => {
+  const explorador = { pedidos: 2, glob: 0, read: 1, mapa: true, agentes: [{ id: 'a1', contexto: 95_000, lineas: 10 }, { id: 'a2', contexto: 40_000, lineas: 5 }] }
+  const fila = filaDelFlujo({ t: 'T', metricas: { explorador }, cortados: ['a1'] })
+  assert.deepEqual(fila.explorador.agentes, [{ id: 'a1', contexto: 95_000, lineas: 10, cortado: true }, { id: 'a2', contexto: 40_000, lineas: 5, cortado: false }])
+  // Sin cortados ni agentes (filas viejas), el explorador pasa tal cual.
+  assert.equal(filaDelFlujo({ t: 'T', metricas: { explorador: { pedidos: 1 } } }).explorador.agentes, undefined)
+  assert.equal(filaDelFlujo({ t: 'T', metricas: { explorador } }).explorador.agentes.every((a) => a.cortado === false), true)
+})
+
 test('cierre: COMPLETO avisa de las subtareas que terminaron BLOQUEADO o FALLA', () => {
   const { raiz } = estadoCon({}, () => ['--paso', '0'])
   const claude = transcriptDelFlujo(raiz)
@@ -1015,19 +1024,22 @@ test('estado: --reanudar en la revisión final da el ciclo que sigue y los PROBL
   assert.ok(fs.readdirSync(path.join(path.dirname(flujoDe(raiz)), 'historial')).some((d) => fs.existsSync(path.join(path.dirname(flujoDe(raiz)), 'historial', d, 'revision-2.md'))))
 })
 
-test('estado: --guardar plan con más de 20 subtareas da un PARA APROBAR compacto y una salida bajo 30.000 caracteres', () => {
-  const como = { extra: `- Cómo: ${'cambia la función con cuidado y revisa los llamadores '.repeat(4)}\n` }
+test('estado: --guardar plan con un PARA APROBAR muy largo lo da compacto y una salida bajo 30.000 caracteres', () => {
+  const como = { extra: `- Cómo: ${'cambia la función con cuidado y revisa los llamadores '.repeat(8)}\n` }
+  const bloqueDe = (salida) => /^PARA APROBAR [^\n]*\n([\s\S]*?)\nFIN PARA APROBAR$/m.exec(salida)[1]
   const largo = repoConPlanGuardado('aprobar-largo', Array.from({ length: 60 }, (_, i) => subtareaDePlan(i + 1, `src/f${i + 1}.ts`, como)))
   assert.ok(largo.salida.length < 30_000, `salida de ${largo.salida.length} caracteres`)
-  const bloque = /^PARA APROBAR [^\n]*\n([\s\S]*?)\nFIN PARA APROBAR$/m.exec(largo.salida)[1]
-  assert.doesNotMatch(bloque, /Cómo/)
-  assert.match(bloque, /^S7 · Tarea 7 · Crítica: no · Depende de: \(la anterior\) · permitidos: src\/f7\.ts$/m)
+  const bloque = bloqueDe(largo.salida)
+  assert.doesNotMatch(bloque, /^- Cómo: /m)
+  assert.match(bloque, /^S7 · Tarea 7 · Crítica: no · Depende de: \(la anterior\) · permitidos: src\/f7\.ts · Cómo: cambia la función [^\n]{100,160}…$/m)
   assert.equal((bloque.match(/^S\d+ · /gm) ?? []).length, 60)
   assert.doesNotMatch(largo.salida, /→ .*S7\.md$/m)
   assert.match(largo.salida, /^SUBTAREAS: 60 → /m)
-  // Con 20 o menos, el bloque de siempre (con «Cómo») y una línea de resumen por subtarea.
+  // Si el bloque entero cabe, va entero aunque pase de 20 subtareas; con 20 o menos, además una línea de resumen por subtarea.
+  const cabe = repoConPlanGuardado('aprobar-cabe', Array.from({ length: 25 }, (_, i) => subtareaDePlan(i + 1, `src/f${i + 1}.ts`, { extra: '- Cómo: corto\n' })))
+  assert.match(bloqueDe(cabe.salida), /^- Cómo: corto$/m)
   const corto = repoConPlanGuardado('aprobar-corto', Array.from({ length: 20 }, (_, i) => subtareaDePlan(i + 1, `src/f${i + 1}.ts`, como)))
-  assert.match(/^PARA APROBAR [^\n]*\n([\s\S]*?)\nFIN PARA APROBAR$/m.exec(corto.salida)[1], /^- Cómo: /m)
+  assert.match(bloqueDe(corto.salida), /^- Cómo: /m)
   assert.match(corto.salida, /→ .*S7\.md$/m)
 })
 

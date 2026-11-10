@@ -586,6 +586,11 @@ export function parecenExternas(lineas) {
   return RE_PARECE_EXTERNA.exec(texto)?.[0] ?? RE_GET_POST.exec(texto)?.[0] ?? null
 }
 
+/** Comandos `! …` del pie (los de «Queda para ti»), sin el comentario; salvo `git` y borrados recursivos, que se niegan aun aprobados. */
+export function comandosParaTi(pie) {
+  return [...pie.join('\n').matchAll(/`!\s*([^`#]*[^`#\s])/g)].map((m) => m[1]).filter((c) => !/^git\b|\brm\s+-\w*r/i.test(c))
+}
+
 const RE_GLOB = /[*?[{]/
 
 /** Carpeta del tramo literal de un glob, antes de su primer carácter de glob: `src/a/*.ts` → `src/a/`. */
@@ -757,35 +762,41 @@ export function acopladosSinCubrir(hallazgos, permitidos, fueraDeAlcance) {
 }
 
 const CAMPOS_APROBACION = ['Crítica', 'Depende de', 'Archivos permitidos', 'Cómo']
-/** Con más subtareas que esto, `PARA APROBAR` va compacto (una línea por subtarea, sin «Cómo») y sin las líneas de resumen: así la salida de `--guardar plan` no pasa de 30.000 caracteres, el tope de Claude Code. */
-const TOPE_APROBACION_ENTERA = 20
+/** Con un `PARA APROBAR` entero más largo que esto, va compacto (una línea por subtarea, con el «Cómo» recortado): así la salida de `--guardar plan` no pasa de 30.000 caracteres, el tope de Claude Code. */
+const TOPE_APROBACION_ENTERA = 18_000
+/** Con más subtareas que esto, `--guardar plan` no imprime la línea de resumen de cada una: ya van en `PARA APROBAR`. */
+const TOPE_LINEAS_RESUMEN = 20
+const TOPE_COMO_COMPACTO = 160
 
-/** `S<n> · <título> · Crítica: … · Depende de: … · permitidos: …`: la línea de una subtarea en el `PARA APROBAR` compacto. */
+/** `S<n> · <título> · Crítica: … · Depende de: … · permitidos: … · Cómo: …`: la línea de una subtarea en el `PARA APROBAR` compacto. */
 function lineaCompacta(s) {
   const { permitidos } = permitidosDeSubtarea(s.lineas, s.n)
+  const como = campoDe(s.lineas, 'Cómo')
   return [
     `S${s.n} · ${s.objetivo}`,
     `Crítica: ${campoDe(s.lineas, 'Crítica') ?? '(falta)'}`,
     `Depende de: ${campoDe(s.lineas, 'Depende de') ?? '(la anterior)'}`,
     `permitidos: ${permitidos.join(', ') || '(faltan)'}`,
+    ...(como ? [`Cómo: ${como.length > TOPE_COMO_COMPACTO ? `${como.slice(0, TOPE_COMO_COMPACTO).trimEnd()}…` : como}`] : []),
   ].join(' · ')
 }
 
 /**
  * Lo que el orquestador muestra para aprobar el plan: cabecera, por subtarea su título y CAMPOS_APROBACION, y el pie sin «Verificación final».
- * Con más de `TOPE_APROBACION_ENTERA` subtareas, una línea compacta por subtarea (`lineaCompacta`): el «Cómo» queda en plan.md.
+ * Si eso pasa de `TOPE_APROBACION_ENTERA` caracteres, una línea compacta por subtarea (`lineaCompacta`): el «Cómo» entero queda en plan.md.
  */
 export function aprobacionDe({ cabecera, subtareas, pie }) {
   const titulo = cabecera.find((l) => /^\s*(?:#{1,6}\s+)?(?:\*\*)?PLAN ·/i.test(l))
   const bloques = (lineas, campos) => campos.map((c) => bloqueDe(lineas, c)).filter(Boolean)
-  const compacto = subtareas.length > TOPE_APROBACION_ENTERA
-  return [
+  const con = (lineas) => [
     ...(titulo ? [titulo.trim()] : []),
     ...bloques(cabecera, ['Clasificación', 'Objetivo', 'Fuera de alcance']),
-    ...(compacto ? ['', ...subtareas.map(lineaCompacta)] : subtareas.flatMap((s) => ['', s.lineas[0].trim(), ...bloques(s.lineas, CAMPOS_APROBACION)])),
+    ...lineas,
     '',
     ...bloques(pie, ['PERMISOS A APROBAR', 'Queda para ti', 'Costo']),
   ].join('\n').trim()
+  const entero = con(subtareas.flatMap((s) => ['', s.lineas[0].trim(), ...bloques(s.lineas, CAMPOS_APROBACION)]))
+  return entero.length <= TOPE_APROBACION_ENTERA ? entero : con(['', ...subtareas.map(lineaCompacta)])
 }
 
 /** Escribe un `S<n>.md` por subtarea, revisa campos y rutas críticas, anota el plan en el estado e imprime el resumen. */
@@ -807,8 +818,8 @@ function resumirPlan(texto, destino) {
   const paraDecidir = []
   console.log(`GUARDADO: plan → ${destino}`)
   console.log(`PLAN: ${subtareas.length} subtarea(s) · Clasificación: ${clasificacion ?? '(falta)'}`)
-  const compacto = subtareas.length > TOPE_APROBACION_ENTERA
-  if (compacto) console.log(`SUBTAREAS: ${subtareas.length} → ${path.join(FLUJO, 'S<n>.md')} (con más de ${TOPE_APROBACION_ENTERA}, su resumen va solo en PARA APROBAR)`)
+  const compacto = subtareas.length > TOPE_LINEAS_RESUMEN
+  if (compacto) console.log(`SUBTAREAS: ${subtareas.length} → ${path.join(FLUJO, 'S<n>.md')} (con más de ${TOPE_LINEAS_RESUMEN}, su resumen va solo en PARA APROBAR)`)
   for (const s of subtareas) {
     const archivo = path.join(FLUJO, `S${s.n}.md`)
     for (const c of CAMPOS_SUBTAREA) if (campoDe(s.lineas, c) === null) avisos.push(`S${s.n} · falta «${c}»`)
@@ -854,6 +865,8 @@ function resumirPlan(texto, destino) {
     avisos.push(`acoplado «${r}» (ACOPLAMIENTOS de la exploración) no está en ningún permitido ni en «Fuera de alcance»`)
   }
   avisos.push(...avisosDePermisos(permisosPlan, bloqueDe(partes.pie, 'PERMISOS A APROBAR'), subtareas.map((x) => x.n), resumen.flatMap((s) => s.permitidos)))
+  const paraTi = comandosParaTi(partes.pie)
+  if (paraTi.length) avisos.push(`«Queda para ti» trae comandos (${paraTi.map((c) => `\`${c}\``).join(', ')}): los que un agente puede correr aprobados van en «PERMISOS A APROBAR:», aunque las reglas del proyecto digan otra cosa; re-planifica una vez con ese ajuste antes de la aprobación`)
   console.log(avisos.length ? `AVISOS:\n${avisos.map((a) => `  - ${a}`).join('\n')}` : 'AVISOS: ninguno')
   if (resumen.length) console.log(`LOTES: ${lotesDe(resumen).map((l) => l.map((n) => `S${n}`).join('+')).join(' | ')}`)
   const decisiones = decisionesDelPlan({ clasificacion, subtareas: paraDecidir, pedidos: pedidos.map((n) => ({ n, ruta: porCriterio.get(n) })) })
@@ -980,23 +993,25 @@ export function fusionarExploraciones(informes) {
   return { texto: bloques.join('\n\n'), incompletos }
 }
 
-/** Líneas `CORTADO:` de los exploradores `ids` que la guardia dejó sin leer por contexto (filas `negado` con motivo `contexto <N>k` desde el inicio del flujo). */
+/** Agentes que la guardia cortó por contexto en esas filas del registro (`negado` con motivo `contexto <N>k`): `Map(id → motivo)`. */
+function cortadosDe(filas) {
+  const cortados = new Map()
+  for (const f of filas) if (f.agente && f.decision === 'negado' && /^contexto \d+k$/.test(f.motivo ?? '') && !cortados.has(f.agente)) cortados.set(f.agente, f.motivo)
+  return cortados
+}
+
+/** Líneas `CORTADO:` de los exploradores `ids` que la guardia dejó sin leer por contexto (desde el inicio del flujo). */
 function avisosDeCortado(ids) {
   const e = leerEstado()
   const desde = e.desde_global ?? e.inicio
   if (!desde) return []
-  let filas
+  let cortados
   try {
-    filas = leerRegistro(desde)
+    cortados = cortadosDe(leerRegistro(desde))
   } catch {
     return []
   }
-  const avisos = []
-  for (const id of ids) {
-    const fila = filas.find((f) => f.agente === id && f.decision === 'negado' && /^contexto \d+k$/.test(f.motivo ?? ''))
-    if (fila) avisos.push(`CORTADO: agente ${id} por contexto (${fila.motivo.slice('contexto '.length)})`)
-  }
-  return avisos
+  return ids.filter((id) => cortados.has(id)).map((id) => `CORTADO: agente ${id} por contexto (${cortados.get(id).slice('contexto '.length)})`)
 }
 
 /** Ids de `--guardar` separados por coma: recortados y sin repetir (si no queda ninguno, el valor tal cual). */
@@ -1551,34 +1566,59 @@ const extensionDe = (ruta) => {
 
 /**
  * Las líneas del mapa del repo para el explorador: una por carpeta (con los nombres si los archivos están en ella,
- * resumida por extensión si hay subcarpetas). Nunca más de `tope + 2` líneas.
+ * resumida por extensión si hay subcarpetas). Con `lineasPorRuta` (`{ ruta: n }`) suma líneas por carpeta y lista los
+ * `.md` de más de 300 líneas; una ruta ausente cuenta 0. Nunca más de `tope + 3` líneas.
  */
-export function mapaDelRepo(rutas, tope = TOPE_MAPA) {
+export function mapaDelRepo(rutas, tope = TOPE_MAPA, lineasPorRuta = null) {
   const grupos = agruparPorCarpeta(rutas, tope)
+  const miles = (n) => String(n).replace(/\B(?=(\d{3})+$)/g, '.')
+  const suma = (lista) => lista.reduce((s, r) => s + (lineasPorRuta[r] ?? 0), 0)
   const lineas = [
-    `MAPA · ${rutas.length} archivos (git ls-files: versionados y nuevos, sin ignorados) · ${grupos.length} carpeta(s)`,
+    `MAPA · ${rutas.length} archivos${lineasPorRuta ? ` · ${miles(suma(rutas))} líneas` : ''} (git ls-files: versionados y nuevos, sin ignorados) · ${grupos.length} carpeta(s)`,
     'Las carpetas resumidas se exploran con Glob; lo ignorado por git no aparece.',
   ]
+  if (lineasPorRuta) {
+    const docs = rutas.filter((r) => r.endsWith('.md') && (lineasPorRuta[r] ?? 0) > 300)
+      .sort((a, b) => lineasPorRuta[b] - lineasPorRuta[a]).slice(0, 20)
+    if (docs.length) lineas.push(`Documentos de más de 300 líneas: ${docs.map((r) => `${r} (${miles(lineasPorRuta[r])})`).join(', ')}`)
+  }
   const mostrados = grupos.length > tope ? grupos.slice(0, Math.max(0, tope - 1)) : grupos
   for (const { carpeta, rutas: lista } of mostrados) {
     const prefijo = carpeta === './' ? '' : carpeta
     const nombres = lista.map((r) => r.slice(prefijo.length))
     if (nombres.every((n) => !n.includes('/'))) {
       const resto = nombres.length - TOPE_NOMBRES
-      lineas.push(`${carpeta} — ${nombres.slice(0, TOPE_NOMBRES).join(', ')}${resto > 0 ? `, … y ${resto} más` : ''}`)
+      const cuenta = lineasPorRuta ? `${lista.length} archivos · ${miles(suma(lista))} líneas: ` : ''
+      lineas.push(`${carpeta} — ${cuenta}${nombres.slice(0, TOPE_NOMBRES).join(', ')}${resto > 0 ? `, … y ${resto} más` : ''}`)
       continue
     }
     const subcarpetas = new Set(lista.map((r) => r.slice(0, r.lastIndexOf('/') + 1)).filter((c) => c !== prefijo))
     const extensiones = new Map()
     for (const r of lista) extensiones.set(extensionDe(r), (extensiones.get(extensionDe(r)) ?? 0) + 1)
     const top = [...extensiones].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 5)
-    lineas.push(`${carpeta} — ${lista.length} archivos en ${subcarpetas.size} subcarpetas (${top.map(([e, c]) => `${e} ${c}`).join(', ')})`)
+    const conLineas = lineasPorRuta ? ` · ${miles(suma(lista))} líneas` : ''
+    lineas.push(`${carpeta} — ${lista.length} archivos en ${subcarpetas.size} subcarpetas${conLineas} (${top.map(([e, c]) => `${e} ${c}`).join(', ')})`)
   }
   if (mostrados.length < grupos.length) {
     const sobran = grupos.slice(mostrados.length)
-    lineas.push(`… y ${sobran.length} carpetas más (${sobran.reduce((s, g) => s + g.rutas.length, 0)} archivos)`)
+    const cuentaSobran = sobran.flatMap((g) => g.rutas)
+    lineas.push(`… y ${sobran.length} carpetas más (${cuentaSobran.length} archivos${lineasPorRuta ? ` · ${miles(suma(cuentaSobran))} líneas` : ''})`)
   }
   return lineas
+}
+
+/** Líneas por archivo (`{ ruta: n }`) según `git grep -c`, o null si git falla. Vacíos y binarios no salen: cuentan 0. */
+function lineasPorArchivo() {
+  try {
+    const porRuta = {}
+    for (const fila of git(['grep', '-z', '-c', '-I', '--untracked', '']).split('\n')) {
+      const i = fila.lastIndexOf('\0')
+      if (i > 0) porRuta[fila.slice(0, i)] = Number(fila.slice(i + 1))
+    }
+    return porRuta
+  } catch {
+    return null
+  }
 }
 
 /** Escribe `<FLUJO>/mapa.md` con los archivos del repo (versionados y nuevos, sin ignorados) y devuelve la línea `MAPA:` del preflight y el total de archivos (null si no hay mapa). */
@@ -1586,7 +1626,7 @@ function escribirMapa() {
   try {
     const rutas = [...new Set(git(['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0').filter(Boolean))].sort()
     const archivo = path.join(FLUJO, 'mapa.md')
-    fs.writeFileSync(archivo, mapaDelRepo(rutas).join('\n') + '\n')
+    fs.writeFileSync(archivo, mapaDelRepo(rutas, TOPE_MAPA, lineasPorArchivo()).join('\n') + '\n')
     return { linea: `MAPA: ${archivo} (${rutas.length} archivos)`, total: rutas.length }
   } catch (e) {
     return { linea: `MAPA: ninguno (${String(e.message).split('\n')[0]})`, total: null }
@@ -1824,10 +1864,11 @@ const sinNulos = (obj) => {
 /**
  * La fila v2 de `registros/flujos.jsonl`. `datos`: `t` (hora del cierre), `raiz`, `base`, `version`, `resultado`, `tokens`
  * (de `--tokens`), `estado` (el estado del flujo), `metricas` (de `metricasDelFlujo`), `cambios` (de `cambiosPorSubtarea`)
- * y `negados` (cuántas negaciones de la guardia hubo). Omite lo que falte; `uso` suma pedidos y tokens de todos los roles.
+ * `negados` (cuántas negaciones de la guardia hubo) y `cortados` (ids de los agentes que la guardia cortó por contexto;
+ * cada explorador sale con `cortado: true|false`). Omite lo que falte; `uso` suma pedidos y tokens de todos los roles.
  * `sesiones` (de las métricas) es cuántas sesiones sumó el flujo: 1 sin corte, más si se reanudó con `--reanudar`.
  */
-export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado = {}, metricas = null, cambios = {}, negados } = {}) {
+export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado = {}, metricas = null, cambios = {}, negados, cortados = [] } = {}) {
   const m = metricas ?? {}
   const roles = Object.values(m.costo?.roles ?? {})
   const suma = (clave) => roles.reduce((s, r) => s + (r.tokens?.[clave] ?? 0), 0)
@@ -1874,7 +1915,7 @@ export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado
       alcanceFuera: m.alcanceFuera,
       inicial: estado.verificacion_inicial?.resultado,
     }),
-    explorador: m.explorador,
+    explorador: m.explorador && Array.isArray(m.explorador.agentes) ? { ...m.explorador, agentes: m.explorador.agentes.map((a) => ({ ...a, cortado: cortados.includes(a.id) })) } : m.explorador,
     tokens,
   })
 }
@@ -1957,13 +1998,16 @@ function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
     // Sin las diferencias por subtarea, la fila sigue.
   }
   let negados
+  let cortados
   try {
-    negados = leerRegistro(e.desde_global ?? desde ?? e.inicio ?? t).filter((f) => f.decision === 'negado').length
+    const filas = leerRegistro(e.desde_global ?? desde ?? e.inicio ?? t)
+    negados = filas.filter((f) => f.decision === 'negado').length
+    cortados = [...cortadosDe(filas).keys()]
   } catch {
     // Sin el registro, la fila sigue.
   }
   try {
-    anotarFlujo(path.join(carpetaGlobal(), 'flujos.jsonl'), filaDelFlujo({ t, raiz: RAIZ, base, version: versionInstalada(), resultado: valido, tokens: porRol ?? undefined, estado: e, metricas, cambios: cambiosDeSubtareas, negados }))
+    anotarFlujo(path.join(carpetaGlobal(), 'flujos.jsonl'), filaDelFlujo({ t, raiz: RAIZ, base, version: versionInstalada(), resultado: valido, tokens: porRol ?? undefined, estado: e, metricas, cambios: cambiosDeSubtareas, negados, cortados }))
   } catch (err) {
     console.log(`AVISO: no se pudo anotar el flujo: ${err.message}`)
   }

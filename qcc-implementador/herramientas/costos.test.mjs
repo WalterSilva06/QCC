@@ -170,10 +170,41 @@ test('costos: métricas del flujo desde transcripts armados', () => {
   assert.deepEqual({ ...m.ejecutores['2'], usd: undefined }, { usd: undefined, segundos: 48, correcciones: 0, estado: 'HECHO', esfuerzo: 'high' })
   assert.deepEqual(m.problemas, { final: [{ veredicto: 'RECHAZADO', items: ['Falla X'] }] })
   assert.deepEqual(m.alcanceFuera, ['ALCANCE: FUERA (a.ts)'])
-  assert.deepEqual(m.explorador, { pedidos: 2, glob: 1, read: 2, mapa: true })
+  assert.deepEqual(m.explorador, { pedidos: 2, glob: 1, read: 2, mapa: true, agentes: [{ id: 'e', contexto: 200, lineas: 0 }] })
   // Sin sesión en ese repo, no hay métricas; el costo sigue siendo el mismo que con costoDelFlujo.
   assert.equal(metricasDelFlujo(path.join(os.tmpdir(), 'repo-sin-sesion'), en(0), opciones), null)
   assert.equal(costoDelFlujo(raiz, en(0), opciones).usd, m.costo.usd)
+})
+
+test('costos: explorador.agentes da el contexto máximo y las líneas de Read y Grep sin system-reminder', () => {
+  const raiz = path.join(os.tmpdir(), 'repo-metricas-agentes')
+  const claude = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-config-'))
+  temporales.push(claude)
+  const sesion = path.join(claude, 'projects', path.resolve(raiz).replace(/[^a-zA-Z0-9]/g, '-'))
+  const subagentes = path.join(sesion, 's1', 'subagents')
+  fs.mkdirSync(subagentes, { recursive: true })
+  const inicio = Date.parse('2026-01-01T10:00:00.000Z')
+  const en = (s) => new Date(inicio + s * 1000).toISOString()
+  const jsonl = (filas) => filas.map((f) => JSON.stringify(f)).join('\n') + '\n'
+  const turno = (id, s, bloques, usage) => ({ type: 'assistant', timestamp: en(s), message: { id, model: 'claude-haiku-5-5', usage, content: bloques } })
+  const uso = (t) => ({ input_tokens: t.input, cache_read_input_tokens: t.leido ?? 0, cache_creation_input_tokens: t.escrito ?? 0, output_tokens: 10 })
+  const resultado = (s, id, texto) => ({ type: 'user', timestamp: en(s), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: texto }] } })
+  const usa = (id, name) => ({ type: 'tool_use', id, name, input: {} })
+  fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
+    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/impl</command-name>' } },
+    turno('o1', 5, [{ type: 'text', text: 'x' }], uso({ input: 1 })),
+  ]))
+  fs.writeFileSync(path.join(subagentes, 'agent-e1.meta.json'), JSON.stringify({ agentType: 'explorador' }))
+  fs.writeFileSync(path.join(subagentes, 'agent-e1.jsonl'), jsonl([
+    { type: 'user', timestamp: en(10), message: { role: 'user', content: 'PEDIDO: x' } },
+    turno('e1', 20, [usa('r1', 'Read'), usa('g1', 'Grep'), usa('b1', 'Bash')], uso({ input: 100, leido: 4000, escrito: 900 })),
+    resultado(25, 'r1', 'a\nb\nc\n<system-reminder>\nmalware?\notro\n</system-reminder>'),
+    resultado(26, 'g1', [{ type: 'text', text: 'x.ts:1:a\ny.ts:2:b' }]),
+    resultado(27, 'b1', '1\n2\n3\n4'),
+    turno('e2', 30, [{ type: 'text', text: 'ARCHIVOS' }], uso({ input: 50, leido: 100 })),
+  ]))
+  const m = metricasDelFlujo(raiz, en(0), { proyectos: path.join(claude, 'projects'), hasta: en(100), base: null })
+  assert.deepEqual(m.explorador.agentes, [{ id: 'e1', contexto: 5000, lineas: 5 }])
 })
 
 test('costos: reconoce /impl y agentType qcc-ejecutor como rol ejecutor', () => {

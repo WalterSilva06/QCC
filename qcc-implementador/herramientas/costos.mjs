@@ -279,7 +279,7 @@ function leerTramo(sesion, hasta) {
     }
     const prompt = textoDe(filas.find((f) => f.type === 'user')?.message?.content)
     const rol = tipo === 'revisor' ? 'final' : tipo
-    agentes.push({ rol, tipo, prompt, filas, inicio })
+    agentes.push({ id: a.replace(/^agent-/, '').replace(/\.jsonl$/, ''), rol, tipo, prompt, filas, inicio })
   }
   agentes.sort((a, b) => Date.parse(a.inicio) - Date.parse(b.inicio))
   return { sesion, hasta, todas, principal, agentes }
@@ -499,7 +499,8 @@ export function pedidoDelFlujo(raiz, desde, { proyectos = proyectosDe(), base = 
  * tiempos, ejecutores, problemas, alcanceFuera, explorador }`, con el costo de `costoDelFlujo` y lo demás como lo
  * describen `tiemposDe`, `ejecutoresDe` y `problemasDe`. `pedido` es el texto que se escribió tras `/impl`
  * (≤ 120 caracteres), `contexto` los tokens del primer y del último pedido del hilo principal, `alcanceFuera` las
- * líneas `ALCANCE: FUERA` que vio el orquestador y `explorador.mapa` si algún prompt trajo un `MAPA:` útil.
+ * líneas `ALCANCE: FUERA` que vio el orquestador, `explorador.mapa` si algún prompt trajo un `MAPA:` útil y
+ * `explorador.agentes` (`[{ id, contexto, lineas }]`: contexto máximo y líneas leídas con Read y Grep de cada uno).
  * null si no se encuentra la sesión.
  */
 export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta = new Date().toISOString(), base = null, sesiones = [] } = {}) {
@@ -517,6 +518,19 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
   }
   const exploradores = agentes.filter((a) => a.rol === 'explorador')
   const herramientasDe = (nombre) => exploradores.reduce((s, a) => s + a.filas.reduce((n, f) => n + bloquesDe(f, 'tool_use').filter((c) => c.name === nombre).length, 0), 0)
+  // Líneas de los resultados de Read y Grep, sin los `<system-reminder>` que el harness pega al final.
+  const lineasLeidas = (filas) => {
+    const lectores = new Set(filas.flatMap((f) => bloquesDe(f, 'tool_use')).filter((c) => c.name === 'Read' || c.name === 'Grep').map((c) => c.id))
+    let n = 0
+    for (const f of filas) {
+      for (const c of bloquesDe(f, 'tool_result')) {
+        if (!lectores.has(c.tool_use_id)) continue
+        const t = textoDe(c.content).replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
+        if (t) n += t.split('\n').length
+      }
+    }
+    return n
+  }
   const alcanceFuera = []
   for (const f of principal) {
     for (const c of bloquesDe(f, 'tool_result')) alcanceFuera.push(...(textoDe(c.content).match(/^ALCANCE: FUERA[^\n]*/gm) ?? []))
@@ -537,6 +551,7 @@ export function metricasDelFlujo(raiz, desde, { proyectos = proyectosDe(), hasta
       glob: herramientasDe('Glob'),
       read: herramientasDe('Read'),
       mapa: exploradores.some((a) => /^MAPA:[ \t]*(?!ninguno)\S/im.test(a.prompt)),
+      agentes: exploradores.map((a) => ({ id: a.id, contexto: Math.max(0, ...[...mensajesDe(a.filas).values()].map(contextoDe)), lineas: lineasLeidas(a.filas) })),
     },
   }
 }

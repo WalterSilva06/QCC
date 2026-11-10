@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { flujoDe, regexDePermiso, evaluar } from './guardia.mjs'
-import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, hallazgosDe, sinExplorarDe, avisosDeLargo, permisosDe, parecenExternas, permitidosDeSubtarea, noPareceRuta, contextoDe, acopladosSinCubrir } from './estado.mjs'
+import { lotesDe, opcionesDe, permitidosDe, criticosDe, fusionarPlanes, partesDelPlan, decisionesDelPlan, fusionarExploraciones, hallazgosDe, sinExplorarDe, avisosDeLargo, permisosDe, parecenExternas, comandosParaTi, permitidosDeSubtarea, noPareceRuta, contextoDe, acopladosSinCubrir } from './estado.mjs'
 
 const PLAN = `PREGUNTAS: ¿algo?
 PLAN · Prueba
@@ -394,6 +394,18 @@ test('plan: AVISO si una subtarea sin permiso parece externa', () => {
   assert.equal(parecenExternas(['- Hecho cuando: playwright-cli snapshot muestra el botón']), null)
   assert.equal(parecenExternas(['- Archivos permitidos: curl.ts', '- Reversión: borrar el servidor']), null)
   assert.equal(parecenExternas(['- Riesgos: r', '  - sub: deploy', '- Reversión: v']), 'deploy')
+})
+
+test('plan: AVISO si «Queda para ti» trae comandos que un agente podría correr aprobados', () => {
+  assert.deepEqual(comandosParaTi([
+    'Queda para ti: la verificación visual; además',
+    '`! pnpm supabase db push  # (objetivo) requiere red`',
+    '  - `! supabase functions deploy calcular  # requiere red`',
+    '  - `! git push` · `! rm -rf dist`',
+  ]), ['pnpm supabase db push', 'supabase functions deploy calcular'])
+  assert.deepEqual(comandosParaTi(['PERMISOS A APROBAR:', '  P1 · ejecutor S1 · `pnpm db:push` · Supabase', 'Queda para ti: nada']), [])
+  const { salida } = repoConPlanGuardado('para-ti-aviso', [subtareaDePlan(1, 'src/a.ts'), 'Queda para ti: `! supabase db push  # requiere red`'])
+  assert.match(salida, /^ {2}- «Queda para ti» trae comandos \(`supabase db push`\): los que un agente/m)
 })
 
 test('plan: sin AVISO con permiso en la subtarea', () => {

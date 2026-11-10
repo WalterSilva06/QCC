@@ -218,6 +218,27 @@ test('estado: mapaDelRepo resume por carpeta con tope', () => {
   assert.match(cortado.at(-1), /^… y \d+ carpetas más \(\d+ archivos\)$/)
 })
 
+test('estado: mapaDelRepo con líneas cuenta por carpeta y lista los documentos largos', () => {
+  const rutas = ['README.md', 'docs/grande.md', 'docs/justo.md', 'src/a/x.ts', 'src/b/y.ts', 'src/b/z.md', 'src/w.ts']
+  const lineas = { 'README.md': 10, 'docs/grande.md': 301, 'docs/justo.md': 300, 'src/a/x.ts': 9000, 'src/b/y.ts': 90, 'src/w.ts': 10 }
+
+  // Un .md de 301 líneas entra, uno de 300 no; el vacío (sin entrada) cuenta 0.
+  assert.deepEqual(mapaDelRepo(rutas, 3, lineas), [
+    'MAPA · 7 archivos · 9.711 líneas (git ls-files: versionados y nuevos, sin ignorados) · 3 carpeta(s)',
+    'Las carpetas resumidas se exploran con Glob; lo ignorado por git no aparece.',
+    'Documentos de más de 300 líneas: docs/grande.md (301)',
+    './ — 1 archivos · 10 líneas: README.md',
+    'docs/ — 2 archivos · 601 líneas: grande.md, justo.md',
+    'src/ — 4 archivos en 2 subcarpetas · 9.100 líneas (.ts 3, .md 1)',
+  ])
+
+  // Sin documentos largos no hay línea; con la cola se cuentan las líneas de lo que falta.
+  const raices = Array.from({ length: 4 }, (_, i) => `d${i}/f.ts`)
+  const cola = mapaDelRepo(raices, 3, Object.fromEntries(raices.map((r) => [r, 1500])))
+  assert.ok(!cola.some((l) => l.startsWith('Documentos')))
+  assert.equal(cola.at(-1), '… y 2 carpetas más (2 archivos · 3.000 líneas)')
+})
+
 test('estado: el preflight deja mapa.md', () => {
   const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
   const { raiz, salida } = estadoCon(config, () => ['--paso', '0'], {
@@ -231,7 +252,7 @@ test('estado: el preflight deja mapa.md', () => {
   // Va justo después de FLUJO.
   assert.match(salida, /^FLUJO: .*\n^MAPA: /m)
   const mapa = fs.readFileSync(linea[1], 'utf8')
-  assert.match(mapa, /^docs\/ — canción\.md$/m)
+  assert.match(mapa, /^docs\/ — 1 archivos · 1 líneas: canción\.md$/m)
   assert.doesNotMatch(mapa, /"|\\\d{3}/)
   assert.doesNotMatch(mapa, /ignorado\.txt/)
 
@@ -243,7 +264,7 @@ test('estado: el preflight deja mapa.md', () => {
   // Con --forzar se rehace e incluye lo nuevo sin commit.
   const forzado = estadoEn(raiz, ['--paso', '0', '--forzar'])
   assert.match(forzado.salida, /^MAPA: .*mapa\.md \(\d+ archivos\)$/m)
-  assert.match(fs.readFileSync(linea[1], 'utf8'), /nuevo\.ts/)
+  assert.match(fs.readFileSync(linea[1], 'utf8'), /^\.\/ — \d+ archivos · \d+ líneas: .*nuevo\.ts/m)
   assert.equal(forzado.codigo, 0)
 })
 
