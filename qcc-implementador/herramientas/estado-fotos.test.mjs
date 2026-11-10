@@ -667,25 +667,66 @@ test('estado: --guardar con varios exploradores escribe un solo exploracion.md',
   assert.doesNotMatch(vacio.salida, /GUARDADO/)
 
   // Con un solo id, un informe sin alguna sección también avisa, y el archivo queda tal cual.
-  const solo = estadoEn(raiz, ['--guardar', 'e2', 'exploracion'], entorno).salida
-  assert.match(solo, /^INCOMPLETO: agente e2 sin DUDAS: relanza solo esa parte$/m)
+  const solo = estadoCon({}, () => ['--guardar', 'e2', 'exploracion'], {}, entorno)
+  assert.match(solo.salida, /^INCOMPLETO: agente e2 sin DUDAS: relanza solo esa parte$/m)
   assert.equal(
-    fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8'),
+    fs.readFileSync(path.join(flujoDe(solo.raiz), 'exploracion.md'), 'utf8'),
     'ARCHIVOS\n- src/a.ts:3 — mismo uso\n- src/b.ts:7 — otro\nTESTS\n- src/a.test.ts:1 — prueba\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\n',
   )
 })
 
-test('el preflight imprime EXPLORADORES: hasta 16 sin importar el repo', () => {
+test('el preflight imprime EXPLORADORES: hasta 20 y el reintento sin importar el repo', () => {
   const config = { verificar: [{ nombre: 'test', cmd: 'echo x' }] }
   const grande = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [`lote/f${i}.txt`, 'x\n']))
   const { raiz, salida } = estadoCon(config, () => ['--paso', '0'], grande)
-  assert.match(salida, /^MAPA: .*\n^EXPLORADORES: hasta 16 \(según el pedido\)$/m)
+  assert.match(salida, /^MAPA: .*\n^EXPLORADORES: hasta 20 \(según el pedido\) · reintento: hasta 4$/m)
   const chico = estadoCon(config, () => ['--paso', '0']).salida
-  assert.match(chico, /^MAPA: .*\n^EXPLORADORES: hasta 16 \(según el pedido\)$/m)
+  assert.match(chico, /^MAPA: .*\n^EXPLORADORES: hasta 20 \(según el pedido\) · reintento: hasta 4$/m)
 
   // Con el flujo ocupado no hay MAPA y el tope es el mismo.
   fs.writeFileSync(path.join(raiz, 'nuevo.ts'), 'n\n')
-  assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^MAPA: ninguno.*\n^EXPLORADORES: hasta 16 \(según el pedido\)$/m)
+  assert.match(estadoEn(raiz, ['--paso', '0']).salida, /^MAPA: ninguno.*\n^EXPLORADORES: hasta 20 \(según el pedido\) · reintento: hasta 4$/m)
+})
+
+test('estado: los encabezados con paréntesis cuentan como encabezados', () => {
+  const informe = 'ARCHIVOS (ruta base: qcc-implementador/)\n- a.ts:1 — uno\n**TESTS (a la vista)**\n- ninguno\nACOPLAMIENTOS (x):\n- ninguno\n## DATOS (n/a)\n- ninguno\n**DUDAS** (pendientes)\n- ¿algo?'
+  const { texto, incompletos } = fusionarExploraciones([{ id: 'a', texto: informe }])
+  assert.deepEqual(incompletos, [])
+  assert.match(texto, /^ARCHIVOS\n- a\.ts:1 — uno$/m)
+  assert.match(texto, /^DUDAS\n- ¿algo\?$/m)
+  assert.deepEqual(hallazgosDe(informe).map((h) => h.seccion), ['ARCHIVOS', 'DUDAS'])
+})
+
+test('--guardar: REINTENTO sale en la primera corrida y la segunda avisa solo de los ids nuevos', () => {
+  const informe = (ruta, dudas) => `ARCHIVOS\n- ${ruta}:1 — uno\nTESTS\n- ninguno\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\nDUDAS\n${dudas}`
+  const claude = transcripts({
+    a: informe('a.ts', '- no explorado: viejo — corte'),
+    b: 'ARCHIVOS\n- b.ts:2 — dos',
+    n: informe('n.ts', '- no explorado: nuevo — corte'),
+    m: 'ARCHIVOS\n- m.ts:3 — tres',
+  })
+  const entorno = { CLAUDE_CONFIG_DIR: claude }
+  const { raiz, salida: primera } = estadoCon({}, () => ['--guardar', 'a,b', 'exploracion', '--paso', '2'], {}, entorno)
+  assert.match(primera, /^REINTENTO: caben 4$/m)
+  assert.match(primera, /^SIN EXPLORAR: no explorado: viejo — corte$/m)
+  assert.match(primera, /^INCOMPLETO: agente b sin /m)
+
+  const segunda = estadoEn(raiz, ['--guardar', 'a,b,n,m', 'exploracion', '--paso', '2'], entorno).salida
+  assert.doesNotMatch(segunda, /REINTENTO/)
+  assert.doesNotMatch(segunda, /SIN EXPLORAR: no explorado: viejo/)
+  assert.doesNotMatch(segunda, /INCOMPLETO: agente b/)
+  assert.match(segunda, /^SIN EXPLORAR: no explorado: nuevo — corte$/m)
+  assert.match(segunda, /^INCOMPLETO: agente m sin /m)
+  // El archivo sí une los informes de las dos rondas.
+  const md = fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8')
+  assert.match(md, /no explorado: viejo/)
+  assert.match(md, /no explorado: nuevo/)
+
+  // El cupo se descuenta de los 24: los ids sin informe también se despacharon.
+  const cupo = (n) => estadoCon({}, () => ['--guardar', ['a', ...Array.from({ length: n - 1 }, (_, i) => `x${i}`)].join(','), 'exploracion', '--paso', '2'], {}, entorno).salida
+  assert.match(cupo(20), /^REINTENTO: caben 4$/m)
+  assert.match(cupo(23), /^REINTENTO: caben 1$/m)
+  assert.match(cupo(26), /^REINTENTO: caben 0$/m)
 })
 
 test('--guardar avisa CORTADO del explorador que la guardia dejó sin leer por contexto', () => {
@@ -698,17 +739,17 @@ test('--guardar avisa CORTADO del explorador que la guardia dejó sin leer por c
 
   // Sin negados no hay ningún CORTADO.
   assert.equal(leer('c2', 50_000).stdout, '')
-  const sin = estadoEn(raiz, ['--guardar', 'c1,c2', 'exploracion', '--paso', '2'], entorno).salida
+  const sin = estadoEn(raiz, ['--guardar', 'c2', 'exploracion', '--paso', '2'], entorno).salida
   assert.match(sin, /^GUARDADO: exploración/m)
   assert.doesNotMatch(sin, /CORTADO/)
 
-  // La fila que produce la guardia real marca solo al agente negado, también al volver a guardar con más ids.
+  // La fila que produce la guardia real marca solo al agente negado, también si llega en una corrida posterior.
   assert.equal(JSON.parse(leer('c1', 95_000).stdout).hookSpecificOutput.permissionDecision, 'deny')
   const con = estadoEn(raiz, ['--guardar', 'c1,c2', 'exploracion', '--paso', '2'], entorno).salida
   assert.match(con, /^CORTADO: agente c1 por contexto \(95k\)$/m)
   assert.equal((con.match(/^CORTADO/gm) ?? []).length, 1)
-  assert.match(estadoEn(raiz, ['--guardar', 'c1', 'exploracion'], entorno).salida, /^CORTADO: agente c1 por contexto \(95k\)$/m)
-  assert.doesNotMatch(estadoEn(raiz, ['--guardar', 'c2', 'exploracion'], entorno).salida, /CORTADO/)
+  // Ya avisado, no se repite.
+  assert.doesNotMatch(estadoEn(raiz, ['--guardar', 'c1', 'exploracion'], entorno).salida, /CORTADO/)
 })
 
 /** Informe de explorador con `n` hallazgos en ARCHIVOS y los otros 4 encabezados vacíos. */
@@ -793,18 +834,10 @@ test('--guardar avisa SIN EXPLORAR una vez por DUDA marcada', () => {
   assert.match(estadoCon({}, () => ['--guardar', 'n', 'exploracion', '--paso', '2'], {}, { CLAUDE_CONFIG_DIR: negrita }).salida, /^SIN EXPLORAR: \*\*no explorado\*\*: x$/m)
 })
 
-test('--guardar avisa LARGO por líneas de más de 160 caracteres', () => {
-  const ancha = (n) => `- src/a.ts:1 — ${'x'.repeat(n - '- src/a.ts:1 — '.length)}`
-  assert.equal(ancha(161).length, 161)
-  const claude = transcripts({
-    justa: informeDe(2, (i) => (i === 1 ? ancha(160) : `- src/b.ts:${i} — ok`)),
-    pasada: informeDe(3, (i) => (i === 3 ? `- src/b.ts:${i} — ok` : ancha(161 + i))),
-  })
-  const entorno = { CLAUDE_CONFIG_DIR: claude }
-  assert.doesNotMatch(estadoCon({}, () => ['--guardar', 'justa', 'exploracion', '--paso', '2'], {}, entorno).salida, /LARGO/)
-  const { raiz, salida: pasada } = estadoCon({}, () => ['--guardar', 'pasada', 'exploracion', '--paso', '2'], {}, entorno)
-  assert.match(pasada, /^LARGO: agente pasada con 2 líneas de más de 160 caracteres$/m)
-  assert.doesNotMatch(pasada, /hallazgos \(tope/)
+test('--guardar no avisa LARGO por el ancho de las líneas', () => {
+  const claude = transcripts({ ancha: informeDe(2, () => `- src/a.ts:1 — ${'x'.repeat(200)}`) })
+  const { raiz, salida } = estadoCon({}, () => ['--guardar', 'ancha', 'exploracion', '--paso', '2'], {}, { CLAUDE_CONFIG_DIR: claude })
+  assert.doesNotMatch(salida, /LARGO/)
   assert.match(fs.readFileSync(path.join(flujoDe(raiz), 'exploracion.md'), 'utf8'), /x{100}/)
 })
 

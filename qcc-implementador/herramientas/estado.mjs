@@ -8,7 +8,7 @@
 //   node <plugin>/herramientas/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"] [--resultado COMPLETO|DETENIDO:<0-7>]
 //   node <plugin>/herramientas/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--omitida] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo; --sub anota el avance de sus subtareas (--omitida: OMITIDA)
 //   node <plugin>/herramientas/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
-//   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion|revision [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s), avisa con SIN EXPLORAR y con LARGO solo en la primera corrida. La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección. La revisión final va a revision-<ciclo>.md
+//   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion|revision [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s), avisa con SIN EXPLORAR, y solo en la primera corrida con LARGO y REINTENTO (en la segunda, INCOMPLETO, CORTADO y SIN EXPLORAR salen solo de los ids nuevos). La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección. La revisión final va a revision-<ciclo>.md
 //   node <plugin>/herramientas/estado.mjs --aprobado [--ajustes "<texto>"] [--paso <n>]   anota que el usuario aprobó el plan, con los AJUSTES AL PLAN
 //   node <plugin>/herramientas/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan, la VERIFICACIÓN INICIAL y la línea SIGUE)
 //   node <plugin>/herramientas/estado.mjs --reanudar [--paso <n>]  sigue un flujo cortado en esta sesión sin vaciar su carpeta: lo de --estado más el PEDIDO y lo pendiente
@@ -919,13 +919,13 @@ function criticasDeExploracion(texto) {
 }
 
 const SECCIONES_EXPLORACION = ['ARCHIVOS', 'TESTS', 'ACOPLAMIENTOS', 'DATOS', 'DUDAS']
-const RE_ENCABEZADO = /^\s*(?:#{1,6}\s*)?(?:\*\*)?(ARCHIVOS|TESTS|ACOPLAMIENTOS|DATOS|DUDAS)(?:\*\*)?\s*:?\s*$/
+const RE_ENCABEZADO = /^\s*(?:#{1,6}\s*)?(?:\*\*)?(ARCHIVOS|TESTS|ACOPLAMIENTOS|DATOS|DUDAS)(?:\*\*)?(?:\s*\(.*\))?(?:\*\*)?\s*:?\s*$/
 const RE_NINGUNO = /^\s*(?:[-*]\s*)?ninguno\.?\s*$/i
 
-/** Tope de líneas de hallazgos de cada explorador y máximo de exploradores en total: fijos, el orquestador elige cuántos según el pedido. */
+/** Tope de líneas de hallazgos de cada explorador y máximo de exploradores en total y en el reintento: fijos, el orquestador elige cuántos según el pedido. */
 const TOPE_LINEAS_EXPLORADOR = 20
-const MAX_EXPLORADORES = 16
-const MAX_LINEA_EXPLORACION = 160
+const MAX_EXPLORADORES = 24
+const MAX_REINTENTO = 4
 const RE_RUTA_LINEA = /[^\s`—]+:\d+/
 
 /** Líneas del informe sin la prosa que sobra: en la última sección, tras un renglón vacío, solo quedan viñetas («-», «*») y líneas con `ruta:línea`. */
@@ -941,14 +941,12 @@ function sinProsaFinal(texto) {
   })
 }
 
-/** Líneas `LARGO:` de los informes `[{ id, texto }]` que pasan de `tope` hallazgos (líneas no vacías sin los 5 encabezados) o traen líneas de más de 160 caracteres. */
+/** Líneas `LARGO:` de los informes `[{ id, texto }]` que pasan de `tope` hallazgos (líneas no vacías sin los 5 encabezados). */
 export function avisosDeLargo(informes, tope) {
   const avisos = []
   for (const { id, texto } of informes) {
-    const lineas = sinProsaFinal(texto).map((l) => l.trimEnd()).filter((l) => l.trim() && !RE_ENCABEZADO.test(l) && !RE_NINGUNO.test(l))
+    const lineas = sinProsaFinal(texto).filter((l) => l.trim() && !RE_ENCABEZADO.test(l) && !RE_NINGUNO.test(l))
     if (lineas.length > tope) avisos.push(`LARGO: agente ${id} con ${lineas.length} hallazgos (tope ${tope})`)
-    const anchas = lineas.filter((l) => l.length > MAX_LINEA_EXPLORACION).length
-    if (anchas) avisos.push(`LARGO: agente ${id} con ${anchas} líneas de más de ${MAX_LINEA_EXPLORACION} caracteres`)
   }
   return avisos
 }
@@ -1050,8 +1048,7 @@ function guardarInforme(id, tipo, ajuste) {
   fs.mkdirSync(FLUJO, { recursive: true })
   const destino = path.join(FLUJO, `${tipo}.md`)
   if (tipo === 'exploracion') {
-    const { texto: fusion, incompletos } = fusionarExploraciones(informes)
-    const texto = pedidos.length === 1 ? informes[0].texto : fusion
+    const texto = pedidos.length === 1 ? informes[0].texto : fusionarExploraciones(informes).texto
     fs.writeFileSync(destino, texto + '\n')
     // El pedido literal queda en la carpeta del flujo, para que reanudar no dependa de los transcripts.
     const archivoPedido = path.join(FLUJO, 'pedido.md')
@@ -1064,15 +1061,20 @@ function guardarInforme(id, tipo, ajuste) {
         // Sin el pedido, reanudar lo busca de nuevo.
       }
     }
-    const repetida = Boolean(leerEstado().exploracion)
-    anotarEstado({ exploracion: destino })
+    const previo = leerEstado()
+    const repetida = Boolean(previo.exploracion)
+    // Los informes ya guardados avisaron en su corrida: repetirlo confunde al orquestador, que ya no puede reintentar.
+    const vistos = new Set(Array.isArray(previo.exploradores_vistos) ? previo.exploradores_vistos : [])
+    const nuevos = fusionarExploraciones(informes.filter((i) => !vistos.has(i.id)))
+    anotarEstado({ exploracion: destino, exploradores_vistos: [...new Set([...vistos, ...informes.map((i) => i.id)])] })
     console.log(`GUARDADO: exploración → ${destino}`)
-    for (const { id: agente, faltan } of incompletos) {
+    for (const { id: agente, faltan } of nuevos.incompletos) {
       console.log(`INCOMPLETO: agente ${agente} sin ${faltan.join(', ')}: relanza solo esa parte`)
     }
     if (!repetida) for (const aviso of avisosDeLargo(informes, TOPE_LINEAS_EXPLORADOR)) console.log(aviso)
-    for (const aviso of avisosDeCortado(pedidos)) console.log(aviso)
-    for (const aviso of sinExplorarDe(hallazgosDe(texto))) console.log(aviso)
+    for (const aviso of avisosDeCortado(pedidos.filter((p) => !vistos.has(p)))) console.log(aviso)
+    for (const aviso of sinExplorarDe(hallazgosDe(nuevos.texto))) console.log(aviso)
+    if (!repetida) console.log(`REINTENTO: caben ${Math.max(0, Math.min(MAX_REINTENTO, MAX_EXPLORADORES - pedidos.length))}`)
     console.log(`RUTAS CRÍTICAS EN LA EXPLORACIÓN: ${criticasDeExploracion(texto)}`)
     return
   }
@@ -1567,9 +1569,9 @@ const extensionDe = (ruta) => {
 /**
  * Las líneas del mapa del repo para el explorador: una por carpeta (con los nombres si los archivos están en ella,
  * resumida por extensión si hay subcarpetas). Con `lineasPorRuta` (`{ ruta: n }`) suma líneas por carpeta y lista los
- * `.md` de más de 300 líneas; una ruta ausente cuenta 0. Nunca más de `tope + 3` líneas.
+ * `.md` de más de 300 líneas (con `bytesDe(ruta)`, también sus KB); una ruta ausente cuenta 0. Nunca más de `tope + 3` líneas.
  */
-export function mapaDelRepo(rutas, tope = TOPE_MAPA, lineasPorRuta = null) {
+export function mapaDelRepo(rutas, tope = TOPE_MAPA, lineasPorRuta = null, bytesDe = null) {
   const grupos = agruparPorCarpeta(rutas, tope)
   const miles = (n) => String(n).replace(/\B(?=(\d{3})+$)/g, '.')
   const suma = (lista) => lista.reduce((s, r) => s + (lineasPorRuta[r] ?? 0), 0)
@@ -1580,7 +1582,8 @@ export function mapaDelRepo(rutas, tope = TOPE_MAPA, lineasPorRuta = null) {
   if (lineasPorRuta) {
     const docs = rutas.filter((r) => r.endsWith('.md') && (lineasPorRuta[r] ?? 0) > 300)
       .sort((a, b) => lineasPorRuta[b] - lineasPorRuta[a]).slice(0, 20)
-    if (docs.length) lineas.push(`Documentos de más de 300 líneas: ${docs.map((r) => `${r} (${miles(lineasPorRuta[r])})`).join(', ')}`)
+    const kb = (r) => (bytesDe ? ` · ${miles(Math.ceil(bytesDe(r) / 1024))} KB` : '')
+    if (docs.length) lineas.push(`Documentos de más de 300 líneas: ${docs.map((r) => `${r} (${miles(lineasPorRuta[r])}${kb(r)})`).join(', ')}`)
   }
   const mostrados = grupos.length > tope ? grupos.slice(0, Math.max(0, tope - 1)) : grupos
   for (const { carpeta, rutas: lista } of mostrados) {
@@ -1626,16 +1629,16 @@ function escribirMapa() {
   try {
     const rutas = [...new Set(git(['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0').filter(Boolean))].sort()
     const archivo = path.join(FLUJO, 'mapa.md')
-    fs.writeFileSync(archivo, mapaDelRepo(rutas, TOPE_MAPA, lineasPorArchivo()).join('\n') + '\n')
+    fs.writeFileSync(archivo, mapaDelRepo(rutas, TOPE_MAPA, lineasPorArchivo(), (r) => fs.statSync(path.join(RAIZ, r)).size).join('\n') + '\n')
     return { linea: `MAPA: ${archivo} (${rutas.length} archivos)`, total: rutas.length }
   } catch (e) {
     return { linea: `MAPA: ninguno (${String(e.message).split('\n')[0]})`, total: null }
   }
 }
 
-/** Línea `EXPLORADORES:` del preflight: el máximo fijo; cuántos despacha el orquestador depende del pedido. */
+/** Línea `EXPLORADORES:` del preflight: los máximos fijos de la primera ronda y del reintento; cuántos despacha el orquestador depende del pedido. */
 function lineaExploradores() {
-  return `EXPLORADORES: hasta ${MAX_EXPLORADORES} (según el pedido)`
+  return `EXPLORADORES: hasta ${MAX_EXPLORADORES - MAX_REINTENTO} (según el pedido) · reintento: hasta ${MAX_REINTENTO}`
 }
 
 /** Comillas simples de bash para una ruta. */
@@ -1930,7 +1933,7 @@ function lineaDeContexto(metricas) {
 }
 
 /**
- * Copia plan.md, exploracion.md, pedido.md, los S<n>.md, los revision-<c>.md y estado.json del flujo a `<registros>/historial/<AAAAMMDDTHHMMSS>-<proyecto>-<hash>/`
+ * Copia plan.md, exploracion.md, pedido.md, mapa.md, los S<n>.md, los revision-<c>.md y estado.json del flujo a `<registros>/historial/<AAAAMMDDTHHMMSS>-<proyecto>-<hash>/`
  * y deja las `HISTORIAL_MAX` carpetas más recientes: solo borra subcarpetas directas de `historial/` con nombre `AAAAMMDDTHHMMSS-…`,
  * nunca la recién creada. Nunca rompe el cierre.
  */
@@ -1940,7 +1943,7 @@ function archivarFlujo(t) {
     const destino = path.join(historial, `${t.replace(/[-:]/g, '').slice(0, 15)}-${nombreDe(RAIZ)}`)
     fs.mkdirSync(destino, { recursive: true })
     for (const nombre of fs.readdirSync(FLUJO)) {
-      if (/^(plan|exploracion|pedido|S\d+|revision-\d+)\.md$/.test(nombre) || nombre === 'estado.json') fs.copyFileSync(path.join(FLUJO, nombre), path.join(destino, nombre))
+      if (/^(plan|exploracion|pedido|mapa|S\d+|revision-\d+)\.md$/.test(nombre) || nombre === 'estado.json') fs.copyFileSync(path.join(FLUJO, nombre), path.join(destino, nombre))
     }
     console.log(`HISTORIAL: ${destino}`)
     const carpetas = fs.readdirSync(historial, { withFileTypes: true }).filter((d) => d.isDirectory() && RE_CARPETA_HISTORIAL.test(d.name)).map((d) => d.name).sort().reverse()

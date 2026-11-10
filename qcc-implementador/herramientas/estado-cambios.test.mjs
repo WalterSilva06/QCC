@@ -601,7 +601,7 @@ test('cierre: anota la fila v2, imprime CONTEXTO y archiva en historial', () => 
   fs.writeFileSync(path.join(carpeta, 'estado.json'), JSON.stringify(estado))
   fs.writeFileSync(path.join(carpeta, 'plan.md'), 'PLAN · x\n')
   fs.writeFileSync(path.join(carpeta, 'S1.md'), 'S1 · x\n')
-  fs.writeFileSync(path.join(carpeta, 'mapa.md'), 'no se archiva\n')
+  fs.writeFileSync(path.join(carpeta, 'mapa.md'), 'se archiva\n')
   // La foto de S1 se toma con `a2`; el cierre ve `a3, b, c`: +3 −1 en un archivo.
   assert.match(estadoEn(raiz, ['--base', '--sub', '1']).salida, /^BASE=\w+ DESDE=/m)
   fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a3\nb\nc\n')
@@ -629,7 +629,7 @@ test('cierre: anota la fila v2, imprime CONTEXTO y archiva en historial', () => 
   assert.ok(destino, salida)
   assert.equal(path.dirname(destino), historial)
   assert.match(path.basename(destino), new RegExp(`^${fila.t.replace(/[-:]/g, '').slice(0, 15)}-${path.basename(carpeta).replace(/-flujo$/, '')}$`))
-  assert.deepEqual(fs.readdirSync(destino).sort(), ['S1.md', 'estado.json', 'plan.md'])
+  assert.deepEqual(fs.readdirSync(destino).sort(), ['S1.md', 'estado.json', 'mapa.md', 'plan.md'])
   const archivado = JSON.parse(fs.readFileSync(path.join(destino, 'estado.json'), 'utf8'))
   assert.equal(archivado.cierre, fila.t)
   assert.equal(archivado.resultado, 'COMPLETO')

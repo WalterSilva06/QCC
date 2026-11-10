@@ -237,6 +237,11 @@ test('estado: mapaDelRepo con líneas cuenta por carpeta y lista los documentos 
   const cola = mapaDelRepo(raices, 3, Object.fromEntries(raices.map((r) => [r, 1500])))
   assert.ok(!cola.some((l) => l.startsWith('Documentos')))
   assert.equal(cola.at(-1), '… y 2 carpetas más (2 archivos · 3.000 líneas)')
+
+  // Con el tamaño, el documento lleva también sus KB (redondeados hacia arriba, con miles).
+  const conKb = (bytes) => mapaDelRepo(rutas, 3, lineas, () => bytes)[2]
+  assert.equal(conKb(315_000), 'Documentos de más de 300 líneas: docs/grande.md (301 · 308 KB)')
+  assert.equal(conKb(1_048_576), 'Documentos de más de 300 líneas: docs/grande.md (301 · 1.024 KB)')
 })
 
 test('estado: el preflight deja mapa.md', () => {
