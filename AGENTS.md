@@ -17,6 +17,7 @@ README.md                         entrada al repo e índice
 AGENTS.md                         reglas generales (este archivo)
 MODS.md                           documentación del mod panel (carpeta qcc-panel)
 FLUJOS.md                         documentación de los flujos
+LIMITES.md                        límites de uso (5 h y semanal) y el % que /impl anota por corrida y por fase
 .claude/qcc-implementador.json    pasos de verificación para /impl
 .claude/qcc-implementador/        reglas de /impl para este repo (un archivo por sección)
 .claude-plugin/marketplace.json   marketplace «qcc» con los tres plugins (panel, impl, commit)
@@ -26,7 +27,7 @@ qcc-implementador/                plugin impl
   instalar.mjs                    archiva (--limpiar) las copias viejas de /impl y /commit en ~/.claude
   skills/impl/SKILL.md            /impl
   agents/qcc-*.md                 explorador, planificador, ejecutor, revisor (sin hooks:, que se ignoran)
-  herramientas/                   estado (con --guia), verificar, guardia, plan-visible (la pregunta «Plan» muestra el plan), costos, mover (bloques de líneas para el ejecutor), sus tests (guardia.test, plan-visible.test, estado.test, estado-fotos.test, estado-cambios.test, costos.test, verificar.test, mover.test) y pruebas-comun, comun.md, plan.md, pasos.md, config.ejemplo.md
+  herramientas/                   estado (con --guia), verificar, guardia, plan-visible (la pregunta «Plan» muestra el plan), costos (consumo en tokens y % de límites por flujo y por fase, sin dólares), mover (bloques de líneas para el ejecutor), sus tests (guardia.test, plan-visible.test, estado.test, estado-fotos.test, estado-cambios.test, costos.test, verificar.test, mover.test) y pruebas-comun, comun.md, plan.md, pasos.md, config.ejemplo.md
 qcc-commit/                       plugin commit
   .claude-plugin/plugin.json      manifiesto
   hooks/hooks.json                solo-git.mjs en PreToolUse (Bash, PowerShell)
@@ -41,7 +42,7 @@ qcc-panel/                        plugin panel
   hooks/formato.ts                puro: barras, cifras, tiempos, desglose del contexto
   hooks/carpeta.ts                puro: validar la ruta y elegir el comando que abre la carpeta
   hooks/flujo.ts                  puro: qué flujo corre y en qué paso, a partir de los eventos
-  hooks/historial.ts              puro: leer flujos.jsonl y armar las líneas del historial
+  hooks/historial.ts              puro: leer flujos.jsonl y armar las líneas del historial; el snapshot de límites (qcc-limites.json) que lee /impl
   hooks/freno.ts                  puro: decidir si un envío se frena una vez con un aviso
   hooks/agentes.ts                puro: anotar los subagentes y los archivos tocados de la pestaña Agentes
   types/index.d.ts                tipos y contrato de $.state (PluginState['panel'])
