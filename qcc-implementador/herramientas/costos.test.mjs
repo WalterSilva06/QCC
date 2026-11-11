@@ -476,6 +476,76 @@ test('costos: la espera incluye al usuario que responde tras un turno cerrado co
   assert.deepEqual(m.tiempos, { fases: { 0: 110, 5: 100, 7: 0 }, espera: 1000, activo: 210 })
 })
 
+test('costos: tiemposDe resta la espera del límite de 5 h dentro de un subagente', () => {
+  const { raiz, en, turno, texto, usuario, escribir, agente, opciones } = transcripts('repo-metricas-limite-agente')
+  const bash = (id, comando) => ({ type: 'tool_use', id, name: 'Bash', input: { command: comando } })
+  const ESTADO = 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs'
+  escribir([
+    usuario(0, '<command-name>/impl</command-name>'),
+    turno('o1', 5, [bash('b0', `${ESTADO} --paso 0`)]),
+    turno('o2', 10, [{ type: 'tool_use', id: 'x1', name: 'Agent', input: { subagent_type: 'impl:qcc-ejecutor', prompt: 'SUBTAREA 1/1: x' } }]),
+    usuario(3050, [{ type: 'tool_result', tool_use_id: 'x1', content: 'ESTADO: HECHO' }]),
+    turno('o3', 3060, [bash('b7', `${ESTADO} --cambios abc --paso 7`)]),
+  ])
+  // El ejecutor choca con el límite a los 30 s y sigue 3000 s después, cuando se reinicia.
+  agente('agent-e1', 'impl:qcc-ejecutor', 'SUBTAREA 1/1: x', 20, [
+    turno('e1', 30, [texto("You've hit your session limit · resets 3pm")]),
+    turno('e2', 3030, [texto('Your limit has reset')]),
+    turno('e3', 3040, [texto('ESTADO: HECHO')]),
+  ])
+  const m = metricasDelFlujo(raiz, en(0), opciones(3100))
+  assert.deepEqual(m.tiempos, { fases: { 0: 60, 7: 0 }, espera: 3000, activo: 60 })
+})
+
+test('costos: el aviso del límite en el hilo principal no se resta dos veces con la espera del turno', () => {
+  const { raiz, en, turno, texto, usuario, escribir, opciones } = transcripts('repo-metricas-limite-turno')
+  const bash = (id, comando) => ({ type: 'tool_use', id, name: 'Bash', input: { command: comando } })
+  const ESTADO = 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs'
+  escribir([
+    usuario(0, '<command-name>/impl</command-name>'),
+    turno('o1', 5, [bash('b0', `${ESTADO} --paso 0`)]),
+    // El aviso cierra el turno con texto y el usuario sigue 1000 s después: es una sola espera, no dos.
+    turno('o2', 100, [texto("You've hit your limit · resets 3pm")]),
+    usuario(1100, 'continúa'),
+    turno('o3', 1110, [bash('b5', `${ESTADO} --paso 5`)]),
+    turno('o4', 1120, [bash('b7', `${ESTADO} --cambios abc --paso 7`)]),
+  ])
+  assert.deepEqual(metricasDelFlujo(raiz, en(0), opciones(1300)).tiempos, { fases: { 0: 110, 5: 10, 7: 0 }, espera: 1000, activo: 120 })
+})
+
+test('costos: el subagente que muere en el límite sin reinicio espera hasta el siguiente mensaje del humano', () => {
+  const { raiz, en, turno, texto, usuario, escribir, agente, opciones } = transcripts('repo-metricas-limite-muere')
+  const bash = (id, comando) => ({ type: 'tool_use', id, name: 'Bash', input: { command: comando } })
+  const ESTADO = 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs'
+  escribir([
+    usuario(0, '<command-name>/impl</command-name>'),
+    turno('o1', 5, [bash('b0', `${ESTADO} --paso 0`)]),
+    turno('o2', 10, [{ type: 'tool_use', id: 'x1', name: 'Agent', input: { subagent_type: 'impl:qcc-ejecutor', prompt: 'SUBTAREA 1/1: x' } }]),
+    usuario(40, [{ type: 'tool_result', tool_use_id: 'x1', content: 'sin informe' }]),
+    usuario(3045, 'continúa'),
+    turno('o3', 3050, [bash('b5', `${ESTADO} --paso 5`)]),
+    turno('o4', 5050, [bash('b7', `${ESTADO} --cambios abc --paso 7`)]),
+  ])
+  // El subagente avisa del límite a los 30 s y su transcript termina ahí, sin «limit has reset».
+  agente('agent-e1', 'impl:qcc-ejecutor', 'SUBTAREA 1/1: x', 20, [turno('e1', 30, [texto("You've hit your limit · resets 3pm")])])
+  assert.deepEqual(metricasDelFlujo(raiz, en(0), opciones(5100)).tiempos, { fases: { 0: 35, 5: 2000, 7: 0 }, espera: 3015, activo: 2035 })
+})
+
+test('costos: un mensaje del humano o un resultado de herramienta que citan el aviso del límite no abren espera', () => {
+  const { raiz, en, turno, usuario, escribir, opciones } = transcripts('repo-metricas-limite-cita')
+  const bash = (id, comando) => ({ type: 'tool_use', id, name: 'Bash', input: { command: comando } })
+  const ESTADO = 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/estado.mjs'
+  escribir([
+    usuario(0, '<command-name>/impl</command-name>'),
+    usuario(1, "Pedido: restar la espera de «You've hit your 5-hour limit»"),
+    turno('o1', 5, [bash('b0', `${ESTADO} --paso 0`)]),
+    turno('o2', 6, [{ type: 'tool_use', id: 'g1', name: 'Grep', input: { pattern: 'hit your' } }]),
+    usuario(7, [{ type: 'tool_result', tool_use_id: 'g1', content: "LIMITES.md: Cuando «You've hit your … limit» avisa" }]),
+    turno('o3', 500, [bash('b7', `${ESTADO} --cambios abc --paso 7`)]),
+  ])
+  assert.deepEqual(metricasDelFlujo(raiz, en(0), opciones(600)).tiempos, { fases: { 0: 500, 7: 0 }, espera: 0, activo: 500 })
+})
+
 test('costos: todo revisor es la revisión final y su veredicto entra en final', () => {
   const { raiz, en, turno, texto, usuario, escribir, agente, opciones } = transcripts('repo-metricas-final')
   escribir([usuario(0, '<command-name>/impl</command-name>'), turno('o1', 60, [texto('x')])])
@@ -571,11 +641,12 @@ test('límites: gastoDeLimites resta, suma los tramos, detecta el reinicio y dic
   const a = lectura('2026-11-10T12:00:00.000Z', 40, 10)
   const b = lectura('2026-11-10T12:30:00.000Z', 47.5, 11)
   assert.deepEqual(gastoDeLimites([{ inicio: a, fin: b }]), { five_hour: { gasto: 7.5 }, seven_day: { gasto: 1 } })
-  // Reinicio: cambió la hora de reinicio, bajó el %, o la lectura final es posterior al reinicio previsto. Nunca un negativo.
-  const tras = lectura('2026-11-10T16:00:00.000Z', 5, 12, '2026-11-10T20:00:00.000Z')
-  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: tras }]), { five_hour: { gasto: null, motivo: 'reinicio' }, seven_day: { gasto: 2 } })
-  assert.equal(gastoDeLimites([{ inicio: a, fin: lectura('2026-11-10T13:00:00.000Z', 30, 10) }]).five_hour.motivo, 'reinicio')
-  assert.equal(gastoDeLimites([{ inicio: a, fin: lectura('2026-11-10T15:00:00.000Z', 60, 10) }]).five_hour.motivo, 'reinicio')
+  // Reinicio: cambió la hora de reinicio, bajó el %, o la lectura final es posterior al reinicio previsto. Nunca un negativo:
+  // da la cota mínima (el % de la lectura final) y el gasto queda incompleto.
+  const tras = lectura('2026-11-10T16:00:00.000Z', 10, 12, '2026-11-10T20:00:00.000Z')
+  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: tras }]), { five_hour: { gasto: 10, incompleto: true }, seven_day: { gasto: 2 } })
+  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: lectura('2026-11-10T13:00:00.000Z', 30, 10) }]).five_hour, { gasto: 30, incompleto: true })
+  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: lectura('2026-11-10T15:00:00.000Z', 60, 10) }]).five_hour, { gasto: 60, incompleto: true })
   // Sin lectura (el panel no corrió, o una ventana faltó): s/d, nunca cero.
   assert.deepEqual(gastoDeLimites([{ inicio: { t: a.t, sinDato: 'sin snapshot del panel' }, fin: b }]), { five_hour: { gasto: null, motivo: 'sin dato' }, seven_day: { gasto: null, motivo: 'sin dato' } })
   assert.deepEqual(gastoDeLimites([{ inicio: a }]).five_hour, { gasto: null, motivo: 'sin dato' })
@@ -585,9 +656,11 @@ test('límites: gastoDeLimites resta, suma los tramos, detecta el reinicio y dic
   const c = lectura('2026-11-10T18:00:00.000Z', 3, 20, '2026-11-10T22:00:00.000Z')
   const d = lectura('2026-11-10T18:40:00.000Z', 10, 22, '2026-11-10T22:00:00.000Z')
   assert.deepEqual(gastoDeLimites([{ inicio: a, fin: b }, { inicio: c, fin: d }]), { five_hour: { gasto: 14.5 }, seven_day: { gasto: 3 } })
-  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: tras }, { inicio: c, fin: d }]).five_hour, { gasto: 7, incompleto: true })
-  // El resumen.
+  assert.deepEqual(gastoDeLimites([{ inicio: a, fin: tras }, { inicio: c, fin: d }]).five_hour, { gasto: 17, incompleto: true })
+  assert.deepEqual(gastoDeLimites([{ inicio: { t: a.t, sinDato: 'x' }, fin: b }, { inicio: c, fin: d }]).five_hour, { gasto: 7, incompleto: true })
+  // El resumen: el reinicio sale como cota (`≥+`); las filas viejas con `motivo: 'reinicio'` siguen diciendo `reinicio`.
   assert.equal(resumenDeLimites({ five_hour: { gasto: 7.5 }, seven_day: { gasto: 1 } }), '5h +7,5 % · sem +1 %')
+  assert.equal(resumenDeLimites(gastoDeLimites([{ inicio: a, fin: tras }])), '5h ≥+10 % · sem +2 %')
   assert.equal(resumenDeLimites({ five_hour: { gasto: 7, incompleto: true }, seven_day: { gasto: null, motivo: 'reinicio' } }), '5h ≥+7 % · sem reinicio')
   assert.equal(resumenDeLimites(undefined), '5h s/d · sem s/d')
 })
@@ -615,21 +688,22 @@ test('límites por fase: cada tramo entre lecturas va a la fase del paso de la p
   for (const k of ['five_hour', 'seven_day']) assert.equal(Math.round(fases.reduce((s, f) => s + f[k].gasto, 0) * 10) / 10, total[k].gasto)
   assert.equal(resumenDeFases(fases), 'exploración: 5h +2,5 % · sem +0,2 % | plan: 5h +2,5 % · sem +0,3 % | aprobación: 5h +0,5 % · sem +0 % | ejecución: 5h +6,5 % · sem +1,4 % | revisión: 5h +2,5 % · sem +0,2 %')
 
-  // Una lectura sin dato (el paso 4) deja s/d las dos fases que toca, sin repartir la diferencia; las demás siguen.
+  // Una lectura sin dato (el paso 4) une las dos fases que toca en una, sin repartir la diferencia; las demás siguen.
   const b = tramo(l(0, 10, 1), l(2, 12, 1), l(4, 'sinDato'), l(5, 16, 2), l(6, 20, 3))
   const sinDato = fasesDeLimites([b])
-  assert.deepEqual(fase(sinDato, 'plan').five_hour, { gasto: null, motivo: 'sin dato' })
-  assert.deepEqual(fase(sinDato, 'aprobación').seven_day, { gasto: null, motivo: 'sin dato' })
+  assert.deepEqual(sinDato.map((f) => f.fase), ['exploración', 'plan+aprobación', 'ejecución', 'revisión'])
+  assert.deepEqual(fase(sinDato, 'plan+aprobación'), { fase: 'plan+aprobación', five_hour: { gasto: 4 }, seven_day: { gasto: 1 } })
   assert.deepEqual(fase(sinDato, 'exploración').five_hour, { gasto: 2 })
   assert.deepEqual(fase(sinDato, 'ejecución').five_hour, { gasto: 4 })
   // Una ventana que falta solo en una lectura: s/d solo en esa ventana.
   assert.deepEqual(fase(fasesDeLimites([tramo(l(0, 10, 1), l(5, 12, null), l(6, 13, 2))]), 'exploración'), { fase: 'exploración', five_hour: { gasto: 2 }, seven_day: { gasto: null, motivo: 'sin dato' } })
 
-  // Reinicio entre dos lecturas (bajó el % y cambió la hora de reinicio): esa fase de esa ventana queda «reinicio», sin negativos.
+  // Reinicio entre dos lecturas (bajó el % y cambió la hora de reinicio): esa fase de esa ventana da la cota mínima (el % de la
+  // lectura final, `incompleto`), sin negativos.
   const c = tramo(l(0, 80, 1), l(5, 90, 2), l(6, 4, 3, '2026-11-10T20:00:00.000Z'))
   c.fin = l(7, 9, 3.5, '2026-11-10T20:00:00.000Z')
   const reinicio = fasesDeLimites([c])
-  assert.deepEqual(fase(reinicio, 'ejecución'), { fase: 'ejecución', five_hour: { gasto: null, motivo: 'reinicio' }, seven_day: { gasto: 1 } })
+  assert.deepEqual(fase(reinicio, 'ejecución'), { fase: 'ejecución', five_hour: { gasto: 4, incompleto: true }, seven_day: { gasto: 1 } })
   assert.deepEqual(fase(reinicio, 'revisión').five_hour, { gasto: 5 })
   assert.deepEqual(fase(reinicio, 'exploración').five_hour, { gasto: 10 })
 
@@ -657,6 +731,36 @@ test('límites por fase: cada tramo entre lecturas va a la fase del paso de la p
   assert.equal(fasesDeLimites([{ inicio: a.inicio, fases: [{ ...a.inicio, paso: null }], fin: a.fin }]), null)
   assert.equal(fasesDeLimites(undefined), null)
   assert.deepEqual(Object.values(FASES).filter((f, i, todas) => todas.indexOf(f) === i), ['exploración', 'plan', 'aprobación', 'ejecución', 'revisión', 'cierre'])
+})
+
+test('límites por fase: fasesDeLimites une una lectura vieja con la siguiente', () => {
+  const R5 = '2026-11-10T15:00:00.000Z'
+  const R7 = '2026-11-14T00:00:00.000Z'
+  let minuto = 0
+  const l = (paso, h, s) => ({ paso, t: new Date(Date.parse('2026-11-10T12:00:00.000Z') + 60_000 * minuto++).toISOString(), ...(h === 'sinDato' ? { sinDato: 'snapshot viejo' } : { five_hour: { pct: h, resetsAt: R5 }, seven_day: { pct: s, resetsAt: R7 } }) })
+  const total = (fases, k) => Math.round(fases.reduce((suma, f) => suma + f[k].gasto, 0) * 10) / 10
+  // Dos lecturas seguidas sin dato (pasos 4 y 5): la fase unida abarca de la lectura del 2 a la del 6.
+  const a = { fases: [l(0, 10, 1), l(2, 12, 1.5), l(4, 'sinDato'), l(5, 'sinDato'), l(6, 20, 3)] }
+  a.inicio = a.fases[0]
+  a.fin = l(7, 24, 3.5)
+  const fases = fasesDeLimites([a])
+  assert.deepEqual(fases.map((f) => f.fase), ['exploración', 'plan+aprobación+ejecución', 'revisión'])
+  assert.deepEqual(fases[1], { fase: 'plan+aprobación+ejecución', five_hour: { gasto: 8 }, seven_day: { gasto: 1.5 } })
+  // Invariante de LIMITES.md: la suma de las fases es el gasto total.
+  for (const k of ['five_hour', 'seven_day']) assert.equal(total(fases, k), gastoDeLimites([a])[k].gasto)
+  assert.equal(resumenDeFases(fases), 'exploración: 5h +2 % · sem +0,5 % | plan+aprobación+ejecución: 5h +8 % · sem +1,5 % | revisión: 5h +4 % · sem +0,5 %')
+  // La fase unida (ejecución+revisión) y la fase suelta del mismo paso (ejecución, tras volver al 5) quedan aparte y suman el total.
+  const b = { fases: [l(0, 10, 1), l(5, 12, 1), l(6, 'sinDato'), l(5, 20, 2)] }
+  b.inicio = b.fases[0]
+  b.fin = l(7, 22, 2)
+  const unida = fasesDeLimites([b])
+  assert.deepEqual(unida.map((f) => f.fase), ['exploración', 'ejecución', 'ejecución+revisión'])
+  assert.equal(total(unida, 'five_hour'), gastoDeLimites([b]).five_hour.gasto)
+  // La primera lectura sin dato no tiene con quién unirse: queda sola, s/d.
+  const c = { fases: [l(5, 'sinDato'), l(6, 30, 5)] }
+  c.inicio = c.fases[0]
+  c.fin = l(6, 33, 5.5)
+  assert.deepEqual(fasesDeLimites([c]).find((f) => f.fase === 'ejecución').five_hour, { gasto: null, motivo: 'sin dato' })
 })
 
 test('límites: el preflight, cada --paso, --reanudar y el cierre anotan el % gastado en la fila del flujo', () => {
@@ -697,15 +801,15 @@ test('límites: el preflight, cada --paso, --reanudar y el cierre anotan el % ga
     snapshot(10, 22, R5b)
     const cierre = estadoEn(raiz, ['--cambios', '--global', '--paso', '7', '--resultado', 'COMPLETO'], b).salida
     assert.match(cierre, /^LÍMITES: 5h \+12 % · sem \+4 %$/m)
-    // Ejecución: 44 → (sin dato) no cuenta y 45 → 45 sí, así que ≥+0; la revisión empieza en la lectura sin dato: s/d.
-    assert.match(cierre, /^LÍMITES POR FASE: exploración: 5h \+2 % · sem \+1 % \| plan: 5h \+2 % · sem \+1 % \| aprobación: 5h \+7 % · sem \+2 % \| ejecución: 5h ≥\+0 % · sem ≥\+0 % \| revisión: 5h s\/d · sem s\/d$/m)
+    // La lectura sin dato (paso 6) une ejecución y revisión: 44 → 45 (+1); la ejecución que sigue (45 → 45) suma +0.
+    assert.match(cierre, /^LÍMITES POR FASE: exploración: 5h \+2 % · sem \+1 % \| plan: 5h \+2 % · sem \+1 % \| aprobación: 5h \+7 % · sem \+2 % \| ejecución: 5h \+0 % · sem \+0 % \| ejecución\+revisión: 5h \+1 % · sem \+0 %$/m)
     // El 7 no abre fase: lo cierra el fin del tramo.
     assert.deepEqual(estadoJson().limites[1].fases.map((l) => l.paso), [4])
     const fila = fs.readFileSync(path.join(path.dirname(registroDe(raiz)), 'flujos.jsonl'), 'utf8').trimEnd().split('\n').map((l) => JSON.parse(l)).filter((f) => f.raiz === raiz).at(-1)
     assert.deepEqual({ five_hour: fila.limites.five_hour, seven_day: fila.limites.seven_day }, { five_hour: { gasto: 12 }, seven_day: { gasto: 4 } })
     assert.deepEqual(fila.limites.tramos.map((t) => [t.inicio.five_hour.pct, t.fin.five_hour.pct, t.fin.five_hour.resetsAt]), [[40, 45, R5], [3, 10, R5b]])
     assert.deepEqual(fila.limites.fases.find((f) => f.fase === 'aprobación'), { fase: 'aprobación', five_hour: { gasto: 7 }, seven_day: { gasto: 2 } })
-    assert.deepEqual(fila.limites.fases.map((f) => f.fase), ['exploración', 'plan', 'aprobación', 'ejecución', 'revisión'])
+    assert.deepEqual(fila.limites.fases.map((f) => f.fase), ['exploración', 'plan', 'aprobación', 'ejecución', 'ejecución+revisión'])
   } finally {
     fs.rmSync(process.env.QCC_LIMITES, { force: true })
   }

@@ -63,7 +63,7 @@ Se descartaron: un script de status line (la de la cuenta ya es un script propio
 3. **`--reanudar`** desde otra sesión: abre un tramo nuevo con su propia lectura inicial, anotada como lectura por fase del paso que dice `SIGUE:`. Lo gastado entre sesiones (fuera del flujo) no cuenta. En la misma sesión sigue con el tramo que tenía.
 4. **Cierre** (`--cambios … --paso 7` y `--cancelar`): toma la lectura final, suma los tramos, imprime `LÍMITES: 5h +7 % · sem +1 %` y `LÍMITES POR FASE: …`, y los anota en la fila del flujo.
 
-Una lectura es **«sin dato»** si no hay snapshot, si está roto o si tiene más de 10 minutos (el panel no corrió, o la sesión no tuvo respuesta todavía). Nunca se rellena con ceros.
+Una lectura es **«sin dato»** si no hay snapshot, si está roto o si tiene más de 10 minutos (el panel no corrió, o la sesión no tuvo respuesta todavía). Nunca se rellena con ceros. En el desglose por fase, una lectura sin dato une su fase con la siguiente (ver «Por fase»).
 
 Límites conocidos: cada lectura es el último snapshot, que puede no reflejar todavía hasta casi un punto ya gastado (ver «Por fase»), y el mensaje final del cierre no entra. El % llega con a lo sumo un decimal (a veces entero): un flujo chico puede salir `+0 %` o `+1 %`.
 
@@ -86,9 +86,9 @@ Lo que pasa del primer `--paso 7` en adelante es la lectura final del tramo, no 
 
 Casos, sin inventar números:
 
-- **Lectura sin dato** (sin snapshot, roto o de más de 10 minutos) **en un cambio de paso:** las dos fases que toca (la que termina ahí y la que empieza) quedan `s/d` en ese tramo. La diferencia entre las dos lecturas válidas de alrededor no se reparte ni se le pone a una sola con `≥`: abarca dos fases y no se sabe cuánto es de cada una, así que no sería una cota inferior de ninguna. Si la fase tiene otros pedazos válidos (otro lote, otro tramo), muestra su suma con `≥`.
+- **Lectura sin dato** (sin snapshot, roto o de más de 10 minutos) **en un cambio de paso:** las dos fases que toca (la que termina ahí y la que empieza) se unen en una sola, que se llama con las dos (`plan+aprobación`; con varias lecturas sin dato seguidas, `plan+aprobación+ejecución`). Su gasto es la diferencia entre las dos lecturas válidas de alrededor, sin repartirla: abarca varias fases y no se sabe cuánto es de cada una. La fase unida va en el orden de la primera de sus fases, y la suma de todas sigue siendo el total. Si la lectura sin dato es la primera del tramo, no tiene con quién unirse y su fase queda `s/d`.
 - **Una ventana que falta** en una lectura: `s/d` solo en esa ventana.
-- **Reinicio entre dos lecturas** (bajó el %, la lectura es posterior al `resetsAt` anterior, o el `resetsAt` cambió más de un minuto, como en el total): esa fase de esa ventana queda `reinicio`; las demás fases conservan su número. Por eso, con un reinicio en medio, el desglose puede decir más que el total (que queda `reinicio` en ese tramo).
+- **Reinicio entre dos lecturas** (bajó el %, la lectura es posterior al `resetsAt` anterior, o el `resetsAt` cambió más de un minuto, como en el total): esa fase de esa ventana da la **cota mínima**, el % de la lectura final (tras el reinicio se gastó al menos eso), y sale con `≥+`. Las demás fases conservan su número.
 - **Reanudar en otra cuenta:** como en el total, cada tramo resta lecturas de su propia cuenta y las fases suman % de ventanas distintas.
 - **Flujos empezados antes de la 0.5.1** (tramos sin `fases`): `LÍMITES POR FASE: s/d (el flujo empezó sin lecturas por fase)` y la fila no lleva `fases`.
 
@@ -99,17 +99,23 @@ Qué no puede decir el desglose:
 1. **Retraso de hasta un punto, no de una fase.** El snapshot no se mueve solo con el hilo principal: según los tipos del motor, `session.measure` también llega cuando una ventana sube un punto entero, con los límites de la última respuesta de la API. Comprobado en esta máquina el 2026-11-10: con el hilo principal parado (su transcript sin cambios desde las 15:08:45 UTC) mientras un solo subagente trabajaba, `qcc-limites.json` pasó de 30 a 31 a las 15:11:16 y llegó a 36 a las 15:17:35, sin otra sesión activa de esa cuenta en esta máquina. O sea que lo gastado por los subagentes sí llega al snapshot mientras corren, y cada fase de subagentes queda en su fase. Lo que no está escrito es si la API cuenta el % de los subagentes igual que el del hilo principal; eso no se pudo comprobar aparte. Lo que sí se corre a la fase siguiente es lo que todavía no sumó un punto entero en el momento de la lectura: hasta casi 1 punto por ventana y por límite de fase.
 2. **Resolución.** El % llega con a lo sumo un decimal, y en la máquina de arriba llegó entero (30, 31… 36); durante el flujo el snapshot cambia de a un punto entero. Una fase corta (`aprobación`, a veces `exploración` en un pedido chico) puede salir `+0 %` o llevarse el punto que otra empezó. Mira promedios de varios flujos, no una fase suelta.
 3. **Por rol, no.** La fuente da un solo % por ventana para toda la cuenta: la fase `ejecución` incluye al orquestador y a los ejecutores juntos, y el orquestador está en todas las fases. Para el reparto por rol siguen los tokens por rol de la fila (`costo.roles.<rol>.tokens`, sección 4).
-4. **Espera larga en la aprobación.** Durante la pregunta «Plan» nadie gasta, el snapshot no se reescribe y puede pasar de 10 minutos. Si el `--aprobado` lo lee así, sale sin dato y `plan` y `aprobación` quedan `s/d` en ese flujo (el total no, porque la lectura final se toma después). No se toma un snapshot viejo como válido porque no se puede distinguir de un panel que dejó de correr.
+4. **Espera larga en la aprobación.** Durante la pregunta «Plan» nadie gasta, el snapshot no se reescribe y puede pasar de 10 minutos. Si el `--aprobado` lo lee así, sale sin dato y `plan` y `aprobación` salen unidas como `plan+aprobación` en ese flujo (el total no se ve afectado, porque la lectura final se toma después). No se toma un snapshot viejo como válido porque no se puede distinguir de un panel que dejó de correr.
+
+### La espera por el límite de 5 h no es tiempo activo
+
+Cuando la ventana de 5 h se agota, Claude Code avisa en el transcript («You've hit your … limit») y la sesión queda parada hasta el reinicio. Ese tramo no es trabajo: `costos.mjs` lo resta del tiempo activo y de la fase en que cae, y lo suma a `espera`. Es una espera del hilo principal o de un subagente: del aviso (una entrada que no es del usuario: un mensaje del usuario o un resultado de herramienta que lo citen no abren nada) a la primera entrada posterior con «limit has reset» o, si no llega, al siguiente mensaje del usuario del hilo principal. Si un subagente muere en el límite sin reinicio, cierra en ese mensaje del usuario (o en su última entrada si no hay ninguno); solo el hilo principal sin cierre llega hasta el final del tramo. Se une con las otras esperas (`AskUserQuestion` y turno cerrado con texto) sin contar dos veces lo que se solapa: el aviso suele cerrar un turno con texto, que ya era una espera.
+
+**Riesgo, formato no confirmado:** el texto real del aviso no se verificó contra un transcript. Se asumió que una entrada cuyo texto contiene «You've hit your» y «limit» abre la espera, y que «limit has reset» la cierra. Si el formato real es otro, la espera no se resta (el tiempo queda como activo) hasta ajustar `esperasDeLimite` en `costos.mjs` y su test.
 
 ### La fila de `flujos.jsonl`
 
 ```json
 "limites": {
   "five_hour": { "gasto": 12 },
-  "seven_day": { "gasto": null, "motivo": "reinicio" },
+  "seven_day": { "gasto": 4, "incompleto": true },
   "fases": [
-    { "fase": "exploración", "five_hour": { "gasto": 2 }, "seven_day": { "gasto": null, "motivo": "reinicio" } },
-    { "fase": "plan", "five_hour": { "gasto": null, "motivo": "sin dato" }, "seven_day": { "gasto": null, "motivo": "sin dato" } },
+    { "fase": "exploración", "five_hour": { "gasto": 2 }, "seven_day": { "gasto": 4, "incompleto": true } },
+    { "fase": "plan+aprobación", "five_hour": { "gasto": 3 }, "seven_day": { "gasto": 0.5 } },
     { "fase": "ejecución", "five_hour": { "gasto": 7, "incompleto": true }, "seven_day": { "gasto": 1 } }
   ],
   "tramos": [
@@ -128,12 +134,12 @@ Qué no puede decir el desglose:
 (Las cifras de este bloque son de ejemplo, no de un flujo real, y no cuadran entre sí.)
 
 - `gasto`: la suma, por tramo, de `fin.pct − inicio.pct`, redondeada a 0,1.
-- `incompleto: true`: a algún tramo le faltó dato o se reinició, pero otro sí sirvió; el gasto es una cota inferior.
-- `gasto: null` con `motivo`: `sin dato` (ninguna lectura sirvió) o `reinicio` (la ventana se reinició en medio de todos los tramos).
-- `fases`: el gasto de cada fase, en el orden de `FASES`, con las mismas marcas (`gasto`, `incompleto`, `motivo`); solo las fases que tuvieron alguna lectura. Falta en los flujos empezados antes de la 0.5.1.
+- `incompleto: true`: a algún tramo le faltó dato o se reinició (de un reinicio entra la cota mínima, el % de su lectura final); el gasto es una cota inferior. Sale `≥+`.
+- `gasto: null` con `motivo: "sin dato"`: ninguna lectura sirvió. Un reinicio ya no da `null`: da la cota mínima con `incompleto`. Las filas viejas con `motivo: "reinicio"` se siguen leyendo y `resumenDeLimites` las muestra como `reinicio`.
+- `fases`: el gasto de cada fase, en el orden de `FASES` (una fase unida, `plan+aprobación`, va tras la primera de sus fases), con las mismas marcas (`gasto`, `incompleto`, `motivo`); solo las fases que tuvieron alguna lectura. Falta en los flujos empezados antes de la 0.5.1.
 - `tramos`: las lecturas crudas (hora, cuenta, antigüedad en segundos, `pct` y `resetsAt` de cada ventana), o `sinDato: <motivo>` en vez de las ventanas; `tramos[].fases`, las lecturas por fase con su `paso` (la primera es la `inicio`).
 
-**Reinicio de ventana:** un tramo no vale para una ventana si el % bajó, si la lectura final es posterior al `resetsAt` de la inicial o si el `resetsAt` cambió más de un minuto. En ese caso no se inventa un número negativo: se anota `reinicio`.
+**Reinicio de ventana:** la resta de un tramo no vale para una ventana si el % bajó, si la lectura final es posterior al `resetsAt` de la inicial o si el `resetsAt` cambió más de un minuto. En ese caso no se inventa un número negativo: se anota la cota mínima, el % de la lectura final (tras el reinicio se gastó al menos eso), con `incompleto: true`.
 
 Un flujo reanudado en otra cuenta suma tramos de cuentas distintas (cada `tramo` dice su `cuenta`): el total es la suma de % de ventanas distintas.
 
@@ -143,7 +149,7 @@ Un flujo reanudado en otra cuenta suma tramos de cuentas distintas (cada `tramo`
 node qcc-implementador/herramientas/costos.mjs --ultimos 10
 ```
 
-Cada flujo trae `5h +X % · sem +Y %`; `≥+X %` si el gasto quedó incompleto, `reinicio` si la ventana se reinició y `s/d` sin dato (también en las filas de antes de la 0.5.0). Debajo, los flujos con desglose traen una línea `por fase:` con las mismas marcas; las filas sin desglose (las de antes de la 0.5.1) no imprimen nada más. El `PROMEDIO` final promedia cada ventana solo con los flujos de gasto completo y dice cuántos son: `5h +6,5 % (4)`.
+Cada flujo trae `5h +X % · sem +Y %`; `≥+X %` si el gasto quedó incompleto (faltó dato o la ventana se reinició: es la cota mínima), `s/d` sin dato (también en las filas de antes de la 0.5.0) y `reinicio` solo en las filas viejas que lo anotaron así. Debajo, los flujos con desglose traen una línea `por fase:` con las mismas marcas; las filas sin desglose (las de antes de la 0.5.1) no imprimen nada más. El `PROMEDIO` final promedia cada ventana solo con los flujos de gasto completo y dice cuántos son: `5h +6,5 % (4)`.
 
 Ejemplo de salida (cifras inventadas, solo para mostrar el formato):
 
@@ -152,7 +158,7 @@ FLUJOS (últimos 2 de 188):
   2026-11-12 10:05 · mi-repo · 31,0 min · 18,2M tokens (90 % caché) · … · 5h +11 % · sem +2 % · CRÍTICO (#1) · 3 subtarea(s) · final APROBADO · COMPLETO
     por fase: exploración: 5h +1 % · sem +0 % | plan: 5h +2 % · sem +0 % | aprobación: 5h +0 % · sem +0 % | ejecución: 5h +5 % · sem +1 % | revisión: 5h +3 % · sem +1 %
   2026-11-12 14:40 · mi-repo · 12,0 min · 6,1M tokens (88 % caché) · … · 5h +4 % · sem +1 % · sin criterios · 1 subtarea(s) · final APROBADO · COMPLETO
-    por fase: exploración: 5h +1 % · sem +0 % | plan: 5h s/d · sem s/d | aprobación: 5h s/d · sem s/d | ejecución: 5h +1 % · sem +0 % | revisión: 5h +1 % · sem +0 %
+    por fase: exploración: 5h +1 % · sem +0 % | plan+aprobación: 5h +1 % · sem +0 % | ejecución: 5h +1 % · sem +0 % | revisión: 5h +1 % · sem +0 %
 PROMEDIO: 21,5 min · orquestador 14,0 pedidos · 5h +7,5 % (2) · sem +1,5 % (2)
 ```
 

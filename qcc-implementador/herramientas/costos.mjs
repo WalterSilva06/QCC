@@ -59,35 +59,38 @@ export function leerLimites(archivo = rutaLimites(), ahora = Date.now()) {
   return lectura
 }
 
-/** Lo gastado de la ventana `k` entre dos lecturas: el número, `'reinicio'` si se reinició en medio o `'sin dato'`. */
+/**
+ * Lo gastado de la ventana `k` entre dos lecturas: `{ gasto }`; con reinicio en medio, la cota mínima `{ gasto: <% de fin>, cota: true }`
+ * (tras el reinicio se gastó al menos lo que marca la lectura final); `null` si falta alguna lectura.
+ */
 function tramoDeVentana(inicio, fin, k) {
   const a = inicio?.[k]
   const b = fin?.[k]
-  if (!a || !b) return 'sin dato'
+  if (!a || !b) return null
   const ra = Date.parse(a.resetsAt)
   const rb = Date.parse(b.resetsAt)
   // Se reinició si bajó el %, si la lectura final es posterior al reinicio previsto o si cambió la hora de reinicio.
-  if (b.pct < a.pct || (Number.isFinite(ra) && Date.parse(fin.t) >= ra) || (Number.isFinite(ra) && Number.isFinite(rb) && Math.abs(ra - rb) > 60_000)) return 'reinicio'
-  return b.pct - a.pct
+  if (b.pct < a.pct || (Number.isFinite(ra) && Date.parse(fin.t) >= ra) || (Number.isFinite(ra) && Number.isFinite(rb) && Math.abs(ra - rb) > 60_000)) return { gasto: b.pct, cota: true }
+  return { gasto: b.pct - a.pct }
 }
 
 /**
  * El gasto de cada ventana en los tramos del flujo (`[{ inicio, fin }]`, uno por sesión): `{ five_hour: { gasto, incompleto? }, seven_day: … }`.
- * `gasto` suma los tramos válidos (a 0,1) y lleva `incompleto: true` si a alguno le faltó dato o se reinició; sin ninguno
- * válido, `{ gasto: null, motivo: 'reinicio' | 'sin dato' }`.
+ * `gasto` suma los tramos (a 0,1) y lleva `incompleto: true` si a alguno le faltó dato o se reinició (de un reinicio entra la cota
+ * mínima: el % de su lectura final); sin ningún tramo con dato, `{ gasto: null, motivo: 'sin dato' }`.
  */
 export function gastoDeLimites(tramos) {
   const gasto = {}
   for (const k of VENTANAS) {
     const partes = (Array.isArray(tramos) ? tramos : []).map((t) => tramoDeVentana(t?.inicio, t?.fin, k))
-    const validos = partes.filter((p) => typeof p === 'number')
-    if (!validos.length) gasto[k] = { gasto: null, motivo: partes.includes('reinicio') ? 'reinicio' : 'sin dato' }
-    else gasto[k] = { gasto: Math.round(validos.reduce((s, n) => s + n, 0) * 10) / 10, ...(validos.length < partes.length ? { incompleto: true } : {}) }
+    const validos = partes.filter(Boolean)
+    if (!validos.length) gasto[k] = { gasto: null, motivo: 'sin dato' }
+    else gasto[k] = { gasto: Math.round(validos.reduce((s, p) => s + p.gasto, 0) * 10) / 10, ...(validos.length < partes.length || validos.some((p) => p.cota) ? { incompleto: true } : {}) }
   }
   return gasto
 }
 
-/** «5h +7 % · sem +1,5 %»: `≥+` si faltó algún tramo, `reinicio` si la ventana se reinició en medio y `s/d` sin dato (también en filas viejas). */
+/** «5h +7 % · sem +1,5 %»: `≥+` si el gasto es una cota mínima (faltó algún tramo o hubo reinicio), `s/d` sin dato; las filas viejas con el motivo `reinicio` siguen diciendo `reinicio`. */
 export function resumenDeLimites(limites) {
   return [['5h', 'five_hour'], ['sem', 'seven_day']].map(([nombre, k]) => {
     const v = limites?.[k]
@@ -105,17 +108,34 @@ export const FASES = { 0: 'exploración', 1: 'exploración', 2: 'plan', 3: 'plan
 /**
  * El gasto de cada fase en los tramos del flujo, de las lecturas por fase de cada tramo (`fases: [{ paso, ...lectura }]`,
  * la primera igual a su `inicio`): lo de entre una lectura y la siguiente (o el `fin` del tramo) es de la fase de la primera.
- * Los pasos repetidos y los tramos se suman con `gastoDeLimites` (una lectura sin dato deja `s/d` las dos fases que toca; un
- * reinicio, `reinicio` la suya). `[{ fase, five_hour, seven_day }]` en el orden de FASES; `null` si algún tramo no trae lecturas por fase.
+ * Los pasos repetidos y los tramos se suman con `gastoDeLimites`. Una lectura `sinDato` une el tramo que termina en ella con el
+ * que empieza (y con los siguientes mientras sigan sin dato): la fase unida se llama `plan+aprobación`, y su gasto es la resta
+ * entre las dos lecturas válidas de alrededor, sin repartirla. Un reinicio da la cota mínima (`incompleto`). `[{ fase, five_hour,
+ * seven_day }]` en el orden de FASES (una unida, tras la primera de sus fases); `null` si algún tramo no trae lecturas por fase.
  */
 export function fasesDeLimites(tramos) {
-  const porFase = new Map(Object.values(FASES).map((f) => [f, []]))
+  const orden = [...new Set(Object.values(FASES))]
+  const porFase = new Map()
   for (const t of Array.isArray(tramos) ? tramos : []) {
     const lecturas = (Array.isArray(t?.fases) ? t.fases : []).filter((l) => FASES[l?.paso])
     if (!lecturas.length) return null
-    lecturas.forEach((l, i) => porFase.get(FASES[l.paso]).push({ inicio: l, fin: lecturas[i + 1] ?? t.fin }))
+    const trozos = []
+    lecturas.forEach((l, i) => {
+      const previo = trozos.at(-1)
+      const fase = FASES[l.paso]
+      if (previo && l.sinDato) {
+        previo.fin = lecturas[i + 1] ?? t.fin
+        if (!previo.fases.includes(fase)) previo.fases.push(fase)
+      } else trozos.push({ fases: [fase], inicio: l, fin: lecturas[i + 1] ?? t.fin })
+    })
+    for (const { fases, inicio, fin } of trozos) {
+      const nombre = fases.join('+')
+      if (!porFase.has(nombre)) porFase.set(nombre, [])
+      porFase.get(nombre).push({ inicio, fin })
+    }
   }
-  const fases = [...porFase].filter(([, partes]) => partes.length).map(([fase, partes]) => ({ fase, ...gastoDeLimites(partes) }))
+  const primera = (nombre) => orden.indexOf(nombre.split('+')[0])
+  const fases = [...porFase].sort(([a], [b]) => primera(a) - primera(b) || a.length - b.length).map(([fase, partes]) => ({ fase, ...gastoDeLimites(partes) }))
   return fases.length ? fases : null
 }
 
@@ -281,7 +301,7 @@ function tramoReanudado(s, carpeta, base) {
  * `{ sesion, ultima, hasta, todas, principal, agentes, tramos }`, con los agentes en orden de llegada y cada uno como
  * `{ rol, tipo, prompt, filas, inicio }`. Con `sesiones` (las de `estado.sesiones`, la del preflight primero), cada sesión
  * reanudada es un tramo más, de su comienzo al de la siguiente: así se suman todas sin contar el hueco entre ellas.
- * `tramos` trae `{ inicio, principal }` de cada uno; `sesion` es la primera (de ella sale el pedido) y `ultima`, el
+ * `tramos` trae `{ inicio, principal, agentes }` de cada uno; `sesion` es la primera (de ella sale el pedido) y `ultima`, el
  * transcript de la última. null si no se encuentra ninguna sesión.
  */
 function leerFlujo(raiz, desde, proyectos, hasta, base, sesiones = []) {
@@ -294,7 +314,7 @@ function leerFlujo(raiz, desde, proyectos, hasta, base, sesiones = []) {
   const comienzos = [...(primera ? [primera] : []), ...reanudadas].sort((a, b) => Date.parse(a.inicio) - Date.parse(b.inicio))
   if (!comienzos.length) return null
   const lecturas = comienzos.map((s, i) => leerTramo(s, comienzos[i + 1]?.inicio ?? hasta))
-  if (lecturas.length === 1) return { ...lecturas[0], ultima: lecturas[0].sesion.archivo, tramos: [{ inicio: lecturas[0].sesion.inicio, principal: lecturas[0].principal }] }
+  if (lecturas.length === 1) return { ...lecturas[0], ultima: lecturas[0].sesion.archivo, tramos: [{ inicio: lecturas[0].sesion.inicio, principal: lecturas[0].principal, agentes: lecturas[0].agentes }] }
   return {
     sesion: lecturas[0].sesion,
     ultima: lecturas.at(-1).sesion.archivo,
@@ -302,7 +322,7 @@ function leerFlujo(raiz, desde, proyectos, hasta, base, sesiones = []) {
     todas: lecturas[0].todas,
     principal: lecturas.flatMap((l) => l.principal),
     agentes: lecturas.flatMap((l) => l.agentes).sort((a, b) => Date.parse(a.inicio) - Date.parse(b.inicio)),
-    tramos: lecturas.map((l) => ({ inicio: l.sesion.inicio, principal: l.principal })),
+    tramos: lecturas.map((l) => ({ inicio: l.sesion.inicio, principal: l.principal, agentes: l.agentes })),
   }
 }
 
@@ -425,11 +445,38 @@ function lanzamientosDe(principal) {
 const esHumano = (f) => f.type === 'user' && !f.isMeta && !bloquesDe(f, 'tool_result').length && !/^<(?:bash-stdout|bash-stderr|local-command-caveat|task-notification|system-reminder)>/.test(textoDe(f.message?.content).trim())
 
 /**
- * Tiempos del hilo principal en segundos: `fases` (pared de cada paso menos la espera que cae en él), `espera` (lo que
- * tardó el usuario en cada `AskUserQuestion` y en responder tras un turno que el asistente cerró con texto) y `activo`
- * (el total menos la espera). Las marcas de fase son `estado.mjs … --paso n`, el explorador (1) y el AskUserQuestion «Plan» (4).
+ * Las esperas por el límite de 5 h de un transcript (`[[desde, hasta]]` en ms): del aviso (una entrada que no sea `user`, para que
+ * ni un mensaje del humano ni un resultado de herramienta que lo citen abran una espera, y cuyo texto trae «You've hit your» y
+ * «limit») a la primera entrada posterior con «limit has reset». Sin ese reinicio cierra el siguiente mensaje del humano: en el hilo
+ * principal, o con `humanos` (sus instantes, en ms) en un subagente, que si no tiene ninguno cierra en su última entrada; sin cierre
+ * en el hilo principal, hasta `fin`. Supuesto: el formato real del aviso no está confirmado (LIMITES.md).
  */
-function tiemposDe(principal, inicio) {
+function esperasDeLimite(filas, fin, humanos = null) {
+  const esperas = []
+  let abre = null
+  let ultimo = null
+  for (const f of filas) {
+    const t = Date.parse(f.timestamp)
+    if (!Number.isFinite(t)) continue
+    ultimo = t
+    const texto = textoDe(f.message?.content)
+    if (abre !== null && (/limit has reset/i.test(texto) || (humanos === null && esHumano(f)))) {
+      esperas.push([abre, t])
+      abre = null
+    }
+    if (abre === null && f.type !== 'user' && /You['’]ve hit your/.test(texto) && /limit/.test(texto)) abre = t
+  }
+  if (abre !== null) esperas.push([abre, humanos === null ? fin : (humanos.find((h) => h > abre) ?? ultimo)])
+  return esperas
+}
+
+/**
+ * Tiempos del hilo principal en segundos: `fases` (pared de cada paso menos la espera que cae en él), `espera` (lo que
+ * tardó el usuario en cada `AskUserQuestion` y en responder tras un turno que el asistente cerró con texto, y lo que duró
+ * el límite de 5 h en el hilo o en un subagente, sin contar dos veces lo que se solapa) y `activo` (el total menos la espera).
+ * Las marcas de fase son `estado.mjs … --paso n`, el explorador (1) y el AskUserQuestion «Plan» (4).
+ */
+function tiemposDe(principal, inicio, agentes = []) {
   const t0 = Date.parse(inicio)
   const marcas = []
   const preguntas = new Map()
@@ -460,7 +507,16 @@ function tiemposDe(principal, inicio) {
     }
     for (const c of bloquesDe(f, 'tool_result')) resultados.set(c.tool_use_id, t)
   }
-  const esperas = [...[...preguntas].map(([id, a]) => [a, Math.min(resultados.get(id) ?? fin, fin)]), ...esperasTurno].filter(([a, b]) => b > a)
+  const humanos = principal.filter(esHumano).map((f) => Date.parse(f.timestamp)).filter(Number.isFinite)
+  const limite = [...esperasDeLimite(principal, fin), ...agentes.flatMap((a) => esperasDeLimite(a.filas, fin, humanos))].map(([a, b]) => [Math.max(a, t0), Math.min(b, fin)])
+  const crudas = [...[...preguntas].map(([id, a]) => [a, Math.min(resultados.get(id) ?? fin, fin)]), ...esperasTurno, ...limite].filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0])
+  // Unión de intervalos: el aviso del límite suele cerrar un turno con texto, que `esperasTurno` ya cuenta.
+  const esperas = []
+  for (const [a, b] of crudas) {
+    const u = esperas.at(-1)
+    if (u && a <= u[1]) u[1] = Math.max(u[1], b)
+    else esperas.push([a, b])
+  }
   const tramos = [{ t: t0, n: '0' }, ...marcas.sort((a, b) => a.t - b.t)]
   const fases = {}
   tramos.forEach(({ t, n }, i) => {
@@ -481,7 +537,7 @@ const claveDe = (prompt) => /^\s*SUBTAREA (\d+)\//m.exec(prompt)?.[1] ?? (/^\s*S
 
 /** Suma los `tiemposDe` de cada tramo: fases, activo y espera; con más de un tramo agrega `corte` (segundos entre sesiones). */
 function tiemposDeTramos(tramos) {
-  const partes = tramos.map((t) => tiemposDe(t.principal, t.inicio))
+  const partes = tramos.map((t) => tiemposDe(t.principal, t.inicio, t.agentes))
   if (partes.length === 1) return partes[0]
   const fases = {}
   for (const p of partes) for (const [n, s] of Object.entries(p.fases)) fases[n] = (fases[n] ?? 0) + s
