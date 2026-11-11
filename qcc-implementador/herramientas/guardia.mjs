@@ -830,9 +830,22 @@ function motivoEstadoEscribe(args) {
   return opcion ? `estado.mjs ${opcion.split('=')[0]} escribe el estado del flujo (aprobaciones, fotos, cierre): solo el orquestador` : null
 }
 
+/** ¿El flujo del proyecto tiene una fase en paralelo (lote o tanda) abierta, sin `hasta`? Un error de lectura es «no». */
+function hayParaleloAbierto(raiz) {
+  try {
+    const paralelos = leerJson(path.join(flujoDe(raiz), 'estado.json'))?.paralelos
+    return Array.isArray(paralelos) && paralelos.some((p) => p && (p.tipo === 'lote' || p.tipo === 'tanda') && Number.isFinite(Date.parse(p.desde)) && p.hasta === undefined)
+  } catch {
+    return false
+  }
+}
+
 function evaluarNode(args, ctx) {
   const m = motivoEstadoEscribe(args)
   if (m) return m
+  if (ctx.rol === 'ejecutor' && nombreScript(args, indiceScript(args)) === 'verificar.mjs' && hayParaleloAbierto(ctx.raiz)) {
+    return 'verificar.mjs con un lote o una tanda en paralelo abierto falsea la medición (otros agentes editan a la vez): en un lote corre solo tus tests puntuales y reporta «VERIFICACIÓN: puntual (lote)»; verificar.mjs lo corre el orquestador'
+  }
   if (ctx.rol === 'revisor' && nombreScript(args, indiceScript(args)) === 'mover.mjs') return 'mover.mjs escribe en el repo: el revisor no edita'
   if (args.some((a) => a.startsWith('--env-file'))) return 'node --env-file carga secretos y suele pegar a servicios vivos: queda para el usuario'
   if (args.some((a) => a === '--watch' || a.startsWith('--watch-path'))) return 'node --watch no termina'

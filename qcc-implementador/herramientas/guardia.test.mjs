@@ -933,6 +933,45 @@ test('permiso aprobado: un comando distinto sigue negado', () => {
   }
 })
 
+const VERIFICAR_CMD = 'node ~/.claude/plugins/cache/qcc/impl/0.1.0/herramientas/verificar.mjs'
+const ABIERTA = { tipo: 'lote', n: 2, desde: '2026-10-29T10:00:00.000Z' }
+
+test('guardia: verificar.mjs negado al ejecutor con un lote abierto', () => {
+  for (const fase of [ABIERTA, { ...ABIERTA, tipo: 'tanda' }]) {
+    const R = repoConPermisos('verificar-lote-abierto', { en_curso: [1, 2], paralelos: [{ ...fase, hasta: '2026-10-29T10:05:00.000Z' }, fase] })
+    for (const c of [VERIFICAR_CMD, `${VERIFICAR_CMD} --sin-cache`, `node "$HOME/x/verificar.mjs" 2>&1 | tail -n 5`]) {
+      const { motivo } = evaluar(bash(R, c), 'ejecutor', R)
+      assert.match(motivo ?? '', /VERIFICACIÓN: puntual \(lote\)/, c)
+    }
+    // Lo demás del ejecutor sigue pasando: tests puntuales y otros scripts.
+    deja(bash(R, 'node --test src/a.test.mjs'))
+    deja(bash(R, 'node ~/x/estado.mjs --diff abc --permitidos "src/a.ts"'))
+  }
+})
+
+test('guardia: verificar.mjs pasa con la fase cerrada (hasta)', () => {
+  const R = repoConPermisos('verificar-lote-cerrado', { en_curso: [1, 2], paralelos: [{ ...ABIERTA, hasta: '2026-10-29T10:05:00.000Z' }] })
+  deja(bash(R, VERIFICAR_CMD))
+})
+
+test('guardia: verificar.mjs pasa sin paralelos', () => {
+  for (const estado of [{ en_curso: [1] }, { en_curso: [1], paralelos: [] }, { en_curso: [1], paralelos: [null, { tipo: 'otro', desde: ABIERTA.desde }, { tipo: 'lote', desde: 'x' }] }]) {
+    deja(bash(repoConPermisos('verificar-sin-paralelos', estado), VERIFICAR_CMD))
+  }
+  deja(bash(repo('verificar-sin-flujo', { 'src/a.ts': '' }), VERIFICAR_CMD))
+})
+
+test('guardia: verificar.mjs pasa al revisor con la fase abierta', () => {
+  const R = repoConPermisos('verificar-revisor', { en_curso: [1, 2], paralelos: [ABIERTA] })
+  deja(bash(R, VERIFICAR_CMD), 'revisor')
+})
+
+test('guardia: verificar.mjs con estado.json roto no niega', () => {
+  for (const estado of ['{no es json', '[]', 'null', { paralelos: 'x' }]) {
+    deja(bash(repoConPermisos('verificar-estado-roto', estado), VERIFICAR_CMD))
+  }
+})
+
 test('permiso sin aprobar sigue negado', () => {
   const p = (extra) => ({ P1: permiso(2, 'gh pr list --json number', APROBADO, extra) })
   for (const estado of [
