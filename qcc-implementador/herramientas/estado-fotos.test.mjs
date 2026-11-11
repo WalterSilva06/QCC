@@ -223,6 +223,11 @@ test('estado: lotesDe junta subtareas independientes cuyos permitidos no se pisa
     ['sin permitidos no entra a un lote', [s(1, a), s(2, [], [])], [[1], [2]]],
     ['sin permitidos tampoco recibe a otra', [s(1, []), s(2, ['b.ts'], [])], [[1], [2]]],
     ['sin permitidos corta el lote siguiente', [s(1, a), s(2, [], []), s(3, ['c.ts'], [])], [[1], [2], [3]]],
+    ['sola sin dependencias comparte onda pero no lote', [s(1, a), { ...s(2, ['b.ts'], []), sola: true }, s(3, ['c.ts'], [])], [[1, 3], [2]]],
+    ['sola que se pisa con una previa va después', [s(1, a), { ...s(2, a, []), sola: true }, s(3, ['c.ts'], [])], [[1, 3], [2]]],
+    ['una posterior que depende de sola va después', [s(1, a), { ...s(2, ['b.ts'], []), sola: true }, s(3, ['c.ts'], [2])], [[1], [2], [3]]],
+    ['una posterior que se pisa con sola va después', [s(1, a), { ...s(2, ['b.ts'], []), sola: true }, s(3, ['b.ts'], [])], [[1], [2], [3]]],
+    ['dos sola no comparten lote', [s(1, a), { ...s(2, ['b.ts'], []), sola: true }, { ...s(3, ['c.ts'], []), sola: true }], [[1], [2], [3]]],
   ]
   for (const [nombre, subtareas, esperado] of casos) assert.deepEqual(lotesDe(subtareas), esperado, nombre)
 })
@@ -489,6 +494,54 @@ test('--permiso rechaza ids que no existen o que no son «aprobado»', () => {
   assert.deepEqual([o.modo, o.permiso, o.accion, o.paso], ['permiso', 'N2', 'aprobado', 4])
   assert.deepEqual([opcionesDe(['--permiso']).permiso, opcionesDe(['--permiso']).accion], [null, ''])
   assert.equal(opcionesDe(['--permiso', 'P0', 'aprobado']).permiso, null)
+  assert.equal(opcionesDe(['--permiso', 'p1,n2', 'aprobado']).permiso, 'P1,N2')
+  for (const malo of ['P1,', ',P1', 'P1,,P2', 'P1,x', 'P1 ,P2']) assert.equal(opcionesDe(['--permiso', malo, 'aprobado']).permiso, null, malo)
+})
+
+const permisoDe = (id, quien, comando) => `  ${id} · ${quien} · \`${comando}\` · base de pruebas · reversible: no\n     Qué hace: x.\n     Para qué: y.`
+const planConPermisos = (...permisos) => [subtareaDePlan(1, 'src/a.ts'), subtareaDePlan(2, 'src/b.ts'), `PERMISOS A APROBAR:\n${permisos.join('\n')}`]
+
+test('permisos: post-revisión no da aviso de quién y queda en el estado', () => {
+  const { salida, estadoJson } = repoConPlanGuardado('permiso-post', planConPermisos(permisoDe('P1', 'post-revisión', 'pnpm db:push')))
+  assert.doesNotMatch(salida, /no vale/)
+  assert.doesNotMatch(salida, /no parece un servidor/)
+  assert.match(salida, /^AVISOS: ninguno$/m)
+  assert.equal(estadoJson().permisos.P1.rol, 'post-revisión')
+  assert.equal(estadoJson().permisos.P1.comando, 'pnpm db:push')
+  // sola mira solo al ejecutor: una subtarea sin permisos propios no queda aparte por un post-revisión irreversible.
+  assert.equal(estadoJson().subtareas.some((s) => s.sola), false)
+})
+
+test('permisos: orquestador con `pnpm db:push` avisa que no parece un servidor', () => {
+  const { salida } = repoConPlanGuardado('permiso-orq-push', planConPermisos(permisoDe('P1', 'orquestador', 'pnpm db:push')))
+  assert.match(salida, /^ {2}- P1 · «pnpm db:push» es del orquestador pero no parece un servidor .*¿es «post-revisión» o del ejecutor de una subtarea\?$/m)
+})
+
+test('permisos: orquestador con `pnpm dev` no avisa', () => {
+  const { salida } = repoConPlanGuardado('permiso-orq-dev', planConPermisos(permisoDe('P1', 'orquestador', 'pnpm dev')))
+  assert.doesNotMatch(salida, /no parece un servidor/)
+  assert.match(salida, /^AVISOS: ninguno$/m)
+})
+
+const PLAN_PP = planConPermisos(permisoDe('P1', 'ejecutor S2', 'node scripts/seed.mjs'), permisoDe('P2', 'orquestador', 'pnpm dev'))
+
+test('--permiso P1,P2 aprobado anota los dos', () => {
+  const { raiz, entorno, estadoJson } = repoConPlanGuardado('permiso-lista', PLAN_PP)
+  const r = estadoEn(raiz, ['--permiso', 'p1,P2', 'aprobado', '--paso', '4'], entorno)
+  assert.equal(r.codigo, 0)
+  assert.match(r.salida, /^PERMISO: P1 aprobado\nPERMISO: P2 aprobado$/m)
+  assert.ok(Number.isFinite(Date.parse(aprobadoDe(estadoJson(), 'P1'))))
+  assert.ok(Number.isFinite(Date.parse(aprobadoDe(estadoJson(), 'P2'))))
+})
+
+test('--permiso P1,P9 no anota ninguno (ERROR)', () => {
+  const { raiz, entorno, estadoJson } = repoConPlanGuardado('permiso-lista-falla', PLAN_PP)
+  const r = estadoEn(raiz, ['--permiso', 'P1,P9', 'aprobado', '--paso', '4'], entorno)
+  assert.match(r.salida, /^ERROR: P9 no está en los permisos del plan guardado$/m)
+  assert.equal(r.codigo, 2)
+  assert.doesNotMatch(r.salida, /PERMISO: /)
+  assert.equal('aprobado' in estadoJson().permisos.P1, false)
+  assert.equal('aprobado' in estadoJson().permisos.P2, false)
 })
 
 test('permisos de punta a punta: --guardar plan, --permiso, --base --sub y la guardia', () => {
@@ -569,14 +622,18 @@ test('plan: una subtarea con permiso irreversible queda sola en LOTES', () => {
   assert.match(reversible.salida, /^LOTES: S1\+S2\+S3$/m)
   assert.equal(reversible.estadoJson().subtareas.some((s) => 'sola' in s), false)
   const irreversible = repoConPlanGuardado('lotes-irreversible', [...subtareas, permiso('no')])
-  assert.match(irreversible.salida, /^LOTES: S1 \| S2 \| S3$/m)
+  assert.match(irreversible.salida, /^LOTES: S1\+S3 \| S2$/m)
   assert.deepEqual(irreversible.estadoJson().subtareas.map((s) => s.sola), [undefined, true, undefined])
   // --reanudar lee las subtareas del estado: las mismas barreras.
   assert.match(estadoEn(irreversible.raiz, ['--reanudar'], irreversible.entorno).salida, /^SIGUE: paso 4/m)
-  // Pura: `sola` hace de barrera con las demás, antes y después.
+  // Pura: `sola` no comparte lote con ninguna, pero tampoco es barrera.
   const s = (n, permitidos, extra = {}) => ({ n, permitidos, depende: [], ...extra })
-  assert.deepEqual(lotesDe([s(1, ['a.ts']), s(2, ['b.ts'], { sola: true }), s(3, ['c.ts'])]), [[1], [2], [3]])
+  assert.deepEqual(lotesDe([s(1, ['a.ts']), s(2, ['b.ts'], { sola: true }), s(3, ['c.ts'])]), [[1, 3], [2]])
   assert.deepEqual(lotesDe([s(1, ['a.ts']), s(2, ['b.ts'], { sola: false }), s(3, ['c.ts'])]), [[1, 2, 3]])
+  // --aprobado --sumar: el valor crudo, '' si falta o es otra opción.
+  assert.equal(opcionesDe(['--aprobado', '--sumar', 'S1:a.ts']).sumar, 'S1:a.ts')
+  assert.equal(opcionesDe(['--aprobado', '--sumar', '--paso', '4']).sumar, '')
+  assert.equal('sumar' in opcionesDe(['--aprobado', '--ajustes', 'x']), false)
 })
 
 test('estado: fusionarExploraciones une secciones sin repetir ruta:línea (pura)', () => {

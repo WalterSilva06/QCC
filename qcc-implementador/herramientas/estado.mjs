@@ -9,7 +9,7 @@
 //   node <plugin>/herramientas/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--omitida] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo; --sub anota el avance de sus subtareas (--omitida: OMITIDA)
 //   node <plugin>/herramientas/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
 //   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion|revision [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s), avisa con SIN EXPLORAR, y solo en la primera corrida con LARGO y REINTENTO (en la segunda, INCOMPLETO, CORTADO y SIN EXPLORAR salen solo de los ids nuevos). La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección. La revisión final va a revision-<ciclo>.md
-//   node <plugin>/herramientas/estado.mjs --aprobado [--ajustes "<texto>"] [--paso <n>]   anota que el usuario aprobó el plan, con los AJUSTES AL PLAN
+//   node <plugin>/herramientas/estado.mjs --aprobado [--ajustes "<texto>"] [--sumar "S<n>:<ruta>,<ruta>;S<m>:…"] [--paso <n>]   anota que el usuario aprobó el plan, con los AJUSTES AL PLAN; --sumar agrega rutas a los permitidos y reimprime LOTES:
 //   node <plugin>/herramientas/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan, la VERIFICACIÓN INICIAL y la línea SIGUE)
 //   node <plugin>/herramientas/estado.mjs --reanudar [--paso <n>]  sigue un flujo cortado en esta sesión sin vaciar su carpeta: lo de --estado más el PEDIDO y lo pendiente
 //   node <plugin>/herramientas/estado.mjs --permiso-nuevo "<comando> · <servicio> · reversible: sí|no · Qué hace: … · Para qué: …" --sub <n> [--paso <n>]  agrega un permiso N<k> ya aprobado al ejecutor de la subtarea n
@@ -512,7 +512,7 @@ export function dependeDe(valor, n, existentes) {
 
 /**
  * Bloque «PERMISOS A APROBAR:» del pie → `[{ id, rol, sub?, comando, servicio, reversible, queHace, paraQue }]`. Cada permiso es una
- * línea `P<n> · <ejecutor S<n> | orquestador> · \`comando\`[ nota] · <servicio> · reversible: sí | no` con las líneas sangradas
+ * línea `P<n> · <ejecutor S<n> | orquestador | post-revisión> ·\`comando\`[ nota] · <servicio> · reversible: sí | no` con las líneas sangradas
  * `Qué hace:` y `Para qué:`. `rol` es la primera palabra de «quién» en minúsculas; lo que falta queda '' (y `reversible`
  * false: sin él cuenta como no). `comando` es lo que va entre comillas invertidas.
  */
@@ -546,6 +546,9 @@ export function permisosDe(pie) {
   return permisos
 }
 
+const ROLES_DE_PERMISO = ['orquestador', 'post-revisión']
+const RE_SERVIDOR = /\b(dev|serve|start|preview|ngrok|cloudflared)\b/i
+
 /**
  * Avisos de los permisos leídos de un plan (`bloque`: el texto del bloque, '' si no hay). `subs`: números de las subtareas;
  * `permitidos`: los de todas. Cubre: bloque sin permisos, campo que falta, quién inválido o subtarea que no existe, comodín
@@ -563,7 +566,8 @@ function avisosDePermisos(permisos, bloque, subs, permitidos) {
       ...(p.paraQue ? [] : ['«Para qué»']),
     ]
     if (faltan.length) avisos.push(`${p.id} · le falta ${faltan.join(', ')}`)
-    if (p.rol === 'ejecutor' ? !subs.includes(p.sub) : p.rol !== 'orquestador') avisos.push(`${p.id} · quién «${p.rol}${p.sub ? ` S${p.sub}` : ''}» no vale: es «ejecutor S<n>» de una subtarea del plan u «orquestador»`)
+    if (p.rol === 'ejecutor' ? !subs.includes(p.sub) : !ROLES_DE_PERMISO.includes(p.rol)) avisos.push(`${p.id} · quién «${p.rol}${p.sub ? ` S${p.sub}` : ''}» no vale: es «ejecutor S<n>» de una subtarea del plan, «orquestador» o «post-revisión»`)
+    if (p.rol === 'orquestador' && p.comando && !RE_SERVIDOR.test(p.comando)) avisos.push(`${p.id} · «${p.comando}» es del orquestador pero no parece un servidor (dev, serve, start, preview, ngrok, cloudflared): ¿es «post-revisión» o del ejecutor de una subtarea?`)
     if (!p.comando) continue
     if (!regexDePermiso(p.comando)) avisos.push(`${p.id} · «${p.comando}» no se puede aprobar: no es un comando simple o el comodín «*» cae antes de la parte literal`)
     const fijo = motivoFijoDe(p.comando)
@@ -653,24 +657,28 @@ const esBarrera = (permitidos) => permitidos.length === 0 || permitidos.some(noP
  * `{ n, permitidos, depende }` (`depende` ausente = depende de la anterior). Cada subtarea va al primer lote con menos de
  * `TOPE_LOTE` miembros que quede después de los lotes de sus dependencias y de los de toda subtarea anterior con la que se pisa
  * (un archivo dentro de una carpeta o de un glob de la otra cuenta como pisarse). Sin permitidos, o con uno que no parece
- * una ruta, o con `sola: true`, se pisa con todas y hace de barrera.
+ * una ruta, se pisa con todas y hace de barrera. Con `sola: true` (tiene un permiso irreversible) no es barrera: espera a sus
+ * dependencias y a las previas con que se pisa, pero va siempre a un lote vacío y ninguna otra entra en él.
  */
 export function lotesDe(subtareas) {
   const lotes = []
   const loteDeN = new Map()
   const previas = []
+  const lotesSola = new Set()
   subtareas.forEach((s, i) => {
     const permitidos = Array.isArray(s.permitidos) ? s.permitidos : []
-    // `sola`: tiene un permiso irreversible; la guardia no distingue qué ejecutor del lote llama, así que corre sin otros.
-    const barrera = esBarrera(permitidos) || s.sola === true
+    const sola = s.sola === true
+    const barrera = esBarrera(permitidos)
     const depende = Array.isArray(s.depende) ? s.depende : i > 0 ? [subtareas[i - 1].n] : []
     const despuesDe = [
       ...depende.map((n) => loteDeN.get(n)),
       ...previas.filter((p) => barrera || p.barrera || sePisan(p.permitidos, permitidos)).map((p) => p.lote),
     ].filter((k) => k !== undefined)
     let lote = Math.max(-1, ...despuesDe) + 1
-    while (lotes[lote]?.length >= TOPE_LOTE) lote++
+    // La guardia no distingue qué ejecutor del lote llama: la `sola` no comparte lote.
+    while (lotes[lote]?.length >= TOPE_LOTE || lotesSola.has(lote) || (sola && lotes[lote]?.length)) lote++
     if (!lotes[lote]) lotes[lote] = []
+    if (sola) lotesSola.add(lote)
     lotes[lote].push(s.n)
     loteDeN.set(s.n, lote)
     previas.push({ permitidos, barrera, lote })
@@ -911,7 +919,7 @@ function resumirPlan(texto, destino) {
   const permisos = {
     ...Object.fromEntries(previas.filter(([, p]) => p.nuevo && resumen.some((s) => s.n === p.sub))),
     ...Object.fromEntries(permisosPlan
-      .filter((p) => p.comando && (p.rol === 'orquestador' || (p.rol === 'ejecutor' && resumen.some((s) => s.n === p.sub))))
+      .filter((p) => p.comando && (ROLES_DE_PERMISO.includes(p.rol) || (p.rol === 'ejecutor' && resumen.some((s) => s.n === p.sub))))
       .map(({ id, sinReversible, ...p }) => {
         const aprobado = previas.find(([, a]) => !a.nuevo && a.rol === p.rol && a.sub === p.sub && a.comando === p.comando && a.aprobado)?.[1].aprobado
         return [id, { ...p, ...(aprobado ? { aprobado } : {}) }]
@@ -1308,13 +1316,27 @@ function reanudar() {
 }
 
 /** `--aprobado [--ajustes "<texto>"]`: anota que el usuario aprobó el plan guardado, con los AJUSTES AL PLAN (los que el orquestador mostró). */
-function aprobar(ajustes) {
+function aprobar(ajustes, sumar) {
   const e = leerEstado()
   if (!e.base_global || e.cierre) throw new Error('el flujo no está abierto: no hay dónde anotar la aprobación (corre el preflight)')
   if (!e.plan) throw new Error('no hay plan guardado que aprobar (--guardar <agentId> plan)')
   const texto = String(ajustes ?? '').trim()
-  anotarEstado({ aprobacion: { t: new Date().toISOString(), ajustes: texto } })
-  console.log(`APROBADO: plan de ${(Array.isArray(e.subtareas) ? e.subtareas : []).length} subtarea(s) · ajustes: ${texto ? 'anotados' : 'ninguno'}`)
+  let subtareas = Array.isArray(e.subtareas) ? e.subtareas : []
+  // `--sumar "S<n>:<ruta>,<ruta>;S<m>:…"`: se valida todo antes de escribir nada.
+  if (sumar !== undefined) {
+    const sumas = String(sumar).split(';').map((t) => t.trim()).filter(Boolean).map((t) => /^S?(\d+):(.+)$/i.exec(t))
+    if (!sumas.length || sumas.includes(null)) throw new Error('--sumar espera "S<n>:<ruta>,<ruta>;S<m>:<ruta>"')
+    const nuevas = sumas.map(([, n, rutas]) => [Number(n), listaPermitidos(rutas)])
+    const falta = nuevas.find(([n, rutas]) => !subtareas.some((s) => Number(s?.n) === n) || !rutas.length)
+    if (falta) throw new Error(`--sumar: S${falta[0]} no está en el plan o no trae rutas`)
+    subtareas = subtareas.map((s) => {
+      const suyas = nuevas.filter(([n]) => n === Number(s?.n)).flatMap(([, rutas]) => rutas)
+      return suyas.length ? { ...s, permitidos: [...new Set([...(Array.isArray(s.permitidos) ? s.permitidos : []), ...suyas])] } : s
+    })
+  }
+  anotarEstado({ aprobacion: { t: new Date().toISOString(), ajustes: texto }, ...(sumar !== undefined ? { subtareas } : {}) })
+  console.log(`APROBADO: plan de ${subtareas.length} subtarea(s) · ajustes: ${texto ? 'anotados' : 'ninguno'}`)
+  if (sumar !== undefined) console.log(`LOTES: ${lotesDe(subtareas).map((l) => l.map((n) => `S${n}`).join('+')).join(' | ')}`)
 }
 
 /**
@@ -1336,6 +1358,68 @@ function anotarAvance(miembros, desde, omitida) {
     console.log(`AVANCE: ${miembros.map((n) => `S${n} ${avance[String(n)].estado}`).join(' · ')}`)
   } catch {
     // Sin avance, el flujo sigue: --reanudar lo verá como «a medias».
+  }
+}
+
+const EXT_TS = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts']
+// [patrón, texto del aviso, regex de la justificación en el resto de la línea]
+const PATRONES_TS = [
+  [/:\s*any\b/, ': any', /\/\/\s*\S|\/\*\s*\S/],
+  [/\bas\s+any\b/, 'as any', /\/\/\s*\S|\/\*\s*\S/],
+  [/\bany\[\]/, 'any[]', /\/\/\s*\S|\/\*\s*\S/],
+  [/@ts-ignore/, '@ts-ignore', /^\s*[^\s*/]/],
+  [/eslint-disable/, 'eslint-disable', /--\s*\S/],
+]
+const TOPE_AVISOS_TS = 20
+
+/**
+ * Líneas `+` con `: any`, `as any`, `any[]`, `@ts-ignore` o `eslint-disable` sin un comentario de justificación (en la misma línea o
+ * en la anterior) del diff `base`..foto, solo en archivos de código dentro de `permitidos`. Heurístico: avisa, no frena. Un `any` suelto no avisa.
+ */
+function avisosDeTipos(base, permitidos, etiqueta) {
+  try {
+    const crudo = git(['-c', 'core.quotepath=off', 'diff', '-U1', '--no-color', '--no-renames', base, foto(permitidos), '--', ...EXT_TS.map((e) => `*.${e}`)])
+    const avisos = []
+    let ruta = null
+    let cabecera = false
+    let n = 0
+    let previa = ''
+    for (const l of crudo.split(/\r?\n/)) {
+      if (l.startsWith('diff --git ')) {
+        ruta = null
+        cabecera = true
+        continue
+      }
+      const arch = cabecera ? /^\+\+\+ b\/(.+)$/.exec(l) : null
+      if (arch) {
+        ruta = enAlcance(arch[1], permitidos) ? arch[1] : null
+        continue
+      }
+      const hunk = /^@@ -\S+ \+(\d+)/.exec(l)
+      if (hunk) {
+        cabecera = false
+        n = Number(hunk[1])
+        previa = ''
+        continue
+      }
+      if (cabecera || !ruta || !/^[ +]/.test(l)) continue
+      const texto = l.slice(1)
+      if (l[0] === '+') {
+        for (const [re, nombre, just] of PATRONES_TS) {
+          const m = re.exec(texto)
+          if (!m) continue
+          const previaVale = /^\s*(\/\/|\/\*|\*)\s*\S/.test(previa) && !PATRONES_TS.some(([r]) => r.test(previa))
+          if (!just.test(texto.slice(m.index + m[0].length)) && !previaVale) avisos.push(`AVISO: ${etiqueta} · ${ruta}:${n} · «${nombre}» sin justificación`)
+          break
+        }
+      }
+      previa = texto
+      n++
+    }
+    for (const a of avisos.slice(0, TOPE_AVISOS_TS)) console.log(a)
+    if (avisos.length > TOPE_AVISOS_TS) console.log(`AVISO: ${etiqueta} · y ${avisos.length - TOPE_AVISOS_TS} más sin justificación`)
+  } catch {
+    // Solo un aviso: sin él, el --cambios sigue.
   }
 }
 
@@ -1894,12 +1978,12 @@ const sinNulos = (obj) => {
 /**
  * La fila v2 de `registros/flujos.jsonl`. `datos`: `t` (hora del cierre), `raiz`, `base`, `version`, `resultado`, `tokens`
  * (de `--tokens`), `estado` (el estado del flujo), `metricas` (de `metricasDelFlujo`), `cambios` (de `cambiosPorSubtarea`)
- * `negados` (cuántas negaciones de la guardia hubo) y `cortados` (ids de los agentes que la guardia cortó por contexto;
+ * `negados` (cuántas negaciones de la guardia hubo; `negadosContexto`, cuántas fueron cortes por contexto) y `cortados` (ids de los agentes que la guardia cortó por contexto;
  * cada explorador sale con `cortado: true|false`). Omite lo que falte; `uso` suma pedidos y tokens de todos los roles.
  * `sesiones` (de las métricas) es cuántas sesiones sumó el flujo: 1 sin corte, más si se reanudó con `--reanudar`.
  * `limites` (de `gastoDeLimites` más sus `tramos`) es el % de la ventana de 5 h y de la semanal que gastó el flujo.
  */
-export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado = {}, metricas = null, cambios = {}, negados, cortados = [], limites } = {}) {
+export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado = {}, metricas = null, cambios = {}, negados, negadosContexto, cortados = [], limites } = {}) {
   const m = metricas ?? {}
   const roles = Object.values(m.costo?.roles ?? {})
   const suma = (clave) => roles.reduce((s, r) => s + (r.tokens?.[clave] ?? 0), 0)
@@ -1942,6 +2026,7 @@ export function filaDelFlujo({ t, raiz, base, version, resultado, tokens, estado
     calidad: sinNulos({
       final: m.problemas?.final,
       negados,
+      negadosContexto,
       alcanceFuera: m.alcanceFuera,
       inicial: estado.verificacion_inicial?.resultado,
     }),
@@ -2051,16 +2136,18 @@ function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
     // Sin las diferencias por subtarea, la fila sigue.
   }
   let negados
+  let negadosContexto
   let cortados
   try {
     const filas = leerRegistro(e.desde_global ?? desde ?? e.inicio ?? t)
     negados = filas.filter((f) => f.decision === 'negado').length
+    negadosContexto = filas.filter((f) => f.decision === 'negado' && /^contexto \d+k$/.test(f.motivo ?? '')).length
     cortados = [...cortadosDe(filas).keys()]
   } catch {
     // Sin el registro, la fila sigue.
   }
   try {
-    anotarFlujo(path.join(carpetaGlobal(), 'flujos.jsonl'), filaDelFlujo({ t, raiz: RAIZ, base, version: versionInstalada(), resultado: valido, tokens: porRol ?? undefined, estado: e, metricas, cambios: cambiosDeSubtareas, negados, cortados, limites }))
+    anotarFlujo(path.join(carpetaGlobal(), 'flujos.jsonl'), filaDelFlujo({ t, raiz: RAIZ, base, version: versionInstalada(), resultado: valido, tokens: porRol ?? undefined, estado: e, metricas, cambios: cambiosDeSubtareas, negados, negadosContexto, cortados, limites }))
   } catch (err) {
     console.log(`AVISO: no se pudo anotar el flujo: ${err.message}`)
   }
@@ -2104,6 +2191,8 @@ function fotoDeSubtarea(n) {
   const previa = bases[String(n)]
   if (previa) console.log(`AVISO: S${n} ya tenía foto; se conserva la primera (la de antes de su ejecutor)`)
   const vigente = previa ?? { base: foto(), desde: new Date().toISOString() }
+  // Una sola subtarea no corre en paralelo: la fase abierta de un lote anterior ya terminó.
+  cerrarParalelos()
   anotarEstado({ ...(previa ? {} : { bases: { ...bases, [String(n)]: vigente } }), en_curso: [n] })
   console.log(`BASE=${vigente.base} DESDE=${vigente.desde}`)
 }
@@ -2177,6 +2266,7 @@ function abrirTanda(n, sub) {
   const tandas = [...listaDe(e, 'tandas'), { n, base, t: desde, ciclo: listaDe(e, 'revisiones').length }].slice(-TOPE_PARALELOS)
   const en_curso = sub === undefined ? undefined : [].concat(sub)
   if (n < 2) {
+    cerrarParalelos()
     anotarEstado({ tandas, en_curso })
     console.log(`AVISO: una tanda de ${n} no corre en paralelo; no se anota la fase en paralelo`)
     console.log(`BASE=${base}`)
@@ -2188,19 +2278,21 @@ function abrirTanda(n, sub) {
 }
 
 /**
- * `--permiso <Pn|Nn> aprobado`: deja `aprobado: <iso>` (la hora de la aprobación del usuario) en el permiso `id` de `permisos` del
- * estado e imprime `PERMISO: <id> aprobado`. La guardia deja pasar su comando solo al ejecutor y mientras su `sub` esté en
- * `en_curso`. Falla si el flujo no está abierto o si `id` no está en los permisos del plan.
+ * `--permiso <Pn|Nn[,Pm…]> aprobado`: deja `aprobado: <iso>` (la hora de la aprobación del usuario) en cada permiso `id` de `permisos`
+ * del estado e imprime una línea `PERMISO: <id> aprobado` por id. La guardia deja pasar su comando solo al ejecutor y mientras su
+ * `sub` esté en `en_curso`. Falla (sin anotar ninguno) si el flujo no está abierto o si algún `id` no está en los permisos del plan.
  */
-function aprobarPermiso(id, accion) {
-  if (id === null) throw new Error('--permiso necesita el id del permiso (P<n> o N<n>) y «aprobado»: --permiso <id> aprobado')
-  if (accion !== 'aprobado') throw new Error(`--permiso ${id}: solo vale «aprobado» (vino «${accion}»)`)
+function aprobarPermiso(ids, accion) {
+  if (ids === null) throw new Error('--permiso necesita el id del permiso (P<n> o N<n>, varios con coma) y «aprobado»: --permiso <id> aprobado')
+  if (accion !== 'aprobado') throw new Error(`--permiso ${ids}: solo vale «aprobado» (vino «${accion}»)`)
   const e = leerEstado()
   if (!e.base_global || e.cierre) throw new Error('el flujo no está abierto: no hay dónde anotar la aprobación (corre el preflight)')
   const previas = e.permisos && typeof e.permisos === 'object' && !Array.isArray(e.permisos) ? e.permisos : {}
-  if (!previas[id]) throw new Error(`${id} no está en los permisos del plan guardado`)
-  anotarEstado({ permisos: { ...previas, [id]: { ...previas[id], aprobado: new Date().toISOString() } } })
-  console.log(`PERMISO: ${id} aprobado`)
+  const lista = [...new Set(ids.split(','))]
+  for (const id of lista) if (!previas[id]) throw new Error(`${id} no está en los permisos del plan guardado`)
+  const ahora = new Date().toISOString()
+  anotarEstado({ permisos: { ...previas, ...Object.fromEntries(lista.map((id) => [id, { ...previas[id], aprobado: ahora }])) } })
+  for (const id of lista) console.log(`PERMISO: ${id} aprobado`)
 }
 
 const RE_PERMISO_NUEVO = /^(.+?)\s+·\s+(.+?)\s+·\s+reversible\s*:\s*(sí|si|no)\s+·\s+Qué hace\s*:\s*(.+?)\s+·\s+Para qué\s*:\s*(.+)$/is
@@ -2324,24 +2416,25 @@ export function colapsarMovidos(crudas, minimo = MIN_MOVIDAS) {
   return { lineas, colapsadas }
 }
 
-function diff(base, permitidos, rutas) {
+/** Con `destino`, el diff entero (sin el corte de `TOPE_DIFF`) va a ese archivo en vez de a la salida. */
+function diff(base, permitidos, rutas, destino) {
   const ahora = foto(permitidos)
   const filtro = ['--', ...rutas]
   const stat = git(['diff', '--stat=150', '--no-renames', base, ahora, ...filtro]).trimEnd()
   const crudo = git([...COLORES_MOVIDO.flatMap((c) => ['-c', c]), 'diff', '--no-renames', '--color=always', '--color-moved=plain', '--color-moved-ws=no', base, ahora, ...filtro]).trimEnd()
-  console.log(`DIFF ${corto(base)} → árbol actual${rutas.length ? ` (${rutas.join(', ')})` : ''}`)
-  if (!crudo) {
-    console.log('(sin cambios)')
-    return
+  const salida = [`DIFF ${corto(base)} → árbol actual${rutas.length ? ` (${rutas.join(', ')})` : ''}`]
+  if (!crudo) salida.push('(sin cambios)')
+  else {
+    salida.push(stat)
+    const { lineas, colapsadas } = colapsarMovidos(crudo.split('\n'))
+    if (colapsadas) salida.push(`MOVIDO SIN CAMBIOS: ${colapsadas} líneas colapsadas en «~ …» (git --color-moved); para ver un bloque, lee el archivo`)
+    salida.push('', ...(destino ? lineas : lineas.slice(0, TOPE_DIFF)))
+    if (!destino && lineas.length > TOPE_DIFF) {
+      salida.push(`\n… recortado: ${lineas.length - TOPE_DIFF} líneas más. Pide por ruta: --diff ${corto(base)} --permitidos "…" -- <ruta>`)
+    }
   }
-  console.log(stat)
-  const { lineas, colapsadas } = colapsarMovidos(crudo.split('\n'))
-  if (colapsadas) console.log(`MOVIDO SIN CAMBIOS: ${colapsadas} líneas colapsadas en «~ …» (git --color-moved); para ver un bloque, lee el archivo`)
-  console.log('')
-  console.log(lineas.slice(0, TOPE_DIFF).join('\n'))
-  if (lineas.length > TOPE_DIFF) {
-    console.log(`\n… recortado: ${lineas.length - TOPE_DIFF} líneas más. Pide por ruta: --diff ${corto(base)} --permitidos "…" -- <ruta>`)
-  }
+  if (destino) fs.writeFileSync(destino, salida.join('\n') + '\n')
+  else console.log(salida.join('\n'))
 }
 
 /** Valor de `--sub`: un entero ≥ 1, o una lista `1,2,3` de enteros ≥ 1 sin repetir (ordenada); null si no vale. */
@@ -2357,7 +2450,7 @@ function subDe(texto) {
  * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --reanudar > --estado > --aprobado > --cancelar > --guardar > --permiso > --permiso-nuevo > --tanda > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
  * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar` (`agente` es el texto crudo: varios ids van separados por coma, sin espacios).
- * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta) y, con `--parte <k>`, `parte` (el texto crudo). `--omitida` agrega `omitida: true`; `--aprobado` agrega `ajustes` (el valor de `--ajustes`, `''` si falta). `--permiso <Pn|Nn> aprobado` es el modo `permiso` y agrega `permiso` (el id en mayúsculas; null si no vale) y `accion` (la palabra que sigue, `''` si falta). `--permiso-nuevo "<texto>"` es el modo `permisoNuevo` y agrega `permisoNuevo` (el texto crudo, `''` si falta). `--tanda <n>` es el modo `tanda` y agrega `tanda` (el entero ≥ 1; null si no vale). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
+ * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta) y, con `--parte <k>`, `parte` (el texto crudo). `--omitida` agrega `omitida: true`; `--aprobado` agrega `ajustes` (el valor de `--ajustes`, `''` si falta) y, con `--sumar`, `sumar` (el valor crudo, `''` si falta). `--permiso <Pn|Nn[,Pm…]> aprobado` es el modo `permiso` y agrega `permiso` (el id, o los ids separados por coma, en mayúsculas; null si no vale) y `accion` (la palabra que sigue, `''` si falta). `--permiso-nuevo "<texto>"` es el modo `permisoNuevo` y agrega `permisoNuevo` (el texto crudo, `''` si falta). `--tanda <n>` es el modo `tanda` y agrega `tanda` (el entero ≥ 1; null si no vale). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
  * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
 export function opcionesDe(args) {
@@ -2417,9 +2510,10 @@ export function opcionesDe(args) {
     ...(modo === 'guia' ? { guia: valor('--guia') ?? '', ...(opciones.includes('--parte') ? { parte: valor('--parte') ?? '' } : {}) } : {}),
     ...(opciones.includes('--omitida') ? { omitida: true } : {}),
     ...(modo === 'aprobado' ? { ajustes: /^--/.test(valor('--ajustes') ?? '--') ? '' : valor('--ajustes') } : {}),
+    ...(modo === 'aprobado' && opciones.includes('--sumar') ? { sumar: /^--/.test(valor('--sumar') ?? '--') ? '' : valor('--sumar') } : {}),
     ...(modo === 'tanda' ? { tanda: /^[1-9]\d*$/.test(valor('--tanda') ?? '') ? Number(valor('--tanda')) : null } : {}),
     ...(modo === 'permisoNuevo' ? { permisoNuevo: valor('--permiso-nuevo') ?? '' } : {}),
-    ...(modo === 'permiso' ? { permiso: /^[PN][1-9]\d*$/i.test(valor('--permiso') ?? '') ? valor('--permiso').toUpperCase() : null, accion: /^--/.test(valor('--permiso', 2) ?? '--') ? '' : valor('--permiso', 2) } : {}),
+    ...(modo === 'permiso' ? { permiso: /^[PN][1-9]\d*(,[PN][1-9]\d*)*$/i.test(valor('--permiso') ?? '') ? valor('--permiso').toUpperCase() : null, accion: /^--/.test(valor('--permiso', 2) ?? '--') ? '' : valor('--permiso', 2) } : {}),
   }
 }
 
@@ -2448,7 +2542,7 @@ export function anotarFlujo(archivo, fila) {
 }
 
 function main() {
-  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia, parte, permiso, accion, permisoNuevo: textoNuevo, tanda, omitida, ajustes } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia, parte, permiso, accion, permisoNuevo: textoNuevo, tanda, omitida, ajustes, sumar } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   // Ni las reglas ni el estado necesitan git: las reglas se inyectan antes del preflight.
   if (modo === 'reglas') {
@@ -2468,7 +2562,7 @@ function main() {
   if (modo === 'reanudar' || modo === 'aprobado') {
     try {
       if (modo === 'reanudar') reanudar()
-      else aprobar(ajustes)
+      else aprobar(ajustes, sumar)
     } catch (e) {
       console.log(`ERROR: ${e.message}`)
       process.exitCode = 2
@@ -2536,6 +2630,20 @@ function main() {
       if (omitida && !del.miembros?.length) console.log('AVISO: --omitida solo vale con --cambios --sub <n>; se ignora')
       // Antes de los CAMBIOS: la salida sigue terminando en ALCANCE.
       if (del.miembros?.length) anotarAvance(del.miembros, del.desde, omitida)
+      if (del.miembros?.length) avisosDeTipos(del.base, del.permitidos, del.miembros.map((n) => `S${n}`).join('+'))
+      // Revisión final (paso 6): el diff completo del flujo va a diff.txt, sin el corte de TOPE_DIFF, para que el revisor lo lea con Read.
+      if (paso === 6 && delFlujo) {
+        const todas = (Array.isArray(leerEstado().subtareas) ? leerEstado().subtareas : []).map((s) => Number(s?.n))
+        if (global || (todas.length && todas.every((n) => del.miembros?.includes(n)))) {
+          const destino = path.join(FLUJO, 'diff.txt')
+          try {
+            diff(leerEstado().base_global ?? del.base, del.permitidos, [], destino)
+            console.log(`DIFF: ${destino}`)
+          } catch (err) {
+            console.log(`AVISO: no se pudo escribir diff.txt: ${err.message}`)
+          }
+        }
+      }
       try {
         cambios(del.base, del.desde, del.permitidos, paso, tokens, resultado, paralelos)
       } finally {

@@ -103,6 +103,35 @@ test('estado: --base --sub y --cambios --sub/--global toman la foto y los permit
   assert.match(estadoEn(vieja, ['--cambios', '--global', '--permitidos', 'src/a.ts'], entorno).salida, /permitidos: 0 del plan \+ 1 ampliados$/m)
 })
 
+test('--aprobado --sumar agrega permitidos y --cambios --sub los usa sin --permitidos', () => {
+  const sin = { extra: '- Depende de: ninguna\n' }
+  const { raiz, entorno, estadoJson } = repoConPlanGuardado('sumar', [subtareaDePlan(1, 'src/a.ts', sin), subtareaDePlan(2, 'src/b.ts', sin)])
+  const permitidosAntes = estadoJson().subtareas.map((s) => s.permitidos)
+
+  // Un S<n> que no existe (o un formato roto) da ERROR y no escribe nada, ni siquiera la aprobación.
+  for (const sumar of ['S1:src/c.ts;S9:src/c.ts', 'src/c.ts', 'S1:', '']) {
+    const r = estadoEn(raiz, ['--aprobado', '--sumar', sumar, '--paso', '4'], entorno)
+    assert.match(r.salida, /^ERROR: --sumar/m, sumar)
+    assert.equal(r.codigo, 2, sumar)
+    assert.equal(estadoJson().aprobacion, undefined, sumar)
+    assert.deepEqual(estadoJson().subtareas.map((s) => s.permitidos), permitidosAntes, sumar)
+  }
+
+  const r = estadoEn(raiz, ['--aprobado', '--sumar', 'S1:src/c.ts;S2:src/a.ts', '--paso', '4'], entorno)
+  assert.match(r.salida, /^APROBADO: plan de 2 subtarea\(s\)/m)
+  // S2 ahora se pisa con S1 por src/a.ts: ya no comparten lote.
+  assert.match(r.salida, /^LOTES: S1 \| S2$/m)
+  assert.deepEqual(estadoJson().subtareas.map((s) => s.permitidos), [['src/a.ts', 'src/c.ts'], ['src/b.ts', 'src/a.ts']])
+  assert.ok(estadoJson().aprobacion)
+
+  estadoEn(raiz, ['--base', '--sub', '1', '--paso', '5'], entorno)
+  fs.writeFileSync(path.join(raiz, 'src/c.ts'), 'c2\n')
+  const c = estadoEn(raiz, ['--cambios', '--sub', '1', '--paso', '5'], entorno).salida
+  assert.match(c, /permitidos: 2 del plan \+ 0 ampliados$/m)
+  assert.match(c, /^CAMBIOS desde \w+ \(1\): src\/ 1$/m)
+  assert.match(c, /^ALCANCE: OK\s*$/m)
+})
+
 test('--base --sub anota la subtarea en curso y --cambios --sub la quita', () => {
   const independiente = (n, ruta) => subtareaDePlan(n, ruta, { extra: '- Depende de: ninguna\n' })
   const { raiz, entorno, estadoJson } = repoConPlanGuardado('en-curso', [subtareaDePlan(1, 'src/a.ts'), independiente(2, 'src/b.ts'), independiente(3, 'src/c.ts')])
@@ -537,7 +566,7 @@ test('estado: filaDelFlujo omite lo que falta y arma subtareas, calidad y uso', 
     ejecutor: { pedidos: 1, agentes: 1, tokens: { entrada: 10, leidos: 20, escritos: 30, salida: 40, thinking: 50 } },
   }
   const fila = filaDelFlujo({
-    t: 'T', raiz: 'R', base: 'B', version: 'abc', resultado: 'COMPLETO', tokens: { final: [1] }, negados: 2,
+    t: 'T', raiz: 'R', base: 'B', version: 'abc', resultado: 'COMPLETO', tokens: { final: [1] }, negados: 2, negadosContexto: 1,
     estado: { titulo: 'Titulo', clasificacion: 'sin criterios', subtareas: [{ n: 1, critica: 'sí (#1)' }, { n: 2, critica: 'No — texto' }, { n: 3 }], verificacion_inicial: { resultado: 'RESULTADO: VERDE' } },
     metricas: {
       costo: { inicio: 'I', minutos: 1, roles, veredictos: {} },
@@ -557,7 +586,7 @@ test('estado: filaDelFlujo omite lo que falta y arma subtareas, calidad y uso', 
     { n: 2, critica: false },
     { n: 3, critica: true },
   ])
-  assert.deepEqual(fila.calidad, { final: [{ veredicto: 'APROBADO', items: [] }], negados: 2, alcanceFuera: [], inicial: 'RESULTADO: VERDE' })
+  assert.deepEqual(fila.calidad, { final: [{ veredicto: 'APROBADO', items: [] }], negados: 2, negadosContexto: 1, alcanceFuera: [], inicial: 'RESULTADO: VERDE' })
 })
 
 test('estado: filaDelFlujo marca cortado solo en los exploradores que la guardia cortó', () => {
@@ -627,6 +656,7 @@ test('cierre: anota la fila v2, imprime CONTEXTO y archiva en historial', () => 
   assert.deepEqual(fila.contexto, { primero: 100_000 })
   assert.deepEqual(fila.subtareas, [{ n: 1, critica: true, archivos: 1, mas: 3, menos: 1 }])
   assert.equal(fila.calidad.negados, 0)
+  assert.equal(fila.calidad.negadosContexto, 0)
   assert.equal(fila.calidad.inicial, 'SIN PASOS')
   assert.equal(JSON.parse(fs.readFileSync(path.join(carpeta, 'estado.json'), 'utf8')).resultado, 'COMPLETO')
 
@@ -883,6 +913,28 @@ test('estado: --tanda de 1 solo avisa y sin flujo abierto falla', () => {
   assert.equal(r.codigo, 2)
 })
 
+const abiertas = (estadoJson) => (estadoJson().paralelos ?? []).filter((p) => p.hasta === undefined)
+
+test('estado: --base --sub 2 tras un lote abierto cierra la fase', () => {
+  const { estadoJson, estado } = repoParalelo('paralelo-lote-luego-uno', PASO_DE_OTRO)
+  estado('--base', '--sub', '1,2', '--paso', '5')
+  assert.equal(abiertas(estadoJson).length, 1)
+  estado('--base', '--sub', '3', '--paso', '5')
+  assert.equal(abiertas(estadoJson).length, 0)
+  assert.equal(estadoJson().paralelos.length, 1)
+  assert.deepEqual(estadoJson().en_curso, [3])
+})
+
+test('estado: --tanda 1 cierra la fase abierta', () => {
+  const { estadoJson, estado } = repoParalelo('paralelo-tanda-luego-uno', PASO_DE_OTRO)
+  estado('--tanda', '2', '--paso', '6')
+  assert.equal(abiertas(estadoJson).length, 1)
+  assert.match(estado('--tanda', '1', '--sub', '2', '--paso', '6').salida, /^AVISO: una tanda de 1/m)
+  assert.equal(abiertas(estadoJson).length, 0)
+  assert.equal(estadoJson().paralelos.length, 1)
+  assert.deepEqual(estadoJson().en_curso, [2])
+})
+
 test('estado: --cambios sigue perdonando la salida de un build sin agentes en paralelo', () => {
   const build = [{ nombre: 'build', cmd: escribirCmd('dist/x.js', 'nuevo') }]
   const solo = repoParalelo('paralelo-build', build)
@@ -1046,6 +1098,88 @@ test('estado: --guardar plan con un PARA APROBAR muy largo lo da compacto y una 
   const corto = repoConPlanGuardado('aprobar-corto', Array.from({ length: 20 }, (_, i) => subtareaDePlan(i + 1, `src/f${i + 1}.ts`, como)))
   assert.match(bloqueDe(corto.salida), /^- Cómo: /m)
   assert.match(corto.salida, /→ .*S7\.md$/m)
+})
+
+test('--cambios --sub avisa de any, @ts-ignore y eslint-disable sin justificación en lo agregado; --global no', () => {
+  const { raiz, entorno } = repoConPlanGuardado('tipos', [subtareaDePlan(1, 'src/a.ts, src/b.ts, src/c.ts, src/n.py, src/nuevo.ts')])
+  estadoEn(raiz, ['--base', '--sub', '1', '--paso', '5'], entorno)
+  const escribir = (rel, texto) => fs.writeFileSync(path.join(raiz, rel), texto)
+  escribir('src/a.ts', 'a\nconst x: any = 1\nconst y = 2\n')
+  escribir('src/b.ts', 'b\n// motivo: viene de una lib sin tipos\nconst x: any = 1\nconst z = f() as any // motivo\nlet any = 3\nlet n = any + 1\n')
+  escribir('src/c.ts', 'c\r\nconst l = f<any[]>()\r\n// @ts-ignore\r\nf()\r\n// eslint-disable-next-line no-x -- motivo\r\ng()\r\n')
+  escribir('src/n.py', 'def f(x: any): pass\n')
+  escribir('src/nuevo.ts', 'export const v = (w as any)\n')
+  const c = estadoEn(raiz, ['--cambios', '--sub', '1', '--paso', '6'], entorno).salida
+  assert.match(c, /^AVISO: S1 · src\/a\.ts:2 · «: any» sin justificación$/m)
+  assert.match(c, /^AVISO: S1 · src\/c\.ts:2 · «any\[\]» sin justificación$/m)
+  assert.match(c, /^AVISO: S1 · src\/c\.ts:3 · «@ts-ignore» sin justificación$/m)
+  assert.match(c, /^AVISO: S1 · src\/nuevo\.ts:1 · «as any» sin justificación$/m)
+  assert.equal((c.match(/«/g) ?? []).length, 4, c)
+  assert.doesNotMatch(c, /src\/b\.ts:\d+ · «/)
+  assert.doesNotMatch(c, /n\.py:\d+ · «/)
+  assert.match(c, /ALCANCE: OK\s*$/)
+
+  const g = estadoEn(raiz, ['--cambios', '--global', '--paso', '7'], entorno).salida
+  assert.doesNotMatch(g, /sin justificación/)
+})
+
+test('--cambios --global --paso 6 escribe diff.txt sin recorte', () => {
+  const { raiz, entorno } = repoConPlanGuardado('diff-global', [subtareaDePlan(1, 'src/a.ts')])
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), Array.from({ length: 1500 }, (_, i) => `linea ${i}`).join('\n') + '\n')
+  const salida = estadoEn(raiz, ['--cambios', '--global', '--paso', '6'], entorno).salida
+  const destino = path.join(flujoDe(raiz), 'diff.txt')
+  assert.ok(salida.includes(`DIFF: ${destino}`), salida)
+  assert.ok(salida.indexOf('DIFF: ') < salida.indexOf('CAMBIOS'), salida)
+  const texto = fs.readFileSync(destino, 'utf8')
+  assert.ok(texto.split('\n').length > 1500, 'más líneas que TOPE_DIFF (1000)')
+  assert.doesNotMatch(texto, /… recortado/)
+  assert.match(texto, /linea 1499/)
+  // El --diff por salida estándar sigue cortando en TOPE_DIFF.
+  const base = JSON.parse(fs.readFileSync(path.join(flujoDe(raiz), 'estado.json'), 'utf8')).base_global
+  assert.match(estadoEn(raiz, ['--diff', base, '--permitidos', 'src/a.ts'], entorno).salida, /… recortado: \d+ líneas más/)
+})
+
+test('--cambios --sub del único lote --paso 6 escribe diff.txt; --paso 5 o una parte no lo escribe', () => {
+  const { raiz, entorno } = repoConPlanGuardado('diff-lote', [subtareaDePlan(1, 'src/a.ts'), subtareaDePlan(2, 'src/b.ts'), subtareaDePlan(3, 'src/c.ts', { extra: '- Depende de: S1, S2\n' })])
+  const destino = path.join(flujoDe(raiz), 'diff.txt')
+  estadoEn(raiz, ['--base', '--sub', '1,2', '--paso', '5'], entorno)
+  fs.writeFileSync(path.join(raiz, 'src/a.ts'), 'a2\n')
+  fs.writeFileSync(path.join(raiz, 'src/b.ts'), 'b2\n')
+  assert.doesNotMatch(estadoEn(raiz, ['--cambios', '--sub', '1,2', '--paso', '5'], entorno).salida, /^DIFF: /m)
+  assert.equal(fs.existsSync(destino), false)
+  // Un lote que no cubre todas las subtareas (falta S3) no escribe el diff del flujo.
+  assert.doesNotMatch(estadoEn(raiz, ['--cambios', '--sub', '1,2', '--paso', '6'], entorno).salida, /^DIFF: /m)
+  assert.equal(fs.existsSync(destino), false)
+  assert.doesNotMatch(estadoEn(raiz, ['--cambios', '--global', '--paso', '5'], entorno).salida, /^DIFF: /m)
+  assert.equal(fs.existsSync(destino), false)
+
+  const { raiz: unico, entorno: entornoUnico } = repoConPlanGuardado('diff-unico', [subtareaDePlan(1, 'src/a.ts'), subtareaDePlan(2, 'src/b.ts')])
+  const destinoUnico = path.join(flujoDe(unico), 'diff.txt')
+  estadoEn(unico, ['--base', '--sub', '1,2', '--paso', '5'], entornoUnico)
+  fs.writeFileSync(path.join(unico, 'src/a.ts'), 'a2\n')
+  fs.writeFileSync(path.join(unico, 'src/b.ts'), 'b2\n')
+  const salida = estadoEn(unico, ['--cambios', '--sub', '1,2', '--paso', '6'], entornoUnico).salida
+  assert.ok(salida.includes(`DIFF: ${destinoUnico}`), salida)
+  const texto = fs.readFileSync(destinoUnico, 'utf8')
+  assert.match(texto, /\+a2/)
+  assert.match(texto, /\+b2/)
+})
+
+test('la fila trae negadosContexto con 1 negado por contexto y 1 por política', () => {
+  const { raiz } = estadoCon({}, () => ['--paso', '0'])
+  const hora = new Date().toISOString()
+  const negado = (agente, motivo) => JSON.stringify({ t: hora, rol: 'explorador', agente, herramienta: 'Read', objetivo: 'x', decision: 'negado', motivo }) + '\n'
+  fs.mkdirSync(path.dirname(registroDe(raiz)), { recursive: true })
+  fs.appendFileSync(registroDe(raiz), negado('a1', 'contexto 95k') + negado('a2', 'ruta fuera del repo'))
+  try {
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: raiz, encoding: 'utf8' }).trim()
+    estadoEn(raiz, ['--cambios', sha, '--paso', '7', '--resultado', 'COMPLETO'], { CLAUDE_CONFIG_DIR: transcriptDelFlujo(raiz) })
+    const fila = filasDeFlujos(raiz).at(-1)
+    assert.equal(fila.calidad.negados, 2)
+    assert.equal(fila.calidad.negadosContexto, 1)
+  } finally {
+    borrarRegistro(raiz)
+  }
 })
 
 test.after(() => limpiar())
