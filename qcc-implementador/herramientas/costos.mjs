@@ -544,12 +544,8 @@ function tiemposDeTramos(tramos) {
   return { fases, activo: partes.reduce((s, p) => s + p.activo, 0), espera: partes.reduce((s, p) => s + p.espera, 0), corte: corteDe(tramos) }
 }
 
-/**
- * Los ejecutores del proyecto `raiz` lanzados desde `desde`, de los transcripts de todas sus sesiones, en orden de llegada:
- * `[{ n, estado, correccion, inicio }]` (`n` es la clave de `claveDe`; `estado`, el último `ESTADO:` de su informe o null si no
- * terminó). `estado.mjs` anota así el avance de cada subtarea sin que el orquestador se lo pase.
- */
-export function ejecutoresDelProyecto(raiz, desde, proyectos = proyectosDe()) {
+/** Los subagentes del proyecto `raiz` lanzados desde `desde`, de los transcripts de todas sus sesiones, en orden de llegada: `[{ id, prompt, filas, inicio }]`. */
+function agentesDelProyecto(raiz, desde, proyectos) {
   const limite = Date.parse(desde) - 60_000
   const carpeta = carpetaDe(raiz, proyectos)
   let sesiones = []
@@ -558,7 +554,7 @@ export function ejecutoresDelProyecto(raiz, desde, proyectos = proyectosDe()) {
   } catch {
     return []
   }
-  const ejecutores = []
+  const agentes = []
   for (const sub of sesiones) {
     let nombres = []
     try {
@@ -569,12 +565,35 @@ export function ejecutoresDelProyecto(raiz, desde, proyectos = proyectosDe()) {
     for (const a of nombres) {
       const filas = filasDe(path.join(sub, a))
       const inicio = filas.find((f) => f.timestamp)?.timestamp
-      const prompt = textoDe(filas.find((f) => f.type === 'user')?.message?.content)
-      if (!inicio || Date.parse(inicio) < Date.parse(desde) || !/^\s*SUBTAREA[ :]/m.test(prompt)) continue
-      ejecutores.push({ n: claveDe(prompt), estado: informesDe(filas, 'ejecutor').at(-1)?.veredicto ?? null, correccion: prompt.includes('CORRECCIÓN'), inicio })
+      if (!inicio || Date.parse(inicio) < Date.parse(desde)) continue
+      agentes.push({ id: a.replace(/^agent-/, '').replace(/\.jsonl$/, ''), prompt: textoDe(filas.find((f) => f.type === 'user')?.message?.content), filas, inicio })
     }
   }
-  return ejecutores.sort((a, b) => Date.parse(a.inicio) - Date.parse(b.inicio))
+  return agentes.sort((a, b) => Date.parse(a.inicio) - Date.parse(b.inicio))
+}
+
+/** Lo que sigue a `BLOQUEOS:` en el informe de un ejecutor, en una línea (` / ` entre renglones); null si falta o es «ninguno». */
+export function bloqueosDe(texto) {
+  const m = /^[\s*_>`-]*BLOQUEOS(?:\*\*)?:([\s\S]*)$/m.exec(String(texto ?? ''))
+  const una = (m?.[1] ?? '').split('\n').map((l) => l.trim()).filter(Boolean).join(' / ')
+  return una && !/^\**ningun[oa]s?\.?\**$/i.test(una) ? una : null
+}
+
+/**
+ * Los ejecutores del proyecto `raiz` lanzados desde `desde`, de los transcripts de todas sus sesiones, en orden de llegada:
+ * `[{ n, estado, correccion, inicio, bloqueos }]` (`n` es la clave de `claveDe`; `estado`, el último `ESTADO:` de su informe o null si no
+ * terminó; `bloqueos`, los de ese informe, de `bloqueosDe`). `estado.mjs` anota así el avance de cada subtarea sin que el orquestador se lo pase.
+ */
+export function ejecutoresDelProyecto(raiz, desde, proyectos = proyectosDe()) {
+  return agentesDelProyecto(raiz, desde, proyectos).filter((a) => /^\s*SUBTAREA[ :]/m.test(a.prompt)).map((a) => {
+    const informe = informesDe(a.filas, 'ejecutor').at(-1)
+    return { n: claveDe(a.prompt), estado: informe?.veredicto ?? null, correccion: a.prompt.includes('CORRECCIÓN'), inicio: a.inicio, bloqueos: bloqueosDe(informe?.texto) }
+  })
+}
+
+/** Las revisiones finales del proyecto `raiz` lanzadas desde `desde` (despacho que empieza con `QUÉ REVISAR:`), en orden de llegada: `[{ id, inicio }]`. */
+export function revisoresDelProyecto(raiz, desde, proyectos = proyectosDe()) {
+  return agentesDelProyecto(raiz, desde, proyectos).filter((a) => /^\s*QUÉ REVISAR:/m.test(a.prompt)).map(({ id, inicio }) => ({ id, inicio }))
 }
 
 /** Los ejecutores agrupados por subtarea (`1`, `2`… o `final`): `{ segundos, correcciones, estado, esfuerzo }`. */

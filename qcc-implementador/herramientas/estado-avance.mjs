@@ -5,19 +5,9 @@ import path from 'node:path'
 import { regexDePermiso, motivoFijoDe, RAIZ } from './guardia.mjs'
 import { ultimaVerde } from './verificar.mjs'
 import { pedidoDelFlujo, ejecutoresDelProyecto } from './costos.mjs'
-import { listaPermitidos, corto, foto, FLUJO, leerTexto, leerEstado, anotarEstado, basesDe, sesionesDe, sesionActual, tramosDeLimites, tramoNuevo, anotarLimites, avanceDe, listaDe, esperarInicial, loteDe, TOPE_PARALELOS, paralelosDe, cerrarParalelos } from './estado-base.mjs'
+import { listaPermitidos, corto, foto, FLUJO, TERMINADA, seccionDe, leerTexto, leerEstado, anotarEstado, basesDe, sesionesDe, sesionActual, tramosDeLimites, tramoNuevo, anotarLimites, avanceDe, listaDe, esperarInicial, loteDe, TOPE_PARALELOS, paralelosDe, cerrarParalelos } from './estado-base.mjs'
 import { partesDelPlan, lotesDe, lineasDeDecisiones, aprobacionDe } from './estado-plan.mjs'
-
-/** El tramo de `texto` desde la línea que empieza con `desde` (incluida) hasta la primera que empiece con algo de `hasta`; '' si no está. */
-function seccionDe(texto, desde, hasta) {
-  const lineas = String(texto ?? '').split('\n')
-  const k = lineas.findIndex((l) => l.replace(/^[\s*_]+/, '').startsWith(desde))
-  if (k < 0) return ''
-  const fin = lineas.findIndex((l, i) => i > k && hasta.some((h) => l.replace(/^[\s*_]+/, '').startsWith(h)))
-  return lineas.slice(k, fin < 0 ? undefined : fin).join('\n').trim()
-}
-
-export const TERMINADA = new Set(['HECHO', 'OMITIDA'])
+import { despachosDelLote, despachoRevision } from './estado-despachos.mjs'
 
 /**
  * Dónde sigue el flujo, de lo guardado en su carpeta: `{ sigue, pendientes }`. `sigue` es la línea `SIGUE: paso <n> · …` y
@@ -54,11 +44,9 @@ export function siguienteDe(e, correcciones = []) {
   const texto = leerTexto(ultima.archivo) ?? ''
   pendientes.push(`REVISIÓN ${ultima.c}: ${ultima.veredicto ?? 'sin VEREDICTO'} → ${ultima.archivo}`)
   if (ultima.veredicto === 'APROBADO') return { sigue: 'SIGUE: paso 7 · cierre (revisión final APROBADO)', pendientes }
-  const owner = seccionDe(texto, 'SALIDA DEL OWNER:', [])
-  if (owner) pendientes.push(owner)
   if (ultima.veredicto !== 'RECHAZADO') return { sigue: `SIGUE: paso 6 · revisión ciclo ${ultima.c} (volvió sin VEREDICTO: relánzala)`, pendientes }
-  const problemas = seccionDe(texto, 'PROBLEMAS:', ['SIN EJECUTAR:', 'OBSERVACIONES:'])
-  const criterios = seccionDe(texto, 'CRITERIOS:', ['PROBLEMAS:', 'SIN EJECUTAR:', 'OBSERVACIONES:'])
+  const problemas = seccionDe(texto, 'PROBLEMAS:', ['OBSERVACIONES:'])
+  const criterios = seccionDe(texto, 'CRITERIOS:', ['PROBLEMAS:', 'OBSERVACIONES:'])
   pendientes.push('PROBLEMAS ABIERTOS (literales):', problemas || '(no encontré PROBLEMAS en el reporte)', 'CRITERIOS (literales):', criterios || '(no encontré CRITERIOS en el reporte)')
   if (ultima.c >= maximo) return { sigue: `SIGUE: paso 7 · cierre DETENIDO:6 (${maximo} ciclo(s) de la revisión final agotados)`, pendientes }
   const tanda = listaDe(e, 'tandas').find((t) => Date.parse(t.t) > Date.parse(ultima.t))
@@ -113,6 +101,9 @@ export function mostrarEstado() {
   const { sigue, pendientes } = siguienteDe(e, correcciones)
   console.log(sigue)
   if (pendientes.length) console.log(`PENDIENTES:\n${pendientes.map((l) => l.split('\n').map((x) => `  ${x}`).join('\n')).join('\n')}`)
+  // El despacho de lo que sigue, para retomar sin rearmarlo.
+  if (sigue.startsWith('SIGUE: paso 5')) for (const l of despachosDelLote(e)) console.log(l)
+  else if (sigue.startsWith('SIGUE: paso 6 · revisión')) for (const l of despachoRevision(e)) console.log(l)
 }
 
 /**
@@ -157,11 +148,16 @@ export function reanudar() {
   }
 }
 
-/** `--aprobado [--ajustes "<texto>"]`: anota que el usuario aprobó el plan guardado, con los AJUSTES AL PLAN (los que el orquestador mostró). */
-export function aprobar(ajustes, sumar) {
+/**
+ * `--aprobado [--ajustes "<texto>"] [--sumar "…"] [--permisos P1,P2]`: anota que el usuario aprobó el plan guardado, con los AJUSTES
+ * AL PLAN (los que el orquestador mostró) y los permisos que aprobó, e imprime los despachos del primer lote. Valida todo antes de
+ * escribir: un `--sumar` o un permiso inválido no anota nada.
+ */
+export function aprobar(ajustes, sumar, permisos) {
   const e = leerEstado()
   if (!e.base_global || e.cierre) throw new Error('el flujo no está abierto: no hay dónde anotar la aprobación (corre el preflight)')
   if (!e.plan) throw new Error('no hay plan guardado que aprobar (--guardar <agentId> plan)')
+  const conPermisos = permisos === undefined ? null : permisosConAprobacion(e, /^[PN][1-9]\d*(,[PN][1-9]\d*)*$/i.test(permisos) ? permisos.toUpperCase() : null, '--permisos')
   const texto = String(ajustes ?? '').trim()
   let subtareas = Array.isArray(e.subtareas) ? e.subtareas : []
   // `--sumar "S<n>:<ruta>,<ruta>;S<m>:…"`: se valida todo antes de escribir nada.
@@ -176,9 +172,11 @@ export function aprobar(ajustes, sumar) {
       return suyas.length ? { ...s, permitidos: [...new Set([...(Array.isArray(s.permitidos) ? s.permitidos : []), ...suyas])] } : s
     })
   }
-  anotarEstado({ aprobacion: { t: new Date().toISOString(), ajustes: texto }, ...(sumar !== undefined ? { subtareas } : {}) })
+  anotarEstado({ aprobacion: { t: new Date().toISOString(), ajustes: texto }, ...(sumar !== undefined ? { subtareas } : {}), ...(conPermisos ? { permisos: conPermisos.permisos } : {}) })
   console.log(`APROBADO: plan de ${subtareas.length} subtarea(s) · ajustes: ${texto ? 'anotados' : 'ninguno'}`)
+  for (const id of conPermisos?.lista ?? []) console.log(`PERMISO: ${id} aprobado`)
   if (sumar !== undefined) console.log(`LOTES: ${lotesDe(subtareas).map((l) => l.map((n) => `S${n}`).join('+')).join(' | ')}`)
+  for (const l of despachosDelLote(leerEstado())) console.log(l)
 }
 
 /**
@@ -194,7 +192,8 @@ export function anotarAvance(miembros, desde, omitida) {
     for (const n of miembros) {
       const suyos = ejecutores.filter((x) => x.n === String(n))
       const estado = omitida ? 'OMITIDA' : suyos.at(-1)?.estado ?? 'MEDIDA'
-      avance[String(n)] = { estado, ciclos: suyos.filter((x) => x.correccion).length, t }
+      const bloqueos = omitida ? null : suyos.at(-1)?.bloqueos
+      avance[String(n)] = { estado, ciclos: suyos.filter((x) => x.correccion).length, t, ...(bloqueos ? { bloqueos } : {}) }
     }
     anotarEstado({ avance })
     console.log(`AVANCE: ${miembros.map((n) => `S${n} ${avance[String(n)].estado}`).join(' · ')}`)
@@ -287,12 +286,19 @@ export function aprobarPermiso(ids, accion) {
   if (accion !== 'aprobado') throw new Error(`--permiso ${ids}: solo vale «aprobado» (vino «${accion}»)`)
   const e = leerEstado()
   if (!e.base_global || e.cierre) throw new Error('el flujo no está abierto: no hay dónde anotar la aprobación (corre el preflight)')
+  const { permisos, lista } = permisosConAprobacion(e, ids, '--permiso')
+  anotarEstado({ permisos })
+  for (const id of lista) console.log(`PERMISO: ${id} aprobado`)
+}
+
+/** `{ permisos, lista }`: los `permisos` del estado con `aprobado: <ahora>` en cada id de `ids` («P1,P2»); lanza si `ids` es null o algún id no está en el plan. */
+function permisosConAprobacion(e, ids, opcion) {
+  if (ids === null) throw new Error(`${opcion} necesita ids de permisos del plan (P<n> o N<n>, varios con coma)`)
   const previas = e.permisos && typeof e.permisos === 'object' && !Array.isArray(e.permisos) ? e.permisos : {}
   const lista = [...new Set(ids.split(','))]
   for (const id of lista) if (!previas[id]) throw new Error(`${id} no está en los permisos del plan guardado`)
   const ahora = new Date().toISOString()
-  anotarEstado({ permisos: { ...previas, ...Object.fromEntries(lista.map((id) => [id, { ...previas[id], aprobado: ahora }])) } })
-  for (const id of lista) console.log(`PERMISO: ${id} aprobado`)
+  return { permisos: { ...previas, ...Object.fromEntries(lista.map((id) => [id, { ...previas[id], aprobado: ahora }])) }, lista }
 }
 
 const RE_PERMISO_NUEVO = /^(.+?)\s+·\s+(.+?)\s+·\s+reversible\s*:\s*(sí|si|no)\s+·\s+Qué hace\s*:\s*(.+?)\s+·\s+Para qué\s*:\s*(.+)$/is

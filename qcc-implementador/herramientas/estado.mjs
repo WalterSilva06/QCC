@@ -2,16 +2,16 @@
 // Estado git del flujo /impl (nivel usuario: sirve para
 // cualquier proyecto con git). El proyecto es el repo que contiene el directorio actual.
 // Este archivo es la entrada (opciones y despacho); el código vive en los módulos hermanos `estado-*.mjs`:
-// base (git, fotos, estado.json), plan, exploracion, guardar, avance, preflight, cambios y cierre.
+// base (git, fotos, estado.json), plan, exploracion, guardar, avance, despachos, preflight, cambios y cierre.
 //
 //   node <plugin>/herramientas/estado.mjs [--paso <n>] [--forzar]  preflight + foto global; abre la carpeta del flujo
 //   node <plugin>/herramientas/estado.mjs --base [--paso <n>]   foto nueva: BASE=<sha> DESDE=<iso>
 //   node <plugin>/herramientas/estado.mjs --base --sub <n> [--paso <n>]   foto de la subtarea n, guardada en la carpeta del flujo (si ya hay, conserva la primera)
 //   node <plugin>/herramientas/estado.mjs --cambios <BASE> --desde <iso> --permitidos "<a,b>" [--paso <n>] [--tokens "<rol>=<n>,…"] [--resultado COMPLETO|DETENIDO:<0-7>]
-//   node <plugin>/herramientas/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--omitida] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo; --sub anota el avance de sus subtareas (--omitida: OMITIDA)
+//   node <plugin>/herramientas/estado.mjs --cambios --sub <n>|--global [--permitidos "<ampliados>"] [--omitida] [--paso <n>] [--tokens "…"] [--resultado …]   BASE, DESDE y permitidos salen de la carpeta del flujo; --sub anota el avance de sus subtareas (--omitida: OMITIDA) e imprime los despachos del lote siguiente o de la revisión final; --global en el paso 6, el del ciclo siguiente de la revisión
 //   node <plugin>/herramientas/estado.mjs --diff <BASE> [--permitidos "<a,b>"] [--paso <n>] [-- <rutas>]
-//   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion|revision [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s), avisa con SIN EXPLORAR, y solo en la primera corrida con LARGO y REINTENTO (en la segunda, INCOMPLETO, CORTADO y SIN EXPLORAR salen solo de los ids nuevos). La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección. La revisión final va a revision-<ciclo>.md
-//   node <plugin>/herramientas/estado.mjs --aprobado [--ajustes "<texto>"] [--sumar "S<n>:<ruta>,<ruta>;S<m>:…"] [--paso <n>]   anota que el usuario aprobó el plan, con los AJUSTES AL PLAN; --sumar agrega rutas a los permitidos y reimprime LOTES:
+//   node <plugin>/herramientas/estado.mjs --guardar <agentId>[,<agentId>…] plan|exploracion|revision [--ajuste] [--paso <n>]   el plan imprime también las DECISIONES (ciclos, CRÍTICO, ASPECTOS); la exploración, la VERIFICACIÓN INICIAL (espera hasta 570 s), avisa con SIN EXPLORAR, y solo en la primera corrida con LARGO y REINTENTO (en la segunda, INCOMPLETO, CORTADO y SIN EXPLORAR salen solo de los ids nuevos). La lista con comas es solo para exploracion: une los informes en un exploracion.md y avisa con INCOMPLETO del que le falte una sección. La revisión final va a revision-<ciclo>.md (también sola: la guardan --estado, --reanudar, --tanda y el --cambios --global de los pasos 6 y 7)
+//   node <plugin>/herramientas/estado.mjs --aprobado [--ajustes "<texto>"] [--sumar "S<n>:<ruta>,<ruta>;S<m>:…"] [--permisos P1,P2] [--paso <n>]   anota que el usuario aprobó el plan, con los AJUSTES AL PLAN y los permisos aprobados; --sumar agrega rutas a los permitidos y reimprime LOTES:; imprime los despachos del primer lote
 //   node <plugin>/herramientas/estado.mjs --estado [--paso <n>]  qué lleva el flujo en curso (con las DECISIONES del plan, la VERIFICACIÓN INICIAL y la línea SIGUE)
 //   node <plugin>/herramientas/estado.mjs --reanudar [--paso <n>]  sigue un flujo cortado en esta sesión sin vaciar su carpeta: lo de --estado más el PEDIDO y lo pendiente
 //   node <plugin>/herramientas/estado.mjs --permiso-nuevo "<comando> · <servicio> · reversible: sí|no · Qué hace: … · Para qué: …" --sub <n> [--paso <n>]  agrega un permiso N<k> ya aprobado al ejecutor de la subtarea n
@@ -52,8 +52,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { RAIZ } from './guardia.mjs'
 import { WIN, listaPermitidos, git, foto, exigirBase, FLUJO, leerEstado, anotarEstado, anotarLimites, paralelosDe, cerrarParalelos } from './estado-base.mjs'
-import { guardar } from './estado-guardar.mjs'
+import { guardar, guardarRevisionesNuevas } from './estado-guardar.mjs'
 import { mostrarEstado, reanudar, aprobar, anotarAvance, fotoDeSubtarea, abrirTanda, aprobarPermiso, permisoNuevo, contextoDelFlujo } from './estado-avance.mjs'
+import { despachosTrasLote, despachoRevision } from './estado-despachos.mjs'
 import { preflight, imprimirReglas, imprimirGuia } from './estado-preflight.mjs'
 import { avisosDeTipos, cambios, diff } from './estado-cambios.mjs'
 import { cancelar } from './estado-cierre.mjs'
@@ -78,7 +79,7 @@ function subDe(texto) {
  * valen solo antes de `--`; lo de después son rutas. Precedencia: --reglas > --guia > --reanudar > --estado > --aprobado > --cancelar > --guardar > --permiso > --permiso-nuevo > --tanda > --base > --cambios > --diff > preflight.
  * `paso` es un entero de 0 a 7 o null (con `aviso` si venía y no valía). `tokens` es el valor crudo de `--tokens`;
  * `resultado`, el de `--resultado` (`''` si el flag viene sin valor; undefined si no viene); `agente` y `tipo`, los dos valores que siguen a `--guardar` (`agente` es el texto crudo: varios ids van separados por coma, sin espacios).
- * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta) y, con `--parte <k>`, `parte` (el texto crudo). `--omitida` agrega `omitida: true`; `--aprobado` agrega `ajustes` (el valor de `--ajustes`, `''` si falta) y, con `--sumar`, `sumar` (el valor crudo, `''` si falta). `--permiso <Pn|Nn[,Pm…]> aprobado` es el modo `permiso` y agrega `permiso` (el id, o los ids separados por coma, en mayúsculas; null si no vale) y `accion` (la palabra que sigue, `''` si falta). `--permiso-nuevo "<texto>"` es el modo `permisoNuevo` y agrega `permisoNuevo` (el texto crudo, `''` si falta). `--tanda <n>` es el modo `tanda` y agrega `tanda` (el entero ≥ 1; null si no vale). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
+ * `--guia <nombre>` agrega `guia` (el nombre, `''` si falta) y, con `--parte <k>`, `parte` (el texto crudo). `--omitida` agrega `omitida: true`; `--aprobado` agrega `ajustes` (el valor de `--ajustes`, `''` si falta) y, con `--sumar` o `--permisos`, `sumar` o `permisos` (el valor crudo, `''` si falta). `--permiso <Pn|Nn[,Pm…]> aprobado` es el modo `permiso` y agrega `permiso` (el id, o los ids separados por coma, en mayúsculas; null si no vale) y `accion` (la palabra que sigue, `''` si falta). `--permiso-nuevo "<texto>"` es el modo `permisoNuevo` y agrega `permisoNuevo` (el texto crudo, `''` si falta). `--tanda <n>` es el modo `tanda` y agrega `tanda` (el entero ≥ 1; null si no vale). `--sub <n>` agrega `sub` (el entero ≥ 1; `1,2` da la lista `[1, 2]` de un lote; null si no vale) y `--global` agrega `global: true`; sin el flag no aparece la clave.
  * En modo `cambios` con alguno de los dos, `base` queda undefined si lo que sigue a `--cambios` es otra opción.
  */
 export function opcionesDe(args) {
@@ -139,6 +140,7 @@ export function opcionesDe(args) {
     ...(opciones.includes('--omitida') ? { omitida: true } : {}),
     ...(modo === 'aprobado' ? { ajustes: /^--/.test(valor('--ajustes') ?? '--') ? '' : valor('--ajustes') } : {}),
     ...(modo === 'aprobado' && opciones.includes('--sumar') ? { sumar: /^--/.test(valor('--sumar') ?? '--') ? '' : valor('--sumar') } : {}),
+    ...(modo === 'aprobado' && opciones.includes('--permisos') ? { permisos: /^--/.test(valor('--permisos') ?? '--') ? '' : valor('--permisos') } : {}),
     ...(modo === 'tanda' ? { tanda: /^[1-9]\d*$/.test(valor('--tanda') ?? '') ? Number(valor('--tanda')) : null } : {}),
     ...(modo === 'permisoNuevo' ? { permisoNuevo: valor('--permiso-nuevo') ?? '' } : {}),
     ...(modo === 'permiso' ? { permiso: /^[PN][1-9]\d*(,[PN][1-9]\d*)*$/i.test(valor('--permiso') ?? '') ? valor('--permiso').toUpperCase() : null, accion: /^--/.test(valor('--permiso', 2) ?? '--') ? '' : valor('--permiso', 2) } : {}),
@@ -146,7 +148,7 @@ export function opcionesDe(args) {
 }
 
 function main() {
-  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia, parte, permiso, accion, permisoNuevo: textoNuevo, tanda, omitida, ajustes, sumar } = opcionesDe(process.argv.slice(2))
+  const { modo, base, desde, permitidos, rutas, paso, aviso, tokens, resultado, agente, tipo, ajuste, forzar, sub, global, guia, parte, permiso, accion, permisoNuevo: textoNuevo, tanda, omitida, ajustes, sumar, permisos } = opcionesDe(process.argv.slice(2))
   if (aviso) console.log(`AVISO: ${aviso}`)
   // Ni las reglas ni el estado necesitan git: las reglas se inyectan antes del preflight.
   if (modo === 'reglas') {
@@ -159,6 +161,8 @@ function main() {
   }
   // Cada comando del orquestador (lleva `--paso`) pone al día la lectura final de límites del flujo abierto.
   if (paso !== null && modo !== 'preflight' && modo !== 'reanudar') anotarLimites(paso)
+  // La revisión final se guarda sola: antes de lo que la lee (la tanda, el estado, el alcance global del paso 6 y el cierre).
+  if (['estado', 'reanudar', 'tanda'].includes(modo) || (modo === 'cambios' && global && (paso === 6 || paso === 7))) guardarRevisionesNuevas()
   if (modo === 'estado') {
     mostrarEstado()
     return
@@ -166,7 +170,7 @@ function main() {
   if (modo === 'reanudar' || modo === 'aprobado') {
     try {
       if (modo === 'reanudar') reanudar()
-      else aprobar(ajustes, sumar)
+      else aprobar(ajustes, sumar, permisos)
     } catch (e) {
       console.log(`ERROR: ${e.message}`)
       process.exitCode = 2
@@ -248,6 +252,9 @@ function main() {
           }
         }
       }
+      // El despacho de lo que sigue sale un paso antes: el Agent va en el mismo mensaje que su Bash.
+      if (del.miembros?.length) for (const l of despachosTrasLote(leerEstado())) console.log(l)
+      else if (global && paso === 6 && leerEstado().revisiones?.length) for (const l of despachoRevision(leerEstado())) console.log(l)
       try {
         cambios(del.base, del.desde, del.permitidos, paso, tokens, resultado, paralelos)
       } finally {

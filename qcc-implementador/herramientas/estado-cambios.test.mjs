@@ -988,13 +988,19 @@ test('estado: --reanudar sigue un flujo cortado sin vaciar su carpeta, en el pas
   assert.match(antes, /^SIGUE: paso 4 · aprobación del plan/m)
   assert.match(antes, /^PARA APROBAR /m)
 
-  assert.match(estadoEn(raiz, ['--aprobado', '--ajustes', 'S2 sin tests nuevos', '--paso', '4'], entorno).salida, /^APROBADO: plan de 3 subtarea\(s\) · ajustes: anotados$/m)
+  const aprobado = estadoEn(raiz, ['--aprobado', '--ajustes', 'S2 sin tests nuevos', '--paso', '4'], entorno).salida
+  assert.match(aprobado, /^APROBADO: plan de 3 subtarea\(s\) · ajustes: anotados$/m)
+  // La aprobación imprime los despachos del primer lote, ya llenos (Crítica: no → effort medium).
+  assert.match(aprobado, /^DESPACHO S1 \(Agent: subagent_type "impl:qcc-ejecutor", description "S1: Tarea 1", effort "medium"\):\nSUBTAREA 1\/3: Tarea 1\nCONTRATO: .*S1\.md .*\nARCHIVOS PERMITIDOS: src\/a\.ts\nAJUSTES: S2 sin tests nuevos \(del plan aprobado: aplica solo lo que toca a S1\)\nCONTEXTO: en el CONTRATO\nYA HECHO: nada\nLOTE: S1\+S2\nREGLAS: ninguna\nFIN DESPACHO S1$/m)
+  assert.match(aprobado, /^DESPACHO S2 /m)
+  assert.doesNotMatch(aprobado, /^DESPACHO S3 /m)
   // Cortado a mitad del lote 1 (foto tomada, ejecutores sin volver).
   const foto = /^BASE=(\w+) DESDE=(\S+)$/m.exec(estadoEn(raiz, ['--base', '--sub', '1,2', '--paso', '5'], entorno).salida)
   const enLote = reanudar()
   assert.match(enLote, /^SIGUE: paso 5 · lote 1\/2 \(S1\+S2\)$/m)
   assert.match(enLote, new RegExp(`^ {2}S1 · a medias \\(foto sin --cambios\\).* · FOTO BASE=${foto[1]} DESDE=${foto[2]}$`, 'm'))
   assert.match(enLote, /^AJUSTES AL PLAN: S2 sin tests nuevos$/m)
+  assert.match(enLote, /^DESPACHO S1 [\s\S]*^DESPACHO S2 /m)
   assert.match(enLote, /^REANUDADO: misma sesión del flujo/m)
   assert.ok(fs.existsSync(path.join(carpeta, 'S1.md')), 'no vacía la carpeta')
   assert.equal(estadoJson().en_curso, undefined)
@@ -1009,10 +1015,14 @@ test('estado: --reanudar sigue un flujo cortado sin vaciar su carpeta, en el pas
   assert.match(conFalla, /^ {2}S2 · FALLA \(0 correcciones\) · FOTO /m)
   assert.doesNotMatch(conFalla.split('PENDIENTES:')[1], /^ {2}S1 · /m)
   assert.match(conFalla, /^PERMITIDOS AMPLIADOS: src\/extra\.ts$/m)
+  assert.doesNotMatch(conFalla, /^DESPACHO /m, 'S2 espera su corrección, no un despacho nuevo')
 
   // La corrección de S2 vuelve HECHO: el lote 1 terminó y sigue el lote 2, sin empezar.
   subagente(claude, raiz, 'sesion-b', 'e3', 'impl:qcc-ejecutor', 'SUBTAREA 2/3: Tarea 2\nCORRECCIÓN 1/2: corrige la causa', 'ESTADO: HECHO')
-  assert.match(estadoEn(raiz, ['--cambios', '--sub', '2', '--paso', '5'], entorno).salida, /^AVANCE: S1 HECHO · S2 HECHO$/m)
+  const corregida = estadoEn(raiz, ['--cambios', '--sub', '2', '--paso', '5'], entorno).salida
+  assert.match(corregida, /^AVANCE: S1 HECHO · S2 HECHO$/m)
+  assert.match(corregida, /^YA HECHO: S1 · Tarea 1; S2 · Tarea 2$/m, 'el --cambios del lote da el despacho del siguiente')
+  assert.match(corregida, /^LOTE: ninguno$/m)
   assert.equal(estadoJson().avance['2'].ciclos, 1)
   const lote2 = reanudar()
   assert.match(lote2, /^SIGUE: paso 5 · lote 2\/2 \(S3\)$/m)
@@ -1034,18 +1044,27 @@ test('estado: --reanudar en la revisión final da el ciclo que sigue y los PROBL
   const claude = entorno.CLAUDE_CONFIG_DIR
   const reanudar = () => estadoEn(raiz, ['--reanudar', '--paso', '6'], entorno).salida
   estadoEn(raiz, ['--aprobado', '--paso', '4'], entorno)
+  const salidas = []
   for (const n of [1, 2]) {
     estadoEn(raiz, ['--base', '--sub', String(n), '--paso', '5'], entorno)
-    subagente(claude, raiz, 's1', `e${n}`, 'impl:qcc-ejecutor', `SUBTAREA ${n}/2: x`, 'ESTADO: HECHO')
-    estadoEn(raiz, ['--cambios', '--sub', String(n), '--paso', '5'], entorno)
+    subagente(claude, raiz, 's1', `e${n}`, 'impl:qcc-ejecutor', `SUBTAREA ${n}/2: x`, n === 2 ? 'ESTADO: HECHO\nBLOQUEOS: el borde b(0) queda sin test' : 'ESTADO: HECHO\nBLOQUEOS: ninguno')
+    salidas.push(estadoEn(raiz, ['--cambios', '--sub', String(n), '--paso', '5'], entorno).salida)
   }
+  // Tras el último lote, el despacho de la revisión final del ciclo 1, con los BLOQUEOS literales de cada ejecutor.
+  assert.match(salidas[1], /^DESPACHO REVISIÓN FINAL \(Agent: subagent_type "impl:qcc-revisor"/m)
+  assert.match(salidas[1], new RegExp(`^DIFF: ${path.join(flujoDe(raiz), 'diff.txt').replace(/\\/g, '\\\\')}$`, 'm'))
+  assert.match(salidas[1], /^S1: HECHO \(0 correcciones\) · nota: ninguna$/m)
+  assert.match(salidas[1], /^S2: HECHO \(0 correcciones\) · nota: el borde b\(0\) queda sin test$/m)
+  assert.doesNotMatch(salidas[1], /^REVISIÓN ANTERIOR:/m)
   const reporte = 'VEREDICTO: RECHAZADO\nVERIFICACIÓN: orquestador · RESULTADO: VERDE\nCRITERIOS:\nS1 — ok\nS2 — no: falta el borde\nPROBLEMAS:\nsrc/b.ts:3 — sin borde — que lo maneje · repro: b(0) → lanza\nOBSERVACIONES: ninguna'
-  subagente(claude, raiz, 's1', 'rev1', 'impl:qcc-revisor', 'QUÉ REVISAR: cambio completo (2 subtarea(s))\nSALIDA DEL OWNER: sin ejecutar\nNO corras verificar.mjs.\nCRÍTICO: ninguno', reporte)
-  const guardada = estadoEn(raiz, ['--guardar', 'rev1', 'revision', '--paso', '6'], entorno).salida
+  subagente(claude, raiz, 's1', 'rev1', 'impl:qcc-revisor', 'QUÉ REVISAR: cambio completo (2 subtarea(s))\nNO corras verificar.mjs.\nCRÍTICO: ninguno', reporte)
+  // La revisión se guarda sola en el siguiente comando que la lee (aquí, --reanudar).
+  const guardada = reanudar()
   const archivo = path.join(flujoDe(raiz), 'revision-1.md')
   assert.equal(/^GUARDADO: revisión ciclo 1 \(RECHAZADO\) → (.*)$/m.exec(guardada)?.[1], archivo)
-  assert.equal(fs.readFileSync(archivo, 'utf8'), `${reporte}\n\nSALIDA DEL OWNER: sin ejecutar\n`)
-  // Volver a guardar el mismo agente no suma un ciclo.
+  assert.equal(fs.readFileSync(archivo, 'utf8'), `${reporte}\n`)
+  assert.doesNotMatch(reanudar(), /^GUARDADO:/m)
+  // Volver a guardar el mismo agente a mano no suma un ciclo.
   assert.match(estadoEn(raiz, ['--guardar', 'rev1', 'revision', '--paso', '6'], entorno).salida, /^GUARDADO: revisión ciclo 1 /m)
 
   // «sin criterios» da un solo ciclo: RECHAZADO en el ciclo 1 ya los agota y sigue el cierre DETENIDO.
@@ -1057,7 +1076,7 @@ test('estado: --reanudar en la revisión final da el ciclo que sigue y los PROBL
   assert.match(sinTanda, /^SIGUE: paso 6 · correcciones del ciclo 1 \(los PROBLEMAS de abajo\)$/m)
   assert.ok(sinTanda.includes('  PROBLEMAS:\n  src/b.ts:3 — sin borde — que lo maneje · repro: b(0) → lanza\n'))
   assert.ok(sinTanda.includes('  CRITERIOS:\n  S1 — ok\n  S2 — no: falta el borde\n'))
-  assert.match(sinTanda, /^ {2}SALIDA DEL OWNER: sin ejecutar$/m)
+  assert.doesNotMatch(sinTanda, /^DESPACHO /m)
 
   // Con la tanda abierta y sus ejecutores sin volver, la tanda está a medias; con los dos de vuelta, sigue el ciclo 2.
   const tanda = /^BASE=(\w+)$/m.exec(estadoEn(raiz, ['--tanda', '2', '--paso', '6'], entorno).salida)[1]
@@ -1069,12 +1088,23 @@ test('estado: --reanudar en la revisión final da el ciclo que sigue y los PROBL
   assert.match(ciclo2, /^SIGUE: paso 6 · revisión ciclo 2 /m)
   assert.ok(ciclo2.includes('src/b.ts:3 — sin borde'))
   assert.match(ciclo2, new RegExp(`TANDA DEL CICLO 1: BASE=${tanda}`))
+  // El despacho del ciclo 2 (también lo da el --cambios --global del paso 6): con REVISIÓN ANTERIOR y sin DIFF.
+  for (const salida of [ciclo2, estadoEn(raiz, ['--cambios', '--global', '--paso', '6'], entorno).salida]) {
+    const despacho = /^DESPACHO REVISIÓN FINAL[\s\S]*?^FIN DESPACHO REVISIÓN FINAL$/m.exec(salida)?.[0] ?? ''
+    assert.match(despacho, /^REVISIÓN ANTERIOR:\nPROBLEMAS:\nsrc\/b\.ts:3 — sin borde — que lo maneje · repro: b\(0\) → lanza\nCRITERIOS:\nS1 — ok\nS2 — no: falta el borde\n/m)
+    assert.match(despacho, new RegExp(`^BASE DE LA CORRECCIÓN: ${tanda}$`, 'm'))
+    assert.doesNotMatch(despacho, /^DIFF:/m)
+  }
 
-  // Con la revisión APROBADO, el cierre; sin flujo o ya cerrado, --reanudar no tiene qué seguir.
-  subagente(claude, raiz, 's1', 'rev2', 'impl:qcc-revisor', 'QUÉ REVISAR: cambio completo', 'VEREDICTO: APROBADO\nOBSERVACIONES: ninguna')
-  assert.match(estadoEn(raiz, ['--guardar', 'rev2', 'revision', '--paso', '6'], entorno).salida, /^GUARDADO: revisión ciclo 2 \(APROBADO\)/m)
-  assert.match(reanudar(), /^SIGUE: paso 7 · cierre/m)
-  estadoEn(raiz, ['--cambios', '--global', '--paso', '7', '--resultado', 'COMPLETO'], entorno)
+  // Con la revisión APROBADO, el cierre (con su esqueleto); sin flujo o ya cerrado, --reanudar no tiene qué seguir.
+  subagente(claude, raiz, 's1', 'rev2', 'impl:qcc-revisor', 'QUÉ REVISAR: cambio completo', 'VEREDICTO: APROBADO\nOBSERVACIONES: renombrar b')
+  const aprobado = reanudar()
+  assert.match(aprobado, /^GUARDADO: revisión ciclo 2 \(APROBADO\)/m)
+  assert.match(aprobado, /^SIGUE: paso 7 · cierre/m)
+  const cierre = estadoEn(raiz, ['--cambios', '--global', '--paso', '7', '--resultado', 'COMPLETO'], entorno).salida
+  assert.match(cierre, /^CIERRE · Externo — COMPLETO$/m)
+  assert.match(cierre, /^Revisión: final APROBADO \(2 ciclo\(s\)\) · ejecutores: S1 \(0 correcciones\) · S2 \(0 correcciones\)$/m)
+  assert.match(cierre, /^Riesgos pendientes: renombrar b · /m)
   const cerrado = estadoEn(raiz, ['--reanudar'], entorno)
   assert.equal(cerrado.codigo, 2)
   assert.match(cerrado.salida, /^ERROR: el flujo ya cerró/m)

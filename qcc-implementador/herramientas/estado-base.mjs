@@ -214,7 +214,19 @@ export function anotarLimites(paso, lectura = leerLimites()) {
   if (nueva || !igual) anotarEstado({ limites: [...tramos.slice(0, -1), { ...ultimo, ...(igual ? {} : { fin: lectura }), ...(nueva ? { fases: [...fases, { paso, ...lectura }] } : {}) }] })
 }
 
-/** El avance de la ejecución (`{ "<n>": { estado, ciclos, t } }`), sin las entradas rotas. */
+/** Estados de una subtarea que ya no se despacha. */
+export const TERMINADA = new Set(['HECHO', 'OMITIDA'])
+
+/** El tramo de `texto` desde la línea que empieza con `desde` (incluida) hasta la primera que empiece con algo de `hasta`; '' si no está. */
+export function seccionDe(texto, desde, hasta) {
+  const lineas = String(texto ?? '').split('\n')
+  const k = lineas.findIndex((l) => l.replace(/^[\s*_]+/, '').startsWith(desde))
+  if (k < 0) return ''
+  const fin = lineas.findIndex((l, i) => i > k && hasta.some((h) => l.replace(/^[\s*_]+/, '').startsWith(h)))
+  return lineas.slice(k, fin < 0 ? undefined : fin).join('\n').trim()
+}
+
+/** El avance de la ejecución (`{ "<n>": { estado, ciclos, t, bloqueos? } }`), sin las entradas rotas. */
 export function avanceDe(estado) {
   const crudo = estado.avance && typeof estado.avance === 'object' && !Array.isArray(estado.avance) ? estado.avance : {}
   return Object.fromEntries(Object.entries(crudo).filter(([, a]) => a && typeof a.estado === 'string'))

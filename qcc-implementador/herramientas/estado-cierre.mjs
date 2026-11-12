@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { nombreDe, carpetaGlobal, RAIZ } from './guardia.mjs'
 import { metricasDelFlujo, resumenDeCosto, resumenDeVeredictos, leerLimites, gastoDeLimites, resumenDeLimites, fasesDeLimites, resumenDeFases } from './costos.mjs'
 import { enAlcance, git, foto, leerRegistro, FLUJO, leerEstado, anotarEstado, basesDe, sesionesDe, tramosDeLimites, cortadosDe, loteDe } from './estado-base.mjs'
+import { esqueletoDelCierre } from './estado-despachos.mjs'
 
 const RE_RESULTADO = /^(COMPLETO|DETENIDO:[0-7])$/
 
@@ -250,6 +251,7 @@ export function cerrarFlujo(base, desde, tokens, resultado, cancelado = false) {
     console.log(`AVISO: no se pudo anotar el flujo: ${err.message}`)
   }
   archivarFlujo(t)
+  if (!cancelado) for (const l of esqueletoDelCierre(e, valido)) console.log(l)
 }
 
 /**

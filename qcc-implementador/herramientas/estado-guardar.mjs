@@ -3,7 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { configDe, RAIZ } from './guardia.mjs'
-import { pedidoDelFlujo } from './costos.mjs'
+import { pedidoDelFlujo, revisoresDelProyecto } from './costos.mjs'
 import { leerRegistro, FLUJO, leerTexto, leerEstado, anotarEstado, listaDe, esperarInicial, transcriptDe, textoFinalDe, cortadosDe } from './estado-base.mjs'
 import { CAMPOS_SUBTAREA, sinMarcas, campoDe, recortarPie, partesDelPlan, dependeDe, permisosDe, ROLES_DE_PERMISO, avisosDePermisos, bloqueDe, permitidosDeSubtarea, parecenExternas, comandosParaTi, lotesDe, criticosDe, fusionarPlanes, decisionesDelPlan, lineasDeDecisiones, TOPE_LINEAS_RESUMEN, aprobacionDe } from './estado-plan.mjs'
 import { hallazgosDe, sinExplorarDe, contextoDe, acopladosSinCubrir, criticasDeExploracion, TOPE_LINEAS_EXPLORADOR, MAX_EXPLORADORES, MAX_REINTENTO, avisosDeLargo, fusionarExploraciones } from './estado-exploracion.mjs'
@@ -187,28 +187,11 @@ function guardarInforme(id, tipo, ajuste) {
   resumirPlan(plan, destino)
 }
 
-/** Texto del primer mensaje del usuario en el transcript de un agente (su despacho); '' si no hay. */
-function promptDe(archivo) {
-  for (const linea of (leerTexto(archivo) ?? '').split('\n')) {
-    let fila
-    try {
-      fila = JSON.parse(linea)
-    } catch {
-      continue
-    }
-    if (fila?.type !== 'user') continue
-    const c = fila.message?.content
-    return typeof c === 'string' ? c : Array.isArray(c) ? c.map((x) => (x?.type === 'text' ? x.text : '')).join('') : ''
-  }
-  return ''
-}
-
 const RE_VEREDICTO = /^[\s*_>`-]*VEREDICTO(?:\*\*)?:\s*\**\s*([A-ZÁÉÍÓÚ]+)/m
 
 /**
- * `--guardar <agentId> revision`: guarda el reporte de la revisión final en `revision-<c>.md` (con la `SALIDA DEL OWNER` de su
- * despacho, si la trae) y la anota en `revisiones` del estado. Cada agente nuevo es un ciclo más; volver a guardar el mismo agente
- * (un reintento) reemplaza su ciclo.
+ * Guarda el reporte de la revisión final del agente `id` en `revision-<c>.md` y la anota en `revisiones` del estado. Cada agente
+ * nuevo es un ciclo más; volver a guardar el mismo agente (un reintento) reemplaza su ciclo.
  */
 function guardarRevision(id) {
   const archivo = transcriptDe(id)
@@ -221,11 +204,30 @@ function guardarRevision(id) {
   const previa = revisiones.findIndex((r) => r.agente === id)
   const c = previa >= 0 ? revisiones[previa].c : revisiones.length + 1
   const veredicto = RE_VEREDICTO.exec(texto)?.[1] ?? null
-  const owner = /^SALIDA DEL OWNER:[\s\S]*?(?=^NO corras verificar\.mjs\.|^CRÍTICO:|(?![\s\S]))/m.exec(promptDe(archivo))?.[0].trim()
   fs.mkdirSync(FLUJO, { recursive: true })
   const destino = path.join(FLUJO, `revision-${c}.md`)
-  fs.writeFileSync(destino, [texto.trim(), ...(owner ? ['', owner] : [])].join('\n') + '\n')
+  fs.writeFileSync(destino, texto.trim() + '\n')
   const entrada = { c, agente: id, veredicto, archivo: destino, t: new Date().toISOString() }
   anotarEstado({ revisiones: previa >= 0 ? revisiones.map((r, i) => (i === previa ? entrada : r)) : [...revisiones, entrada] })
   console.log(`GUARDADO: revisión ciclo ${c} (${veredicto ?? 'sin VEREDICTO'}) → ${destino}`)
+}
+
+/**
+ * Guarda, en orden, las revisiones finales del flujo abierto que volvieron con informe y todavía no están en `revisiones`
+ * (las busca en los transcripts del proyecto desde `DESDE_GLOBAL`): así el orquestador no corre `--guardar … revision`.
+ * Nunca rompe el comando que la llama.
+ */
+export function guardarRevisionesNuevas() {
+  try {
+    const e = leerEstado()
+    if (!e.base_global || e.cierre) return
+    const guardadas = new Set(listaDe(e, 'revisiones').map((r) => r.agente))
+    for (const { id } of revisoresDelProyecto(RAIZ, e.desde_global)) {
+      if (guardadas.has(id)) continue
+      const archivo = transcriptDe(id)
+      if (archivo && textoFinalDe(archivo)) guardarRevision(id)
+    }
+  } catch {
+    // Sin las revisiones guardadas, --reanudar repite la revisión.
+  }
 }

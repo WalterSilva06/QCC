@@ -6,9 +6,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { evaluar, rolDeAgente, configDe, RAIZ } from './guardia.mjs'
 import { pasosDe } from './verificar.mjs'
-import { AGENTES, TOPE_SUCIOS, TOPE_MAPA, TOPE_NOMBRES, git, corto, foto, FLUJO, leerTexto, leerEstado, sesionActual, tramoNuevo, avanceDe, flujoAbierto, nuevoFlujo, lanzarInicial, agruparPorCarpeta } from './estado-base.mjs'
+import { AGENTES, TOPE_SUCIOS, TOPE_MAPA, TOPE_NOMBRES, TERMINADA, git, corto, foto, FLUJO, leerTexto, leerEstado, sesionActual, tramoNuevo, avanceDe, flujoAbierto, nuevoFlujo, lanzarInicial, agruparPorCarpeta } from './estado-base.mjs'
 import { MAX_EXPLORADORES, MAX_REINTENTO } from './estado-exploracion.mjs'
-import { TERMINADA } from './estado-avance.mjs'
 import { archivarFlujo } from './estado-cierre.mjs'
 
 // ── Modos ───────────────────────────────────────────────────────────────────
@@ -168,7 +167,8 @@ export function preflight(forzar) {
       // Un flujo con plan y sin cierre no se pierde: con --forzar se archiva (sin fila en flujos.jsonl) antes de vaciarlo.
       const previo = forzar ? leerEstado() : {}
       if (previo.base_global && previo.plan && !previo.cierre) archivarFlujo(new Date().toISOString())
-      nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [], sesiones: [sesionActual(desde)], limites: [tramoNuevo(0)] })
+      // Los sucios previos quedan para el despacho de la revisión final (hasta TOPE_SUCIOS rutas y el total).
+      nuevoFlujo({ inicio: desde, raiz: RAIZ, rama, base_global: base, desde_global: desde, fotos: [], sesiones: [sesionActual(desde)], limites: [tramoNuevo(0)], sucios: sucios.slice(0, TOPE_SUCIOS).map((s) => s.slice(3)), sucios_total: sucios.length })
       const escrito = escribirMapa()
       mapa = escrito.linea
       preparada = true

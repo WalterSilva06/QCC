@@ -544,6 +544,23 @@ test('--permiso P1,P9 no anota ninguno (ERROR)', () => {
   assert.equal('aprobado' in estadoJson().permisos.P2, false)
 })
 
+test('--aprobado --permisos anota la aprobación y los permisos en una llamada; uno que falta no anota nada', () => {
+  const { raiz, entorno, estadoJson } = repoConPlanGuardado('aprobado-permisos', PLAN_PP)
+  const malo = estadoEn(raiz, ['--aprobado', '--permisos', 'P1,P9', '--paso', '4'], entorno)
+  assert.match(malo.salida, /^ERROR: P9 no está en los permisos del plan guardado$/m)
+  assert.equal(malo.codigo, 2)
+  assert.equal(estadoJson().aprobacion, undefined)
+  assert.equal('aprobado' in estadoJson().permisos.P1, false)
+  assert.match(estadoEn(raiz, ['--aprobado', '--permisos', '', '--paso', '4'], entorno).salida, /^ERROR: --permisos necesita ids/m)
+  const r = estadoEn(raiz, ['--aprobado', '--permisos', 'p1,P2', '--paso', '4'], entorno)
+  assert.equal(r.codigo, 0)
+  assert.match(r.salida, /^APROBADO: plan de 2 subtarea\(s\) · ajustes: ninguno\nPERMISO: P1 aprobado\nPERMISO: P2 aprobado$/m)
+  assert.ok(estadoJson().aprobacion)
+  assert.ok(Number.isFinite(Date.parse(aprobadoDe(estadoJson(), 'P2'))))
+  assert.equal(opcionesDe(['--aprobado', '--permisos', 'P1']).permisos, 'P1')
+  assert.equal('permisos' in opcionesDe(['--aprobado']), false)
+})
+
 test('permisos de punta a punta: --guardar plan, --permiso, --base --sub y la guardia', () => {
   const { raiz, entorno } = repoConPlanGuardado('permiso-punta', [
     subtareaDePlan(1, 'src/a.ts'),
