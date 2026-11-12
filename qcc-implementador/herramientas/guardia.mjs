@@ -46,9 +46,16 @@ const WIN = process.platform === 'win32'
 
 // ── Proyecto ────────────────────────────────────────────────────────────────
 
-/** Raíz del repo git que contiene `dir` (o `dir` si no es un repo). */
+/**
+ * Raíz del repo git que contiene `dir` (o `dir` si no es un repo): la primera carpeta hacia arriba con `.git` (carpeta, o
+ * archivo de un worktree o submódulo), sin lanzar `git`, que corre en cada herramienta de cada subagente. Sin `.git`, pregunta a git.
+ */
 export function raizDe(dir) {
   const d = path.resolve(rutaNativa(dir || process.cwd()))
+  for (let c = d; ; c = path.dirname(c)) {
+    if (fs.existsSync(path.join(c, '.git'))) return c
+    if (path.dirname(c) === c) break
+  }
   try {
     const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: d, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim()
     if (top) return path.resolve(rutaNativa(top))
