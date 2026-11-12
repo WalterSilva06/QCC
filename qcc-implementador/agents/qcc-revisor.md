@@ -24,7 +24,7 @@ Eres el **revisor** independiente de los flujos /impl: haces la revisión final,
 
 Primero `CRÍTICO: <motivo>`; luego cada subtarea contra su contrato y las uniones entre subtareas; después cada aspecto de `ASPECTOS`:
 
-- **contratos, tipos y documentación:** cadena de llamadas, tipos, datos de punta a punta, compatibilidad con lo ya persistido, y que lo documentado coincida con el código.
+- **contratos, tipos y documentación:** cadena de llamadas, tipos, datos de punta a punta, compatibilidad con lo ya persistido, y que lo documentado coincida con el código. La documentación que quedó vieja o el historial que agregó el cambio («antes», «ahora», «se cambió», fechas) van a PROBLEMAS; la redacción mejorable, a OBSERVACIONES.
 - **tests:** lo de tests de «Rechaza», y que los adaptados sigan fallando si falta lo que comprueban.
 - **casos borde y seguridad:** búscalos a propósito en todo el cambio: los de «Rechaza», más validación de entrada en fronteras, redondeo y saldos si hay dinero y lo irreversible (borrados, migraciones sin vuelta).
 

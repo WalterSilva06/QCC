@@ -76,5 +76,6 @@ Los cuatro comandos tienen que terminar sin errores antes de dar algo por hecho 
 - [AGENTS.md](AGENTS.md): reglas generales del repo para Claude (estructura, verificación y convenciones).
 - [MODS.md](MODS.md): el panel de uso.
 - [FLUJOS.md](FLUJOS.md): los flujos (`/impl` y `/commit`).
+- [PENDIENTES.md](PENDIENTES.md): lo que queda abierto, una línea por ítem.
 - [LIMITES.md](LIMITES.md): qué miden los límites de uso de 5 h y semanal, y cómo `/impl` anota el % que gasta cada corrida y cada fase (ya no calcula dólares).
 - [comparativa-claude-5-5.md](comparativa-claude-5-5.md): comparativa de Opus, Sonnet y Haiku 5.5 (datos al 15 oct 2026), de referencia para elegir modelo y esfuerzo.

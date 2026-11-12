@@ -177,7 +177,7 @@ CIERRE · <título> — COMPLETO | DETENIDO en <paso>
 Cambios: <archivo — qué, una línea c/u: los archivos de la salida de tu --cambios del cierre; el qué, del plan>
 Verificación final: <tabla y RESULTADO, copiados de tu última corrida>
 Revisión: final APROBADO (<c> ciclos) · ejecutores: S1 (<c> correcciones) · …
-Riesgos pendientes: <… (incluye las OBSERVACIONES de la última vuelta de la revisión final, también con APROBADO) | ninguno>
+Riesgos pendientes: <… (incluye las OBSERVACIONES de la última vuelta de la revisión final, también con APROBADO, y los BLOQUEOS que siguen abiertos; si las reglas del proyecto nombran un archivo de pendientes, cierra con una línea «Para <archivo>: …» con los que van ahí, que tú no escribes) | ninguno>
 Sin ejecutar: <la sección «Sin ejecutar» del reporte del revisor, copiada | nada>
 Queda para ti: <… | nada>
 Reversión: <solo si DETENIDO o con riesgos: la línea REVERSIÓN de tu --cambios del cierre, copiada. No la corres sin OK>
