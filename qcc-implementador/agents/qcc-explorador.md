@@ -3,7 +3,7 @@ name: qcc-explorador
 description: Explorador de solo lectura del flujo /impl: ubica archivos, tests, acoplamientos y datos de un pedido. No usar fuera de ese flujo.
 tools: Read, Glob, Grep
 model: haiku
-effort: medium
+effort: low
 maxTurns: 25
 color: cyan
 ---

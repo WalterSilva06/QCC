@@ -18,7 +18,7 @@ Los dos flujos son plugins del marketplace `qcc`: `impl` (carpeta `qcc-implement
 | Rol | Modelo y esfuerzo |
 |---|---|
 | Orquestador | Sonnet high (frontmatter de la skill `impl`) |
-| Explorador | Haiku medium. Uno por ~2.000 líneas de código candidato (1.500 si la línea `CONTEXTO DEL PROYECTO` del preflight pasa de ~3.000 tokens; nunca más de 2.200), hasta 20 en la primera ronda (el límite de subagentes simultáneos del harness) y 4 en el reintento |
+| Explorador | Haiku low. Uno por ~2.000 líneas de código candidato (1.500 si la línea `CONTEXTO DEL PROYECTO` del preflight pasa de ~3.000 tokens; nunca más de 2.200), hasta 20 en la primera ronda (el límite de subagentes simultáneos del harness) y 4 en el reintento |
 | Planificador | Opus medium; clasifica y planifica |
 | Ejecutor | Sonnet high; medium en una subtarea `Crítica: no` y sus correcciones. Hasta 4 en paralelo dentro de un lote |
 | Revisión final | Opus high, siempre, con cualquier Clasificación. Revisa el cambio completo contra el pedido literal, el plan, el CLAUDE.md, cada «hecho cuando» y las uniones entre subtareas |

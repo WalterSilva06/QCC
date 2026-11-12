@@ -29,7 +29,7 @@ Pasa exactamente estos overrides de `model` y `effort`; «ninguno» = no pases n
 
 | Agente | Overrides |
 |---|---|
-| `impl:qcc-explorador` (Haiku, medium) | ninguno |
+| `impl:qcc-explorador` (Haiku, low) | ninguno |
 | `impl:qcc-planificador` (Opus, medium) | ninguno |
 | `impl:qcc-ejecutor` (Sonnet, high) | ninguno; `effort: "medium"` en una subtarea `Crítica: no` y sus correcciones (lo dice su DESPACHO); las correcciones de la revisión final, sin override. Los de un mismo lote de `LOTES:` van juntos en un mensaje, cada uno con su effort, y los de una tanda de correcciones de la revisión final también |
 | `impl:qcc-revisor`: revisión final y sus ciclos (Opus, high) | ninguno, también con Clasificación «sin criterios» |
