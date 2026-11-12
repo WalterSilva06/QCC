@@ -664,6 +664,31 @@ test('estado: fusionarExploraciones une secciones sin repetir ruta:línea (pura)
   assert.doesNotMatch(otra, /repetido/)
 })
 
+test('estado: fusionarExploraciones une el reintento: mismo ruta:líneas y DUDAS ya cubiertas', () => {
+  const vacias = '\nTESTS\n- ninguno\nACOPLAMIENTOS\n- ninguno\nDATOS\n- ninguno\n'
+  const primera = `ARCHIVOS\n- src/billing/alta.ts:455-456 — trial = días + 1\n- src/billing/alta.ts:40 — otro tramo${vacias}DUDAS\n` +
+    '- no explorado: src/components/Lista.tsx (la pista) — tope de contexto.\n' +
+    '- no explorado: cupo.ts (cuerpo de subir) y corte.ts:50-112 — tope de contexto.\n' +
+    '- no explorado: src/routes/onboarding.tsx y src/components/Lista.tsx — tope de contexto.\n' +
+    '- no explorado: pruebas.md §3 — fuera de ÁREA.\n' +
+    '- ¿Lista.tsx guarda en localStorage?'
+  const reintento = 'ARCHIVOS\n- src/billing/alta.ts:455-456; src/lib/precios.ts:48-52 — repetido\n' +
+    '- src\\billing\\alta.ts:455-456 — repetido con barras\n- src/billing/alta.ts:455 — otro rango\n' +
+    '- src/components/Lista.tsx:59 — pista oculta si !data\n- src\\billing\\cupo.ts:200-206 — subir\n- src\\billing\\corte.ts:117 — barrido' +
+    `${vacias}DUDAS\n- no explorado: src/components/Lista.tsx:80 — en el mismo informe que la cita: queda`
+  const { texto } = fusionarExploraciones([{ id: 'a', texto: primera }, { id: 'b', texto: reintento }])
+
+  assert.doesNotMatch(texto, /repetido/)
+  assert.match(texto, /alta\.ts:455 — otro rango/)
+  assert.match(texto, /alta\.ts:40 — otro tramo/)
+  assert.doesNotMatch(texto, /\(la pista\)|cuerpo de subir/)
+  // Queda la que nombra un archivo sin cubrir, la que no nombra archivos cubiertos, las preguntas y la del mismo informe.
+  assert.match(texto, /onboarding\.tsx/)
+  assert.match(texto, /pruebas\.md §3/)
+  assert.match(texto, /¿Lista\.tsx guarda/)
+  assert.match(texto, /en el mismo informe que la cita: queda/)
+})
+
 test('estado: fusionarExploraciones ignora la prosa tras la última sección', () => {
   const base = 'ARCHIVOS\n- x.ts:1 — uno\n\nTESTS\n- ninguno\n\nACOPLAMIENTOS\n- ninguno\n\nDATOS\n- ninguno\n\nDUDAS\n- ¿algo?'
   const uno = `${base}\n\nOmití X; riesgo Y`

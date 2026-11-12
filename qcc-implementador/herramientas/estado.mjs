@@ -777,7 +777,7 @@ export function hallazgosDe(texto) {
 
 /** Avisos `SIN EXPLORAR: <línea>` de las DUDAS marcadas `no explorado:` (o `No exploradas:`, `**no explorado**:`, con viñeta o negrita). Solo DUDAS. */
 export function sinExplorarDe(hallazgos) {
-  return hallazgos.filter((h) => h.seccion === 'DUDAS' && /^[*_`\s]*no explorad[oa]s?\**\s*:/i.test(h.linea)).map((h) => `SIN EXPLORAR: ${h.linea}`)
+  return hallazgos.filter((h) => h.seccion === 'DUDAS' && RE_NO_EXPLORADO.test(h.linea)).map((h) => `SIN EXPLORAR: ${h.linea}`)
 }
 
 /** ¿La ruta citada cae en `permitidos`? También abreviada, como la escribe el explorador: `billing/x.ts` calza con `src/billing/x.ts`. */
@@ -989,23 +989,41 @@ export function avisosDeLargo(informes, tope) {
   return avisos
 }
 
-/** Clave para no repetir un hallazgo de `seccion`: todos sus `ruta:línea`, o el texto antes de « — », o la línea entera. */
+/** Una DUDA `no explorado:` (o `No exploradas:`, `**no explorado**:`), ya sin la viñeta. */
+const RE_NO_EXPLORADO = /^[*_`\s]*no explorad[oa]s?\**\s*:/i
+const RE_RUTA_LINEAS = /[^\s`—;,()]+:\d+(?:-\d+)?/g
+const RE_ARCHIVO = /[\w@.\\/-]*\w\.[a-z]{1,5}\b/gi
+const conBarras = (ruta) => ruta.replaceAll('\\', '/').replace(/^\.\//, '')
+
+/**
+ * Clave para no repetir un hallazgo de `seccion`: el primer `ruta:líneas` (con su rango) de lo que va antes de « — », o
+ * todos si es un acoplamiento (`→`: cada destino cuenta); sin rutas, el texto antes de « — ». `\` y `/` valen igual.
+ */
 function claveDeHallazgo(seccion, linea) {
-  const rutas = linea.match(new RegExp(RE_RUTA_LINEA.source, 'g'))
-  if (rutas) return `${seccion} ruta:${rutas.join(' ')}`
-  return `${seccion} texto:${linea.split(' — ')[0].replace(/^\s*[-*]\s*/, '').trim()}`
+  const cabeza = linea.split(' — ')[0]
+  const rutas = (cabeza.match(RE_RUTA_LINEAS) ?? linea.match(RE_RUTA_LINEAS))?.map(conBarras)
+  if (rutas) return `${seccion} ruta:${(cabeza.includes('→') ? rutas : rutas.slice(0, 1)).join(' ')}`
+  return `${seccion} texto:${cabeza.replace(/^\s*[-*]\s*/, '').trim()}`
 }
+
+/** Archivos (con extensión) que nombra una línea, con `/`. */
+const archivosDe = (linea) => (linea.match(RE_ARCHIVO) ?? []).map(conBarras)
+
+/** Si `archivo` (ruta o solo el nombre) está entre los `citados`: iguales, o uno termina en `/` más el otro. */
+const citado = (archivo, citados) => citados.some((c) => c === archivo || c.endsWith(`/${archivo}`) || archivo.endsWith(`/${c}`))
 
 /**
  * Une los informes de varios exploradores (`[{ id, texto }]`) en uno solo: las secciones ARCHIVOS, TESTS, ACOPLAMIENTOS,
  * DATOS y DUDAS, en ese orden, con los hallazgos en el orden de llegada. Un hallazgo se descarta solo si otro informe ya
- * trajo, en la misma sección, los mismos `ruta:línea` (gana la primera aparición); los de un mismo informe quedan todos.
+ * trajo, en la misma sección, la misma clave (`claveDeHallazgo`; gana la primera aparición); los de un mismo informe quedan
+ * todos. Una DUDA `no explorado:` se descarta si otro informe cita, fuera de DUDAS, todos los archivos que nombra.
  * Devuelve `{ texto, incompletos }`; `incompletos` son los `{ id, faltan }` de los informes sin alguna sección.
  */
 export function fusionarExploraciones(informes) {
   const porSeccion = new Map(SECCIONES_EXPLORACION.map((s) => [s, []]))
   const vistas = new Map()
   const incompletos = []
+  const citadosPor = new Map(informes.map((i) => [i.id, []]))
   for (const { id, texto } of informes) {
     const presentes = new Set()
     let actual = null
@@ -1017,15 +1035,23 @@ export function fusionarExploraciones(informes) {
         continue
       }
       if (!actual || !linea.trim() || RE_NINGUNO.test(linea)) continue
+      if (actual !== 'DUDAS') citadosPor.get(id).push(...archivosDe(linea))
       const clave = claveDeHallazgo(actual, linea)
       if ((vistas.get(clave) ?? id) !== id) continue
       vistas.set(clave, id)
-      porSeccion.get(actual).push(linea.trimEnd())
+      porSeccion.get(actual).push({ id, linea: linea.trimEnd() })
     }
     const faltan = SECCIONES_EXPLORACION.filter((s) => !presentes.has(s))
     if (faltan.length) incompletos.push({ id, faltan })
   }
-  const bloques = SECCIONES_EXPLORACION.map((s) => [s, ...(porSeccion.get(s).length ? porSeccion.get(s) : ['- ninguno'])].join('\n'))
+  // shortcut: cubre por nombre de archivo, no por rango de líneas; si otro explorador citó solo otra parte del archivo, la DUDA igual se va.
+  const cubierta = ({ id, linea }) => {
+    const archivos = archivosDe(linea)
+    const otros = informes.filter((i) => i.id !== id).flatMap((i) => citadosPor.get(i.id))
+    return RE_NO_EXPLORADO.test(linea.trim().replace(/^[-*]\s+/, '')) && archivos.length > 0 && archivos.every((a) => citado(a, otros))
+  }
+  porSeccion.set('DUDAS', porSeccion.get('DUDAS').filter((h) => !cubierta(h)))
+  const bloques = SECCIONES_EXPLORACION.map((s) => [s, ...(porSeccion.get(s).length ? porSeccion.get(s).map((h) => h.linea) : ['- ninguno'])].join('\n'))
   return { texto: bloques.join('\n\n'), incompletos }
 }
 
