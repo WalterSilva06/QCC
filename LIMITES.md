@@ -1,6 +1,6 @@
 # Límites de uso
 
-En un plan de suscripción lo que se agota es el % de la ventana de 5 horas y el % semanal, no dólares. Este archivo junta qué miden esos límites, qué se quitó de `/impl` por eso y cómo se anota ahora el % que gasta cada corrida y cada una de sus fases. Las reglas generales del repo están en [AGENTS.md](AGENTS.md); el flujo, en [FLUJOS.md](FLUJOS.md), y el panel, en [MODS.md](MODS.md).
+En un plan de suscripción lo que se agota es el % de la ventana de 5 horas y el % semanal, no dólares. Este archivo junta qué miden esos límites y cómo anota `/impl` el % que gasta cada corrida y cada una de sus fases. Las reglas generales del repo están en [AGENTS.md](AGENTS.md); el flujo, en [FLUJOS.md](FLUJOS.md), y el panel, en [MODS.md](MODS.md).
 
 ## 1. Qué miden
 
@@ -30,21 +30,19 @@ Una sola persona, con 61 observaciones en 2 días, una cuenta, modelos mezclados
 - Si la escritura de caché de 1 h pesa más que la de 5 min.
 - Si el pool semanal pondera distinto que la ventana de 5 h.
 
-## 2. Qué se quitó: los costos en dólares
+## 2. Sin dólares
 
-Hasta la 0.4.2, `costos.mjs` tenía una tabla de precios por millón de tokens (`PRECIOS`, `HAIKU_LARGO`, `precioDe`, `costoDePedido`) y con ella calculaba el costo en USD de cada pedido, rol, subtarea y flujo. Lo mostraban el cierre (`COSTO: $…`), `costos.mjs --ultimos` y `--fuga`, el `AVISO` de contexto pesado del preflight, la línea `CONTEXTO` (lo que costaría reescribir el contexto en Opus), el `Estimado: ~$…` de la aprobación de planes grandes y el historial del panel (`$1,29 · 11m …` y `promedio $0,98`).
-
-Se quitó todo porque el plan es de suscripción: el dinero no se gasta por pedido y la tabla de precios de la API no dice cuánto % de ventana consume nada. Lo que no era dinero se queda:
+`/impl` no calcula dinero: el plan es de suscripción, el dinero no se gasta por pedido y la tabla de precios de la API no dice cuánto % de ventana consume nada. Lo que se mide:
 
 - tokens (entrada, leídos de caché, escritos en caché, salida y thinking), en total y por rol;
 - minutos, pedidos por rol, Clasificación, subtareas, veredictos y tiempos por fase;
-- la `fuga` (lo gastado tras el cierre), ahora en pedidos y tokens.
+- la `fuga` (lo gastado tras el cierre), en pedidos y tokens.
 
-Compatibilidad: el campo de la fila sigue llamándose `costo` (nombre histórico; trae `inicio`, `minutos`, `roles` y `veredictos`, sin `usd`). Las filas viejas de `flujos.jsonl` con `usd` y `sinPrecio` se siguen leyendo en `costos.mjs` y en el panel, y esos campos se ignoran. No se escriben más.
+El campo de la fila se llama `costo` (trae `inicio`, `minutos`, `roles` y `veredictos`). Las filas de `flujos.jsonl` con `usd` y `sinPrecio` se leen en `costos.mjs` y en el panel, y esos campos se ignoran.
 
-La línea `Costo: <n> ejecutor(es) · revisión final` del plan no es dinero (cuenta agentes) y se queda. [comparativa-claude-5-5.md](comparativa-claude-5-5.md) conserva los precios de la API como dato de referencia de los modelos, no como cálculo del flujo.
+La línea `Costo: <n> ejecutor(es) · revisión final` del plan no es dinero: cuenta agentes. [comparativa-claude-5-5.md](comparativa-claude-5-5.md) conserva los precios de la API como dato de referencia de los modelos, no como cálculo del flujo.
 
-## 3. Cómo se registra ahora el % por corrida
+## 3. Cómo se registra el % por corrida
 
 ### De dónde sale el dato
 
@@ -52,9 +50,9 @@ La línea `Costo: <n> ejecutor(es) · revisión final` del plan no es dinero (cu
 
 - **Archivo:** `<carpeta de la cuenta>/qcc-limites.json`, donde la carpeta de la cuenta es `CLAUDE_CONFIG_DIR` (si la sesión la tiene) o `~/.claude`. Cada cuenta escribe y lee el suyo: los porcentajes son por cuenta. (`QCC_LIMITES` cambia la ruta; lo usan los tests.)
 - **Formato:** `{ "t": "<ISO>", "five_hour": { "pct": 23, "resetsAt": "<ISO>" }, "seven_day": { "pct": 61, "resetsAt": "<ISO>" } }`. Cada ventana va solo si la medición la trae.
-- **Cuándo:** en cada medición con límites; con los mismos valores, a lo sumo una vez por minuto. Sin límites (sin suscripción o antes de la primera respuesta) no escribe. Según los tipos del motor de plugins (build 2.1.322), `session.measure` llega «después de cada turno del hilo principal y cuando una ventana se mueve un punto entero», con los límites de «la última respuesta de la API». Un `/impl` es un solo turno largo, así que durante el flujo el snapshot cambia solo cuando una ventana sube un punto entero (ver «Por fase», más abajo).
+- **Cuándo:** en cada medición con límites; con los mismos valores, a lo sumo una vez por minuto. Sin límites (sin suscripción o antes de la primera respuesta) no escribe. Según los tipos del motor de plugins, `session.measure` llega «después de cada turno del hilo principal y cuando una ventana se mueve un punto entero», con los límites de «la última respuesta de la API». Un `/impl` es un solo turno largo, así que durante el flujo el snapshot cambia solo cuando una ventana sube un punto entero (ver «Por fase», más abajo).
 
-Se descartaron: un script de status line (la de la cuenta ya es un script propio fuera del repo, y habría que cambiarlo en cada cuenta) y buscar el dato en `~/.claude` (no hay ningún archivo con los porcentajes; `.claude.json` solo trae el tier).
+El dato no sale de la status line (la de la cuenta es un script propio fuera del repo, y habría que cambiarlo en cada cuenta) ni de `~/.claude` (ningún archivo trae los porcentajes; `.claude.json` solo trae el tier).
 
 ### Qué hace `/impl`, sin trabajo extra del orquestador
 
@@ -90,13 +88,13 @@ Casos, sin inventar números:
 - **Una ventana que falta** en una lectura: `s/d` solo en esa ventana.
 - **Reinicio entre dos lecturas** (bajó el %, la lectura es posterior al `resetsAt` anterior, o el `resetsAt` cambió más de un minuto, como en el total): esa fase de esa ventana da la **cota mínima**, el % de la lectura final (tras el reinicio se gastó al menos eso), y sale con `≥+`. Las demás fases conservan su número.
 - **Reanudar en otra cuenta:** como en el total, cada tramo resta lecturas de su propia cuenta y las fases suman % de ventanas distintas.
-- **Flujos empezados antes de la 0.5.1** (tramos sin `fases`): `LÍMITES POR FASE: s/d (el flujo empezó sin lecturas por fase)` y la fila no lleva `fases`.
+- **Flujos sin lecturas por fase** (tramos sin `fases`): `LÍMITES POR FASE: s/d (el flujo empezó sin lecturas por fase)` y la fila no lleva `fases`.
 
 Invariante (lo comprueba `costos.test.mjs`): con todas las lecturas válidas y sin reinicio, la suma de las fases de cada ventana es el gasto total de `LÍMITES:`, porque las restas por fase se encadenan de la lectura inicial a la final de cada tramo.
 
 Qué no puede decir el desglose:
 
-1. **Retraso de hasta un punto, no de una fase.** El snapshot no se mueve solo con el hilo principal: según los tipos del motor, `session.measure` también llega cuando una ventana sube un punto entero, con los límites de la última respuesta de la API. Comprobado en esta máquina el 2026-11-10: con el hilo principal parado (su transcript sin cambios desde las 15:08:45 UTC) mientras un solo subagente trabajaba, `qcc-limites.json` pasó de 30 a 31 a las 15:11:16 y llegó a 36 a las 15:17:35, sin otra sesión activa de esa cuenta en esta máquina. O sea que lo gastado por los subagentes sí llega al snapshot mientras corren, y cada fase de subagentes queda en su fase. Lo que no está escrito es si la API cuenta el % de los subagentes igual que el del hilo principal; eso no se pudo comprobar aparte. Lo que sí se corre a la fase siguiente es lo que todavía no sumó un punto entero en el momento de la lectura: hasta casi 1 punto por ventana y por límite de fase.
+1. **Retraso de hasta un punto, no de una fase.** El snapshot no se mueve solo con el hilo principal: según los tipos del motor, `session.measure` también llega cuando una ventana sube un punto entero, con los límites de la última respuesta de la API. Comprobado en esta máquina: con el hilo principal parado (su transcript sin cambios desde las 15:08:45 UTC) mientras un solo subagente trabajaba, `qcc-limites.json` pasó de 30 a 31 a las 15:11:16 y llegó a 36 a las 15:17:35, sin otra sesión activa de esa cuenta en esta máquina. O sea que lo gastado por los subagentes sí llega al snapshot mientras corren, y cada fase de subagentes queda en su fase. Lo que no está escrito es si la API cuenta el % de los subagentes igual que el del hilo principal; eso no se pudo comprobar aparte. Lo que sí se corre a la fase siguiente es lo que todavía no sumó un punto entero en el momento de la lectura: hasta casi 1 punto por ventana y por límite de fase.
 2. **Resolución.** El % llega con a lo sumo un decimal, y en la máquina de arriba llegó entero (30, 31… 36); durante el flujo el snapshot cambia de a un punto entero. Una fase corta (`aprobación`, a veces `exploración` en un pedido chico) puede salir `+0 %` o llevarse el punto que otra empezó. Mira promedios de varios flujos, no una fase suelta.
 3. **Por rol, no.** La fuente da un solo % por ventana para toda la cuenta: la fase `ejecución` incluye al orquestador y a los ejecutores juntos, y el orquestador está en todas las fases. Para el reparto por rol siguen los tokens por rol de la fila (`costo.roles.<rol>.tokens`, sección 4).
 4. **Espera larga en la aprobación.** Durante la pregunta «Plan» nadie gasta, el snapshot no se reescribe y puede pasar de 10 minutos. Si el `--aprobado` lo lee así, sale sin dato y `plan` y `aprobación` salen unidas como `plan+aprobación` en ese flujo (el total no se ve afectado, porque la lectura final se toma después). No se toma un snapshot viejo como válido porque no se puede distinguir de un panel que dejó de correr.
@@ -135,8 +133,8 @@ Cuando la ventana de 5 h se agota, Claude Code avisa en el transcript («You've 
 
 - `gasto`: la suma, por tramo, de `fin.pct − inicio.pct`, redondeada a 0,1.
 - `incompleto: true`: a algún tramo le faltó dato o se reinició (de un reinicio entra la cota mínima, el % de su lectura final); el gasto es una cota inferior. Sale `≥+`.
-- `gasto: null` con `motivo: "sin dato"`: ninguna lectura sirvió. Un reinicio ya no da `null`: da la cota mínima con `incompleto`. Las filas viejas con `motivo: "reinicio"` se siguen leyendo y `resumenDeLimites` las muestra como `reinicio`.
-- `fases`: el gasto de cada fase, en el orden de `FASES` (una fase unida, `plan+aprobación`, va tras la primera de sus fases), con las mismas marcas (`gasto`, `incompleto`, `motivo`); solo las fases que tuvieron alguna lectura. Falta en los flujos empezados antes de la 0.5.1.
+- `gasto: null` con `motivo: "sin dato"`: ninguna lectura sirvió. Un reinicio no da `null`: da la cota mínima con `incompleto`. Las filas con `motivo: "reinicio"` se leen y `resumenDeLimites` las muestra como `reinicio`.
+- `fases`: el gasto de cada fase, en el orden de `FASES` (una fase unida, `plan+aprobación`, va tras la primera de sus fases), con las mismas marcas (`gasto`, `incompleto`, `motivo`); solo las fases que tuvieron alguna lectura. Falta en los flujos sin lecturas por fase.
 - `tramos`: las lecturas crudas (hora, cuenta, antigüedad en segundos, `pct` y `resetsAt` de cada ventana), o `sinDato: <motivo>` en vez de las ventanas; `tramos[].fases`, las lecturas por fase con su `paso` (la primera es la `inicio`).
 
 **Reinicio de ventana:** la resta de un tramo no vale para una ventana si el % bajó, si la lectura final es posterior al `resetsAt` de la inicial o si el `resetsAt` cambió más de un minuto. En ese caso no se inventa un número negativo: se anota la cota mínima, el % de la lectura final (tras el reinicio se gastó al menos eso), con `incompleto: true`.
@@ -149,7 +147,7 @@ Un flujo reanudado en otra cuenta suma tramos de cuentas distintas (cada `tramo`
 node qcc-implementador/herramientas/costos.mjs --ultimos 10
 ```
 
-Cada flujo trae `5h +X % · sem +Y %`; `≥+X %` si el gasto quedó incompleto (faltó dato o la ventana se reinició: es la cota mínima), `s/d` sin dato (también en las filas de antes de la 0.5.0) y `reinicio` solo en las filas viejas que lo anotaron así. Debajo, los flujos con desglose traen una línea `por fase:` con las mismas marcas; las filas sin desglose (las de antes de la 0.5.1) no imprimen nada más. El `PROMEDIO` final promedia cada ventana solo con los flujos de gasto completo y dice cuántos son: `5h +6,5 % (4)`.
+Cada flujo trae `5h +X % · sem +Y %`; `≥+X %` si el gasto quedó incompleto (faltó dato o la ventana se reinició: es la cota mínima), `s/d` sin dato (también en las filas sin `limites`) y `reinicio` en las filas que lo anotaron así. Debajo, los flujos con desglose traen una línea `por fase:` con las mismas marcas; las filas sin desglose no imprimen nada más. El `PROMEDIO` final promedia cada ventana solo con los flujos de gasto completo y dice cuántos son: `5h +6,5 % (4)`.
 
 Ejemplo de salida (cifras inventadas, solo para mostrar el formato):
 
@@ -173,6 +171,5 @@ El % se mide por flujo y por fase, no por rol: la API da un solo porcentaje por 
 1. **Junta flujos con dato:** corre varios `/impl` con el panel abierto (que haya respondido al menos una vez) y mira que `costos.mjs --ultimos` no diga `s/d`.
 2. **Compara con los tokens por rol** que ya trae cada fila (`costo.roles.<rol>.tokens`): un flujo con más tokens nuevos de ejecutor que otro y más `5h +%` apunta al ejecutor. Separa tokens nuevos (entrada, escritos y salida) de lectura de caché: según la estimación de terceros de arriba, la lectura pesaría mucho menos.
 3. **Aísla un rol** cuando haga falta: dos flujos parecidos que solo difieran en un rol (por ejemplo, con más o menos exploradores) muestran la diferencia de % que pone ese rol.
-4. **Contrasta con la medición en dólares de antes:** con `costos.mjs`, los exploradores (Haiku) eran ~1–6 % del costo en flujos completos y 22–37 % en flujos cancelados con muchos exploradores; el ejecutor, ~40–55 %. Eso era en dólares y con precios de la API; el % real por corrida dirá si en límites pesa igual.
 
 Con pocos flujos y porcentajes enteros el ruido es grande: conviene mirar promedios de varios flujos y no uno suelto.
