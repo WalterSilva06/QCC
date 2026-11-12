@@ -13,10 +13,12 @@ El nombre viejo `.claude/implementador.json` sigue valiendo de respaldo.
   // timeoutSeg (opcional): tope en segundos del paso, 600 por defecto; al vencer se corta y sale ROJO.
   // rutas (opcional): globs de git (p. ej. "web/**"); el paso corre solo si alguna cambió entre HEAD y el árbol
   // inicial de la corrida (versionados y nuevos no ignorados). Si no, sale SALTADO (cuenta como ok). Sin git, sin HEAD o ante un error, corre.
+  // paralelo (opcional): los pasos seguidos con "paralelo": true corren a la vez; úsalo en los que no escriben
+  // archivos ni se pisan (typecheck, lint sin --fix, tests). La tabla conserva el orden.
   "verificar": [
-    { "nombre": "typecheck", "cmd": "pnpm run typecheck" },
     { "nombre": "build", "cmd": "pnpm run build", "timeoutSeg": 300 },
-    { "nombre": "test", "cmd": "pnpm run test", "rutas": ["web/**"] }
+    { "nombre": "typecheck", "cmd": "pnpm run typecheck", "paralelo": true },
+    { "nombre": "test", "cmd": "pnpm run test", "rutas": ["web/**"], "paralelo": true }
   ],
   "guardia": {
     // Archivos o carpetas (con / final) o globs que ningún subagente escribe, con el motivo.

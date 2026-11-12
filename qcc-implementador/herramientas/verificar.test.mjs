@@ -268,6 +268,33 @@ test('verificar: pasosDe copia rutas solo si es un array no vacío de textos', (
   for (const mala of [[], 'panel/**', [1], ['ok', ''], null]) assert.deepEqual(de(mala), { nombre: 'a', cmd: 'x' })
 })
 
+test('verificar: los pasos seguidos con paralelo corren a la vez y la tabla conserva el orden', () => {
+  // «espera» sale bien solo si ve el archivo que escribe «escribe», que va después: de a uno, vencería.
+  const espera = `node -e "const f=require('fs');const t=Date.now();(function e(){if(f.existsSync('b.txt'))process.exit(0);if(Date.now()-t>8000)process.exit(1);setTimeout(e,50)})()"`
+  const r = verificarCon([
+    { nombre: 'espera', cmd: espera, paralelo: true, timeoutSeg: 20 },
+    { nombre: 'escribe', cmd: escribirCmd('b.txt', 'b'), paralelo: true },
+    { nombre: 'saltado', cmd: 'node -e "process.exit(1)"', paralelo: true, rutas: ['nada/**'] },
+    { nombre: 'despues', cmd: 'node -e "console.log(1)"' },
+  ])
+  assert.equal(r.lineas.at(-1), 'RESULTADO: VERDE', r.salida)
+  assert.deepEqual(r.lineas.slice(0, 4).map((l) => l.split(/\s+/)[0]), ['espera', 'escribe', 'saltado', 'despues'])
+  assert.match(r.salida, /^saltado +SALTADO/m)
+  // Sin paralelo, la espera vence: corren de a uno.
+  const serie = verificarCon([{ nombre: 'espera', cmd: espera.replace('8000', '500'), timeoutSeg: 20 }, { nombre: 'escribe', cmd: escribirCmd('b.txt', 'b') }])
+  assert.equal(serie.lineas.at(-1), 'RESULTADO: ROJO (espera)')
+})
+
+test('verificar: pasosDe copia paralelo solo si es true', () => {
+  const de = (paralelo) => {
+    const raiz = repo('pasosparalelo', { '.claude/implementador.json': { verificar: [{ nombre: 'a', cmd: 'x', paralelo }] } })
+    temporales.push(raiz)
+    return pasosDe(raiz).pasos[0]
+  }
+  assert.deepEqual(de(true), { nombre: 'a', cmd: 'x', paralelo: true })
+  for (const malo of ['true', 1, false, undefined]) assert.deepEqual(de(malo), { nombre: 'a', cmd: 'x' })
+})
+
 /** Corre verificar.mjs en `raiz` sin bloquear: `{ salida, codigo }` al terminar. `alLeer(salida)` recibe la salida acumulada. */
 const verificarAsync = (raiz, alLeer) => new Promise((listo) => {
   const hijo = spawn(process.execPath, [VERIFICAR], { cwd: raiz, env: { ...process.env, CLAUDE_PROJECT_DIR: raiz } })

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Escalera de verificación de los flujos /impl, para cualquier proyecto.
 //
-// Los pasos salen de `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, `.claude/implementador.json`) (`"verificar": [{ "nombre", "cmd", "timeoutSeg"?, "rutas"? }]`,
+// Los pasos salen de `<raíz>/.claude/qcc-implementador.json` (o, de respaldo, `.claude/implementador.json`) (`"verificar": [{ "nombre", "cmd", "timeoutSeg"?, "rutas"?, "paralelo"? }]`,
 // en orden). `rutas` (globs de git, p. ej. `qcc-panel/**`): el paso corre solo si alguna cambió entre HEAD y el
 // árbol inicial de la corrida (versionados y nuevos no ignorados); si no, sale `SALTADO` (cuenta como ok). Sin git,
-// sin HEAD o ante un error de git, corre. Sin esa clave se detectan:
+// sin HEAD o ante un error de git, corre. `paralelo: true`: los pasos seguidos que lo llevan corren a la vez (la tabla
+// conserva el orden); sirve para los que no escriben archivos ni se pisan entre sí. Sin esa clave se detectan:
 //   - JS/TS: scripts de package.json, en este orden: typecheck (o type-check / check-types /
 //     tsc), lint, build, test; con el gestor del lockfile.
 //   - Rust: cargo check --all-targets → cargo test.   Go: go build ./... → go test ./...
@@ -162,14 +163,17 @@ function seguimientoDe(raiz, arbol) {
     get final() {
       return final
     },
-    /** Toma el árbol tras `paso`, que empezó en `inicio` (ISO). Lanza si no se puede: quien llama descarta el seguimiento entero. */
-    despuesDe(paso, inicio) {
+    /**
+     * Toma el árbol tras `pasos` (uno, o un tramo que corrió en paralelo: lo que cambió se atribuye a todos), que empezaron en
+     * `inicio` (ISO). Lanza si no se puede: quien llama descarta el seguimiento entero.
+     */
+    despuesDe(pasos, inicio) {
       const despues = arbolDe(raiz)
       if (despues === final) return
       for (const { ruta } of cambiosDe(raiz, final, despues)) {
         const a = archivos.get(ruta) ?? { pasos: [], build: true, inicio }
-        if (!a.pasos.includes(paso.nombre)) a.pasos.push(paso.nombre)
-        a.build &&= esBuild(paso)
+        for (const paso of pasos) if (!a.pasos.includes(paso.nombre)) a.pasos.push(paso.nombre)
+        a.build &&= pasos.every(esBuild)
         archivos.set(ruta, a)
       }
       final = despues
@@ -292,6 +296,7 @@ export function pasosDe(raiz) {
         cmd: String(p.cmd),
         ...(Number(p.timeoutSeg) > 0 ? { timeoutSeg: Number(p.timeoutSeg) } : {}),
         ...(Array.isArray(p.rutas) && p.rutas.length && p.rutas.every((r) => typeof r === 'string' && r) ? { rutas: [...p.rutas] } : {}),
+        ...(p.paralelo === true ? { paralelo: true } : {}),
       })),
     }
   }
@@ -445,21 +450,27 @@ async function main() {
   }
   const resultados = []
   let seg = clave ? seguimientoDe(RAIZ, arbol) : null
+  // Tramos en orden: los pasos seguidos con `paralelo: true` corren a la vez; el resto, de a uno.
+  const tramos = []
   for (const paso of pasos) {
-    if (paso.rutas && !cambiaEnRutas(RAIZ, arbol, paso.rutas)) {
-      resultados.push({ ...paso, ok: true, saltado: true })
-      continue
-    }
-    const t0 = Date.now()
-    const inicioPaso = new Date(t0).toISOString()
-    const tope = paso.timeoutSeg ?? TIMEOUT_SEG
-    const r = await correr(paso.cmd, tope)
-    resultados.push({ ...paso, ok: r.codigo === 0 && !r.vencido, codigo: r.codigo, vencido: r.vencido, tope, segundos: (Date.now() - t0) / 1000, salida: r.salida })
-    if (seg) {
+    if (paso.paralelo && tramos.at(-1)?.[0].paralelo) tramos.at(-1).push(paso)
+    else tramos.push([paso])
+  }
+  for (const tramo of tramos) {
+    const aCorrer = tramo.filter((paso) => !paso.rutas || cambiaEnRutas(RAIZ, arbol, paso.rutas))
+    const inicioTramo = new Date().toISOString()
+    const corridas = new Map(await Promise.all(aCorrer.map(async (paso) => {
+      const t0 = Date.now()
+      const tope = paso.timeoutSeg ?? TIMEOUT_SEG
+      const r = await correr(paso.cmd, tope)
+      return [paso, { ok: r.codigo === 0 && !r.vencido, codigo: r.codigo, vencido: r.vencido, tope, segundos: (Date.now() - t0) / 1000, salida: r.salida }]
+    })))
+    for (const paso of tramo) resultados.push(corridas.has(paso) ? { ...paso, ...corridas.get(paso) } : { ...paso, ok: true, saltado: true })
+    if (seg && aCorrer.length) {
       try {
-        seg.despuesDe(paso, inicioPaso)
+        seg.despuesDe(aCorrer, inicioTramo)
       } catch {
-        // Sin el árbol de este paso no se sabe qué cambió: ni claves nuevas ni registro de salidas.
+        // Sin el árbol de este tramo no se sabe qué cambió: ni claves nuevas ni registro de salidas.
         seg = null
       }
     }
