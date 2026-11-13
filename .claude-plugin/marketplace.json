@@ -1,10 +1,11 @@
 {
   "name": "qcc",
-  "description": "Herramientas personales para Claude Code: panel lateral, /commit y el implementador /impl",
+  "description": "Herramientas personales para Claude Code: panel lateral, /commit y los implementadores /impl e /impl-directo",
   "owner": { "name": "WalterSilva06" },
   "plugins": [
     { "name": "panel", "source": "./qcc-panel" },
     { "name": "commit", "source": "./qcc-commit" },
-    { "name": "impl", "source": "./qcc-implementador" }
+    { "name": "impl", "source": "./qcc-implementador" },
+    { "name": "impl-directo", "source": "./qcc-impl-directo" }
   ]
 }

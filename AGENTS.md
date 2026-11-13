@@ -1,9 +1,10 @@
 # QCC (Quorum Claude Code)
 
-Herramientas personales para Claude Code, en tres plugins de un marketplace (`qcc`, en `.claude-plugin/marketplace.json`; se instalan con `claude plugin install <plugin>@qcc`). Los plugins y sus comandos tienen nombre corto, pero las carpetas conservan el largo. Cada plugin lleva `.claude-plugin/plugin.json`, `skills/`, `agents/`, `hooks/hooks.json` y `herramientas/`:
+Herramientas personales para Claude Code, en cuatro plugins de un marketplace (`qcc`, en `.claude-plugin/marketplace.json`; se instalan con `claude plugin install <plugin>@qcc`). Los plugins y sus comandos tienen nombre corto, pero las carpetas conservan el largo. Cada plugin lleva `.claude-plugin/plugin.json`, `skills/`, `agents/`, `hooks/hooks.json` y `herramientas/`:
 
 - **`panel`** (carpeta `qcc-panel/`): mod con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Comando `/panel`. Ver [MODS.md](MODS.md).
 - **`impl`** (carpeta `qcc-implementador/`): el flujo `/impl` (con un solo modo), con sus agentes y herramientas. Ver [FLUJOS.md](FLUJOS.md).
+- **`impl-directo`** (carpeta `qcc-impl-directo/`): `/impl-directo`, sin plan ni aprobación; solo la skill y su revisor, sin herramientas, hooks ni guardia. Ver [FLUJOS.md](FLUJOS.md#impl-directo).
 - **`commit`** (carpeta `qcc-commit/`): el flujo `/commit`, con su agente y su guardia `solo-git`. Ver [FLUJOS.md](FLUJOS.md).
 
 Los flujos corren como plugins: sus herramientas se llaman con `${CLAUDE_PLUGIN_ROOT}/herramientas/…`, y las guardias van en el `hooks/hooks.json` de cada plugin y deciden por el `agent_type` del evento (`impl:qcc-ejecutor`…), porque los agentes de un plugin ignoran `hooks:` en su frontmatter. Los `subagent_type` llevan el prefijo del plugin (`impl:`, `commit:`); los agentes conservan su nombre `qcc-…`. La carpeta de cada flujo, el registro y las cachés de verificar viven en `<git-dir>/qcc-impl/` (una por repo y por worktree, compartida entre cuentas); `flujos.jsonl` e `historial/` están en `~/.claude/flujos/registros`. Los plugins se leen desde este repo; `qcc-implementador/instalar.mjs` no instala nada: con `--limpiar` archiva en `~/.claude/_archivo-limpieza-<fecha>/` las copias de `/impl` y `/commit` que dejó en `~/.claude` una instalación por copia.
@@ -21,7 +22,7 @@ LIMITES.md                        límites de uso (5 h y semanal) y el % que /im
 PENDIENTES.md                     lo que queda abierto, una línea por ítem
 .claude/qcc-implementador.json    pasos de verificación para /impl
 .claude/qcc-implementador/        reglas de /impl para este repo (un archivo por sección)
-.claude-plugin/marketplace.json   marketplace «qcc» con los tres plugins (panel, impl, commit)
+.claude-plugin/marketplace.json   marketplace «qcc» con los cuatro plugins (panel, impl, impl-directo, commit)
 qcc-implementador/                plugin impl
   .claude-plugin/plugin.json      manifiesto
   hooks/hooks.json                guardia.mjs en PreToolUse (Bash, PowerShell, Edit, Write, NotebookEdit, Read, Glob, Grep) y plan-visible.mjs (AskUserQuestion)
@@ -29,6 +30,10 @@ qcc-implementador/                plugin impl
   skills/impl/SKILL.md            /impl
   agents/qcc-*.md                 explorador, planificador, ejecutor, revisor (sin hooks:, que se ignoran)
   herramientas/                   estado (entrada de línea de comandos, con --guia) y sus módulos estado-base, -plan, -exploracion, -guardar, -avance, -despachos, -preflight, -cambios y -cierre; verificar, guardia, plan-visible (la pregunta «Plan» muestra el plan), costos (consumo en tokens y % de límites por flujo y por fase, sin dólares), mover (bloques de líneas para el ejecutor), sus tests (guardia.test, plan-visible.test, estado.test, estado-fotos.test, estado-cambios.test, costos.test, verificar.test, mover.test) y pruebas-comun, comun.md, plan.md, pasos.md, config.ejemplo.md
+qcc-impl-directo/                 plugin impl-directo
+  .claude-plugin/plugin.json      manifiesto
+  skills/impl-directo/SKILL.md    /impl-directo
+  agents/qcc-revisor-directo.md   revisor Opus high de /impl-directo
 qcc-commit/                       plugin commit
   .claude-plugin/plugin.json      manifiesto
   hooks/hooks.json                solo-git.mjs en PreToolUse (Bash, PowerShell)

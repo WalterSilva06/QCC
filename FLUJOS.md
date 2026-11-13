@@ -1,12 +1,13 @@
 # Flujos
 
-Los dos flujos son plugins del marketplace `qcc`: `impl` (carpeta `qcc-implementador/`) y `commit` (carpeta `qcc-commit/`). Las reglas generales del repo están en [AGENTS.md](AGENTS.md); el árbol de archivos, en [AGENTS.md](AGENTS.md#estructura).
+Los flujos son plugins del marketplace `qcc`: `impl` (carpeta `qcc-implementador/`), `impl-directo` (carpeta `qcc-impl-directo/`) y `commit` (carpeta `qcc-commit/`). Las reglas generales del repo están en [AGENTS.md](AGENTS.md); el árbol de archivos, en [AGENTS.md](AGENTS.md#estructura).
 
 ## Comandos
 
 | Comando | Uso | Para qué |
 |---|---|---|
 | `/impl` | `<qué cambiar>` | Cambios en cualquier proyecto con git: explora, clasifica, planifica, pide aprobación, ejecuta por subtareas y cierra con una revisión final independiente y verificación real. |
+| `/impl-directo` | `<qué cambiar>` | Cambios sin plan ni aprobación: explora con Haiku, la sesión implementa en Opus medium, verifica y cierra con una revisión independiente en Opus high. |
 | `/commit` | `[por qué, opcional]` | Pregunta si hacer commit + push, solo commit o commit en una rama nueva; separa los cambios sin commit en commits por grupo, con mensaje en español, y los hace, todo en Haiku high. |
 
 ## /impl
@@ -152,6 +153,16 @@ Un plugin de estilo (como Ponytail) puede pedir a los subagentes un resumen, lo 
 
 No cambies de modo a mitad de un flujo.
 
+## /impl-directo
+
+Comando aparte de `/impl`, sin carpeta de flujo, `estado.mjs`, historial, guardia ni pasos en el panel: el plugin es solo `skills/impl-directo/SKILL.md` y el agente `qcc-revisor-directo`.
+
+- **Roles y modelos:** la skill fija `model: opus` y `effort: medium` para la sesión, que implementa. Explora el agente `Explore` de Claude Code con `model: "haiku"` y `effort: "low"` (hasta 4, por área); revisa `impl-directo:qcc-revisor-directo`, Opus high, con `tools: Read, Glob, Grep, Bash`.
+- **Verificación:** los `cmd` de `verificar` en `.claude/qcc-implementador.json` (respeta `rutas` y `paralelo`); sin él, los del CLAUDE.md o AGENTS.md del proyecto. Dos correcciones sin VERDE cierran `DETENIDO`.
+- **Reglas del proyecto:** las mismas de `/impl`: la sesión lee `planificar.md` y `ejecutor.md`, el explorador `buscar.md` y el revisor `revisor.md`.
+- **Revisión:** el contrato es el pedido literal y el cambio es lo que no tiene commit (`git diff HEAD` y los archivos nuevos); `git status --short` se inyecta al empezar como sucios previos, que no cuentan. Hasta 2 ciclos: la sesión corrige los PROBLEMAS y las OBSERVACIONES van a «Riesgos pendientes».
+- **Sin guardia:** el revisor no es un agente de `impl`, así que `guardia.mjs` no lo vigila: solo su prompt lo limita a leer. La sesión no corre git que escriba ni toca `.env*`, y pregunta antes de un comando irreversible o externo.
+
 ## /commit
 
 Comando aparte de `/impl`, sin carpeta de flujo ni registros. Toma la idea del plugin `commit` de [midudev/better-claude](https://github.com/midudev/better-claude/tree/main/plugins/commit), en español. Al escribir `/commit [por qué]`, la sesión pregunta qué hacer con los cambios y despacha al agente `qcc-generador-commit`, que los separa en grupos lógicos y propone un commit en español por grupo. La sesión hace los commits y el push si corresponde, y muestra cada mensaje con su hash.
@@ -185,7 +196,7 @@ Comando aparte de `/impl`, sin carpeta de flujo ni registros. Toma la idea del p
 
 ## Instalación
 
-Los dos flujos se instalan como plugins del marketplace `qcc` (ver [README.md](README.md#instalar)) y se leen desde este repo: tras editar, `/reload-plugins` o una sesión nueva. Sus herramientas se llaman con `${CLAUDE_PLUGIN_ROOT}/herramientas/…`, y las guardias van en el `hooks/hooks.json` de cada plugin, porque los agentes de un plugin ignoran `hooks:` en su frontmatter.
+Los flujos se instalan como plugins del marketplace `qcc` (ver [README.md](README.md#instalar)) y se leen desde este repo: tras editar, `/reload-plugins` o una sesión nueva. Sus herramientas se llaman con `${CLAUDE_PLUGIN_ROOT}/herramientas/…`, y las guardias van en el `hooks/hooks.json` de cada plugin, porque los agentes de un plugin ignoran `hooks:` en su frontmatter.
 
 `node qcc-implementador/instalar.mjs` lista las copias de `/impl` y `/commit` que dejó en `~/.claude` una instalación por copia (las que anota `~/.claude/flujos/.instalado.json`), y `--limpiar` las mueve a `~/.claude/_archivo-limpieza-<fecha>/`: duplicarían los comandos y agentes del plugin. Una copia editada ahí no se toca. No toca `~/.claude/flujos/registros`.
 
