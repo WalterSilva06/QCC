@@ -1,6 +1,6 @@
 # Límites de uso
 
-En un plan de suscripción lo que se agota es el % de la ventana de 5 horas y el % semanal, no dólares. Este archivo junta qué miden esos límites y cómo anota `/impl` el % que gasta cada corrida y cada una de sus fases. `/impl-d` lee el mismo snapshot con las mismas reglas, pero solo da el total de la corrida en su cierre, sin fases ni fila en `flujos.jsonl` (ver [FLUJOS.md](FLUJOS.md#impl-d)). Las reglas generales del repo están en [AGENTS.md](AGENTS.md); el flujo, en [FLUJOS.md](FLUJOS.md), y el panel, en [MODS.md](MODS.md).
+En un plan de suscripción lo que se agota es el % de la ventana de 5 horas y el % semanal, no dólares. Este archivo junta qué miden esos límites y cómo anota `/impl` el % que gasta cada corrida y cada una de sus fases. `/impl-d` lee el mismo snapshot con las mismas reglas, pero solo da el total de la corrida, en su cierre y en su fila de `registros/impl-d.jsonl`, sin fases ni fila en `flujos.jsonl`; al empezar imprime el % actual y avisa `MARGEN BAJO` desde 85 % de la ventana de 5 h (ver [FLUJOS.md](FLUJOS.md#impl-d)). Las reglas generales del repo están en [AGENTS.md](AGENTS.md); el flujo, en [FLUJOS.md](FLUJOS.md), y el panel, en [MODS.md](MODS.md).
 
 ## 1. Qué miden
 

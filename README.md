@@ -19,7 +19,7 @@ Los flujos son skills de Claude Code: solo corren cuando el usuario escribe el c
 | Comando | Para qué |
 |---|---|
 | `/impl <qué cambiar>` | Cambios con exploración, plan aprobado por el usuario, ejecución por subtareas, verificación real y revisión final independiente. Un flujo cortado (límite de uso, sesión cerrada, otra cuenta) se sigue con `/impl reanudar` sin perder lo hecho: el cierre suma todas sus sesiones en una sola fila del historial. Con `/impl -p` no pregunta nada (sirve con `claude -p`): ver [FLUJOS.md](FLUJOS.md#comandos). |
-| `/impl-d <qué cambiar>` | Cambios sin plan ni aprobación: exploración con Haiku, la sesión implementa en Opus medium, verificación y revisión independiente en Opus high. El cierre dice el % de la ventana de 5 h y de la semanal que gastó, como `/impl`. Acepta `-p`, igual que `/impl`. Sin carpeta de flujo, historial ni pasos en el panel. |
+| `/impl-d <qué cambiar>` | Cambios sin plan ni aprobación: exploración con Haiku, la sesión implementa en Opus medium, verificación y revisión independiente en Opus high. El cierre dice el % de la ventana de 5 h y de la semanal que gastó, como `/impl`. Acepta `-p`, igual que `/impl`. Sin carpeta de flujo ni pasos en el panel; cada corrida queda en `registros/impl-d.jsonl`. |
 | `/commit [por qué]` | Separa los cambios sin commit en grupos lógicos y hace un commit en español por grupo. Es el único camino para hacer commits: ningún flujo ni agente los hace por su cuenta. |
 | `/panel` · `/panel carpeta` | Abre el panel; el segundo abre la carpeta del proyecto. |
 
