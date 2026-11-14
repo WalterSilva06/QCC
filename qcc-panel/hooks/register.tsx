@@ -21,12 +21,9 @@ import { comandoCarpeta, tipoDeRuta } from './carpeta'
 import type { SistemaCarpeta } from './carpeta'
 import { decidirFreno } from './freno'
 import {
-  AGENTE_DE_PASO,
-  abreTanda,
   abrirEspera,
   anotarConfig,
   anotarExplorador,
-  anotarFilaExplorador,
   avanzar,
   baseDeUso,
   cerrarEspera,
@@ -45,7 +42,6 @@ import {
   sumarGastoDeExplorador,
   terminarFlujo,
 } from './flujo'
-import type { Senal } from './flujo'
 import { cifraMinutos, leerHistorial, lineasHistorial, promedioHistorial, rutaHistorial, rutaLimites, snapshotLimites, unirHistorial } from './historial'
 import { COPIA_NORMAL, detectar, rutaSkill, vistaDe } from './instalados'
 import {
@@ -127,7 +123,6 @@ const sesion = atom({ plugin: 'panel', key: 'sesion' } as const, null)
 const pestana = atom({ plugin: 'panel', key: 'pestana' } as const, 'inicio')
 const actividad = atom({ plugin: 'panel', key: 'actividad' } as const, {})
 const flujo = atom({ plugin: 'panel', key: 'flujo' } as const, null)
-const filasExploradores = atom({ plugin: 'panel', key: 'filasExploradores' } as const, [])
 const historial = atom({ plugin: 'panel', key: 'historial' } as const, null)
 const home = atom({ plugin: 'panel', key: 'home' } as const, null)
 const freno = atom({ plugin: 'panel', key: 'freno' } as const, null)
@@ -449,40 +444,6 @@ async function readSesion($: EngineInterface): Promise<Semana | null> {
   }
 }
 
-/**
- * Anota la fila de una petición de subagente si hay exploradores o revisores en vuelo. Nunca rechaza:
- * un fallo del panel no puede frenar una petición al modelo.
- */
-async function marcarExplorador($: EngineInterface, id: string) {
-  try {
-    const f = await read($, flujo)
-    await update($, filasExploradores, x => anotarFilaExplorador(x, f, id))
-  } catch {
-    // Sin la marca la fila dibuja un solo ■.
-  }
-}
-
-/** Vacía las filas de exploradores. Nunca rechaza: no puede frenar una skill ni el cierre de la sesión. */
-async function vaciarFilasExploradores($: EngineInterface) {
-  try {
-    await update($, filasExploradores, () => [])
-  } catch {
-    // Sin vaciar, el ■ de más solo se ve con un flujo en curso y exploradores en vuelo.
-  }
-}
-
-/**
- * Vacía las filas anotadas cuando la señal abre una tanda de exploradores o revisores, antes de que
- * se pida al modelo cualquier subagente de la tanda. Nunca rechaza: no puede frenar una herramienta.
- */
-async function vaciarAlAbrirTanda($: EngineInterface, s: Senal) {
-  try {
-    if (abreTanda(await read($, flujo), s)) await update($, filasExploradores, () => [])
-  } catch {
-    // Sin vaciar, la fila nueva puede heredar la marca de la tanda anterior.
-  }
-}
-
 /** Suma una herramienta al subagente que la llama (un agente desconocido no cambia nada). Nunca rechaza: no puede frenar una herramienta. */
 async function contarHerramienta($: EngineInterface, agentId: string | null | undefined, enFondo = false) {
   try {
@@ -750,7 +711,7 @@ export const register: Register = on => {
       // Sin limpiar, la caducidad de la espera lo corrige.
     }
     try {
-      // `flujo` y `filasExploradores` no se vacían aquí: un `/reload-plugins` a mitad de flujo no los pierde.
+      // `flujo` no se vacía aquí: un `/reload-plugins` a mitad de flujo no lo pierde.
       const guardada = pestanaValida(await $.store.get(PREF_PESTANA))
       await update($, pestana, () => guardada)
     } catch {
@@ -866,7 +827,6 @@ export const register: Register = on => {
     }
     // Cualquier razón: el flujo de esta sesión no sigue en la que viene.
     await marcarFlujo($, () => null)
-    await vaciarFilasExploradores($)
     if (e.reason === 'clear') {
       try {
         await update($, medida, m => (m === null ? null : { ventana: m.ventana, limites: m.limites }))
@@ -903,8 +863,6 @@ export const register: Register = on => {
     // La fila se abre y se cierra con el id de la petición, no con el de la respuesta.
     const id = idFila(e.model, e.effort, e.agentId !== undefined)
     await marcarActividad($, (a, t) => iniciarPeticion(a, id, t))
-    // Antes de `next` y fuera del try/finally: no puede frenar la petición ni dejar la actividad sin bajar.
-    if (e.agentId !== undefined) await marcarExplorador($, id)
 
     let pideHerramienta = false
     // Un subagente sin herramientas que espera una tarea suya en segundo plano no terminó: sigue en curso, esperando (amarillo).
@@ -1015,12 +973,6 @@ export const register: Register = on => {
     // Lo que la sesión ya gastó, para descontarlo del consumo del flujo nuevo.
     const base = baseDeUso(await readSesion($))
     await marcarFlujo($, (f, t) => iniciarFlujo(e.skill, e.text, t, base) ?? f)
-    // Un flujo nuevo no hereda las filas del anterior.
-    try {
-      if (iniciarFlujo(e.skill, e.text) !== null) await vaciarFilasExploradores($)
-    } catch {
-      // Sin vaciar, el ■ de más solo se ve con un flujo en curso y exploradores en vuelo.
-    }
 
     return next(e)
   })
@@ -1045,8 +997,6 @@ export const register: Register = on => {
     const s = senalDeHerramienta(e.tool, e as unknown as Record<string, unknown>, e.agentId)
     if (s === null) return next(e)
 
-    if (s.tipo === 'agente') await vaciarAlAbrirTanda($, s)
-
     // Una pregunta del hilo principal con el flujo en curso espera a la persona: se decide antes de que `marcarFlujo` la anote.
     const avisarPregunta = s.tipo === 'pregunta' && e.agentId === undefined && (await enFlujo($))
 
@@ -1069,7 +1019,7 @@ export const register: Register = on => {
     const fin = senalAlTerminar(s)
     if (fin === null) return next(e)
 
-    const esExplorador = s.tipo === 'agente' && s.nombre === AGENTE_DE_PASO.explorador.agente
+    const esExplorador = s.tipo === 'agente' && s.nombre === 'explorador'
     const llamada = typeof e.tool_use_id === 'string' ? e.tool_use_id : undefined
 
     // La vuelta se descuenta siempre, también si la herramienta falla; el error de `next` sigue su camino intacto.
@@ -1113,7 +1063,7 @@ export const register: Register = on => {
     let id = ''
     try {
       const agentId = (r as { agentId?: unknown }).agentId
-      if (typeof e.subagentType === 'string' && rolDeAgente(e.subagentType) === AGENTE_DE_PASO.explorador.agente && typeof agentId === 'string') id = agentId
+      if (typeof e.subagentType === 'string' && rolDeAgente(e.subagentType) === 'explorador' && typeof agentId === 'string') id = agentId
     } catch {
       // Sin el id, el explorador se anota al volver su resultado.
     }

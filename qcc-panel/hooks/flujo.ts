@@ -1,7 +1,7 @@
 // Flujo `/impl` en curso. Puro: sin `$`, para poder probarlo solo.
 
 import type { FilaSemana, Flujo, Semana } from '../types'
-import { duracion, tokens, totalConSalida } from './formato'
+import { duracion } from './formato'
 import { familia, idDeFila, nombreEsfuerzo } from './semana'
 import type { Uso } from './semana'
 
@@ -28,7 +28,7 @@ export type Senal =
  * en ese paso. Los dos faltan si son menos de 1 o si el nodo está pendiente.
  * `gasto` son los tokens `[total, salida]` del paso (`Flujo.gasto`); falta si no hubo, si el nodo está pendiente y en «Terminado».
  * `porExplorador` solo está en «Exploración»: un registro por explorador, en orden de lanzamiento. Falta si no se conoce la descripción
- * de todos los lanzados (o el flujo no trae `detalleExploradores`); entonces el paso dibuja una sola línea con el total.
+ * de todos los lanzados (o el flujo no trae `detalleExploradores`).
  * `configs` son los modelos y esfuerzos observados del paso, por agente (`Flujo.configs`), solo con textos no vacíos; falta si no hay ninguno o si el nodo está pendiente.
  */
 export type Nodo = {
@@ -246,7 +246,6 @@ function cambioDeImplementacion(f: Flujo, s: Senal): Cambio {
       }
 
       if (s.nombre === 'planificador') return { paso: 2, planes: (f.planes ?? 0) + 1 }
-      if (s.nombre === 'revisor-plan') return { paso: 3 }
       if (s.nombre === 'ejecutor') {
         const lanzado = {
           paso: 5,
@@ -316,7 +315,7 @@ function esperaTotal(f: Flujo, t?: number): number {
 }
 
 /** Agentes propios del flujo: lanzar uno desde el hilo principal es seguir el flujo. */
-const AGENTES_DEL_FLUJO: readonly string[] = ['explorador', 'planificador', 'revisor-plan', 'ejecutor', 'revisor']
+const AGENTES_DEL_FLUJO: readonly string[] = ['explorador', 'planificador', 'ejecutor', 'revisor']
 
 /**
  * Si la señal `s` sigue un flujo interrumpido (un turno cortado sin `CIERRE`, p. ej. por el límite de uso), lo vuelve a poner en curso a la hora `t`.
@@ -403,54 +402,6 @@ export function terminarFlujo(actual: Flujo | null, razon: string, respuesta?: s
   if (razon !== 'answer' || !(respuesta ?? '').includes('CIERRE ·')) return { ...f, ...cierre, estado: 'interrumpido' }
 
   return { ...f, ...cierre, estado: /CIERRE · [^\n]*— DETENIDO/.test(respuesta ?? '') ? 'detenido' : 'completo' }
-}
-
-/**
- * Anota el id de una fila de subagente vista con exploradores o revisores en vuelo (en el flujo en curso todo
- * subagente que pide al modelo es entonces uno de ellos). Si no corresponde anotarla o ya estaba,
- * devuelve la misma referencia; nunca muta `filas`.
- */
-export function anotarFilaExplorador<T extends readonly string[]>(filas: T, f: Flujo | null, id: string): T | string[] {
-  if (f === null || f.estado !== 'en curso' || (f.exploradores ?? 0) + (f.revisores ?? 0) <= 0 || filas.includes(id)) return filas
-
-  return [...filas, id]
-}
-
-/**
- * Si la señal `s` abre una tanda nueva de exploradores o revisores: un `agente` `explorador` o `revisor` lanzado
- * cuando no había otro de su tipo en vuelo (el explorador en el paso 1 solo abre tanda si no hay ninguno).
- * Es falso sin flujo, con el flujo terminado y con cualquier otra señal.
- */
-export function abreTanda(f: Flujo | null, s: Senal): boolean {
-  if (f === null || f.estado !== 'en curso' || s.tipo !== 'agente') return false
-
-  if (s.nombre === 'explorador') return f.paso !== 1 || (f.exploradores ?? 0) === 0
-
-  return s.nombre === 'revisor' && (f.revisores ?? 0) === 0
-}
-
-/** Tope de ■ de una fila anotada: el máximo de exploradores en paralelo de `/impl`. */
-export const TOPE_EN_VUELO = 5
-
-/**
- * Cuántos ■ lleva una fila: uno por explorador en vuelo con la config de la fila (de 1 a `TOPE_EN_VUELO`) más uno por revisor en vuelo,
- * si es una fila anotada del flujo en curso; si no, 1. La config es «<modelo> <esfuerzo>» (la del id de la fila) y se busca en los
- * registros de `detalleExploradores` sin `ms`, con tope en `exploradores`; uno en vuelo sin config anotada todavía (sin registro
- * o sin su primera petición) cuenta en todas las filas anotadas. Sin lista, o sin config observada en ningún explorador
- * en vuelo, cuenta todos los `exploradores`. Los revisores entran en todas las filas anotadas.
- */
-export function cuadradosDeFila(f: Flujo | null, filas: readonly string[], id: string): number {
-  if (f === null || f.estado !== 'en curso' || !filas.includes(id)) return 1
-
-  const total = f.exploradores ?? 0
-  const [modelo = '', esfuerzo = ''] = id.split('|')
-  const cfg = `${modelo} ${esfuerzo}`
-  const enVuelo = detalleDe(f).filter(e => !(finito(e.ms) && e.ms >= 0))
-  const conocidos = enVuelo.filter(e => textosValidos(e.config).length > 0)
-  const sinConocer = Math.max(0, total - conocidos.length)
-  const propios = conocidos.length === 0 ? total : Math.min(total, conocidos.filter(e => textosValidos(e.config).includes(cfg)).length + sinConocer)
-
-  return Math.min(TOPE_EN_VUELO, Math.max(1, propios + (f.revisores ?? 0)))
 }
 
 /**
@@ -677,7 +628,7 @@ function anotarEnPaso(f: Flujo, agente: string, config: string): Flujo {
 /**
  * Anota el modelo y esfuerzo (`nombre`, p. ej. «Sonnet 5.5 high») de una petición del subagente `agentId`, según el rol que tiene en vuelo, en este orden:
  * `explorador` si `agentId` ya tiene registro o hay exploradores en vuelo (en su registro, que crea si falta, y en `configs`); `revisor` si hay revisores
- * en vuelo; el `ultimoAgente` si es `planificador`, `revisor-plan` o `ejecutor`. Va a `configs` del paso actual, sin repetir y en orden de aparición.
+ * en vuelo; el `ultimoAgente` si es `planificador` o `ejecutor`. Va a `configs` del paso actual, sin repetir y en orden de aparición.
  * Sin flujo, terminado, con `agentId` o `nombre` vacíos, sin rol o sin nada nuevo que anotar, devuelve la misma referencia. Nunca muta `f`.
  */
 export function anotarConfig(f: Flujo | null, agentId: string | null | undefined, nombre: string): Flujo | null {
@@ -700,7 +651,7 @@ export function anotarConfig(f: Flujo | null, agentId: string | null | undefined
 
   const agente: unknown = f.ultimoAgente
 
-  return agente === 'planificador' || agente === 'revisor-plan' || agente === 'ejecutor' ? anotarEnPaso(f, agente, config) : f
+  return agente === 'planificador' || agente === 'ejecutor' ? anotarEnPaso(f, agente, config) : f
 }
 
 /**
@@ -811,156 +762,6 @@ export function nodos(actual: Flujo, t?: number): Nodo[] {
   lista.push(terminado)
 
   return lista
-}
-
-/**
- * Agente y configuración (modelo y esfuerzo) de cada línea de agente que dibuja el panel.
- * Copia de la tabla «Agentes» de `qcc-implementador/skills/impl/SKILL.md` y del frontmatter de `qcc-implementador/agents/*.md`: si cambian allí, cambian aquí.
- * `revisorSubtarea` queda para flujos de versiones anteriores, que lanzaban un revisor por subtarea.
- */
-export const AGENTE_DE_PASO = {
-  explorador: { agente: 'explorador', config: 'Haiku high' },
-  planificador: { agente: 'planificador', config: 'Opus medium' },
-  revisorPlan: { agente: 'revisor-plan', config: 'Sonnet medium' },
-  ejecutor: { agente: 'ejecutor', config: 'Sonnet high' },
-  revisorSubtarea: { agente: 'revisor', config: 'Sonnet high/medium' },
-  revisorFinal: { agente: 'revisor', config: 'Opus high' },
-} as const
-
-/** La línea `agente · modelo esfuerzo` de una entrada de `AGENTE_DE_PASO`. */
-function lineaDeAgente(a: (typeof AGENTE_DE_PASO)[keyof typeof AGENTE_DE_PASO]): string {
-  return `${a.agente} · ${a.config}`
-}
-
-/** `descripcion` sin el prefijo «Explorar » (con o sin mayúsculas, y el «:» o los espacios que queden pegados); igual si no lo tiene o si no quedaría nada. */
-function sinPrefijoExplorar(descripcion: string): string {
-  const resto = descripcion.trim().replace(/^explorar[\s:]+/i, '').trim()
-
-  return resto === '' ? descripcion.trim() : resto
-}
-
-/**
- * La línea de un explorador: `descripción · Haiku high · 3 min 20 s · 96,2k`. La descripción va sin el prefijo «Explorar »;
- * la duración y el gasto faltan si no se conocen (o si el gasto es 0). La config es la observada (forma corta: `Haiku high, max`) o `Haiku high` sin dato.
- * Con `ancho` (columnas): si a la descripción le quedarían menos de 8, se quita la config del modelo; después la descripción se recorta con «…»
- * a lo que sobre (por caracteres, no por unidades de código). Si ni «…» cabe junto a las cifras, van las cifras solas, sin descripción, y se
- * quita el gasto antes que la duración; si ni la primera cabe, se recorta con «…». Con `ancho` ≥ 1 la línea nunca pasa de `ancho`.
- */
-export function lineaDeExplorador(d: PorExplorador, ancho?: number): string {
-  const descripcion = Array.from(sinPrefijoExplorar(d.descripcion))
-  const medidas = [d.ms === undefined ? '' : duracion(d.ms), d.gasto !== undefined && d.gasto > 0 ? tokens(d.gasto) : ''].filter(c => c !== '')
-  const armar = (cifras: string[]): string => (cifras.length === 0 ? '' : ` · ${cifras.join(' · ')}`)
-  const observadas = textosValidos(d.config)
-  const completas: string[] = [observadas.length > 0 ? textoDeConfig(observadas, true) : AGENTE_DE_PASO.explorador.config, ...medidas]
-
-  if (ancho === undefined) return `${descripcion.join('')}${armar(completas)}`
-
-  const cifras = ancho - Array.from(armar(completas)).length < 8 ? medidas : completas
-  const sufijo = armar(cifras)
-  const sobra = ancho - Array.from(sufijo).length
-
-  if (descripcion.length <= sobra) return `${descripcion.join('')}${sufijo}`
-  if (sobra >= 1) return `${descripcion.slice(0, sobra - 1).join('').trimEnd()}…${sufijo}`
-
-  for (let n = medidas.length; n > 0; n--) {
-    const solas = medidas.slice(0, n).join(' · ')
-    if (Array.from(solas).length <= ancho) return solas
-  }
-
-  return `${Array.from(medidas[0] ?? '').slice(0, Math.max(ancho - 1, 0)).join('').trimEnd()}…`
-}
-
-/**
- * El texto de una lista de nombres observados («Sonnet 5.5 high»): agrupa por modelo (lo anterior al último espacio) y junta los esfuerzos
- * de cada grupo con «, »; los grupos van unidos con «, ». `corta` quita la versión del modelo (` 5.5`) y reagrupa sin repetir esfuerzos.
- */
-function textoDeConfig(nombres: readonly string[], corta: boolean): string {
-  const grupos = new Map<string, string[]>()
-
-  for (const nombre of nombres.map(n => n.trim())) {
-    const i = nombre.lastIndexOf(' ')
-    const modelo = i === -1 ? nombre : nombre.slice(0, i).trim()
-    const esfuerzo = i === -1 ? '' : nombre.slice(i + 1)
-    const grupo = corta ? modelo.replace(/ \d+(\.\d+)?$/, '') : modelo
-    const esfuerzos = grupos.get(grupo) ?? []
-
-    if (esfuerzo !== '' && !esfuerzos.includes(esfuerzo)) esfuerzos.push(esfuerzo)
-
-    grupos.set(grupo, esfuerzos)
-  }
-
-  return [...grupos].map(([modelo, esfuerzos]) => (esfuerzos.length === 0 ? modelo : `${modelo} ${esfuerzos.join(', ')}`)).join(', ')
-}
-
-/**
- * La línea de un agente cuya config se observó: `agente · forma larga`. Con `ancho`, si no cabe va la forma corta (sin la versión del modelo)
- * y, si tampoco cabe, se corta a `ancho − 1` caracteres (no unidades de código) con «…». Sin lista, la línea fija de `AGENTE_DE_PASO`.
- */
-function lineaObservada(a: (typeof AGENTE_DE_PASO)[keyof typeof AGENTE_DE_PASO], observadas: readonly string[] | undefined, ancho?: number): string {
-  if (observadas === undefined || observadas.length === 0) return lineaDeAgente(a)
-
-  const larga = `${a.agente} · ${textoDeConfig(observadas, false)}`
-
-  if (ancho === undefined || Array.from(larga).length <= ancho) return larga
-
-  const corta = Array.from(`${a.agente} · ${textoDeConfig(observadas, true)}`)
-
-  if (corta.length <= ancho) return corta.join('')
-
-  return `${corta.slice(0, Math.max(ancho - 1, 0)).join('').trimEnd()}…`
-}
-
-/** Las líneas de agente de un nodo no pendiente, sin la de gasto. */
-function lineasDeAgente(n: Nodo, orquestador?: string, ancho?: number): string[] {
-  const veces = n.veces ?? 0
-  const revisiones = n.revisiones ?? 0
-  const exploradores = n.exploradores ?? 0
-  const configs = n.configs ?? {}
-
-  switch (n.etiqueta) {
-    case 'Preflight':
-    case 'Cierre':
-      return n.ms !== undefined && orquestador !== undefined ? [`orquestador ${orquestador}`] : []
-    case 'Exploración': {
-      if (n.porExplorador !== undefined && n.porExplorador.length > 0) return n.porExplorador.map(d => lineaDeExplorador(d, ancho))
-
-      const observadas = textosValidos(configs.explorador)
-      const config = observadas.length > 0 ? textoDeConfig(observadas, true) : AGENTE_DE_PASO.explorador.config
-
-      return exploradores >= 1 ? [`${exploradores} ${exploradores === 1 ? AGENTE_DE_PASO.explorador.agente : `${AGENTE_DE_PASO.explorador.agente}es`} · ${config}`] : []
-    }
-    case 'Plan':
-      return veces >= 1 ? [lineaObservada(AGENTE_DE_PASO.planificador, configs.planificador, ancho)] : []
-    case 'Revisión del plan':
-      return n.ms !== undefined ? [lineaObservada(AGENTE_DE_PASO.revisorPlan, configs['revisor-plan'], ancho)] : []
-    case 'Ejecución': {
-      const lineas: string[] = []
-
-      if (veces >= 1) lineas.push(lineaObservada(AGENTE_DE_PASO.ejecutor, configs.ejecutor, ancho))
-      if (revisiones >= 1) lineas.push(lineaObservada(AGENTE_DE_PASO.revisorSubtarea, configs.revisor, ancho))
-
-      return lineas
-    }
-    case 'Verificación final':
-      return revisiones >= 1 ? [lineaObservada(AGENTE_DE_PASO.revisorFinal, configs.revisor, ancho)] : []
-    default:
-      return []
-  }
-}
-
-/**
- * Las líneas de un nodo, sin sangría: quién trabaja en ese paso y con qué modelo, y al final lo que gastó (`gasto 100k · sal 2k`).
- * Vacío para un nodo pendiente. «Aprobación» y «Terminado…» no tienen línea de agente, pero «Aprobación» sí la de gasto;
- * tampoco hay línea de agente cuando el paso no lanzó ese agente.
- * `orquestador` es el nombre del modelo del hilo principal; sin él (o sin `ms`) no hay línea en «Preflight» y «Cierre».
- * Si «Exploración» trae `porExplorador`, lleva una línea por explorador (ver `lineaDeExplorador`, con `ancho` columnas por línea) en lugar de la línea con el total.
- */
-export function detallePaso(n: Nodo, orquestador?: string, ancho?: number): string[] {
-  if (n.estado === 'pendiente') return []
-
-  const lineas = lineasDeAgente(n, orquestador, ancho)
-
-  return n.gasto !== undefined && n.gasto[0] > 0 ? [...lineas, `gasto ${totalConSalida(n.gasto[0], n.gasto[1])}`] : lineas
 }
 
 /**

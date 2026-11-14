@@ -161,7 +161,7 @@ export type Flujo = {
   /** `subagent_type` del último `Agent` que lanzó el hilo principal durante el flujo; sirve para atribuir las peticiones de los subagentes. Falta hasta el primero. */
   ultimoAgente?: string
   /**
-   * Modelo y esfuerzo observados de cada agente, por índice de paso y por agente (`planificador`, `revisor-plan`, `ejecutor`, `revisor`, `explorador`),
+   * Modelo y esfuerzo observados de cada agente, por índice de paso y por agente (`planificador`, `ejecutor`, `revisor`, `explorador`),
    * en orden de primera aparición y sin repetir: `{ 5: { revisor: ['Sonnet 5.5 high', 'Sonnet 5.5 medium'] } }`. Solo se escribe lo observado: nunca `{}` ni `[]`.
    */
   configs?: Record<number, Record<string, string[]>>
@@ -300,8 +300,6 @@ declare module 'claude-code' {
       actividad: Actividad
       /** El flujo `/impl` en curso o ya terminado; `null` si la sesión no inició ninguno. */
       flujo: Flujo | null
-      /** Ids de fila de subagente vistas mientras había exploradores o revisores en vuelo; solo de esta terminal; se vacía al iniciar un flujo, al abrir una tanda de exploradores o revisores y al cerrar la sesión. */
-      filasExploradores: string[]
       /** Las últimas filas de `flujos.jsonl` con la fecha de modificación con que se leyeron; `null` hasta la primera lectura o si falló. Si falta (estado de una versión anterior), `null`. */
       historial?: Historial | null
       /** La carpeta personal, pedida a `node` una vez por sesión: `null` si aún no se pidió, `''` si falló (y no se vuelve a pedir). Si falta, `null`. */
