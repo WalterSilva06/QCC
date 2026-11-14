@@ -1,14 +1,16 @@
 # Flujos
 
-Los flujos son plugins del marketplace `qcc`: `impl` (carpeta `qcc-implementador/`), `impl-directo` (carpeta `qcc-impl-directo/`) y `commit` (carpeta `qcc-commit/`). Las reglas generales del repo están en [AGENTS.md](AGENTS.md); el árbol de archivos, en [AGENTS.md](AGENTS.md#estructura).
+Los flujos son plugins del marketplace `qcc`: `impl` (carpeta `qcc-implementador/`), `impl-d` (carpeta `qcc-impl-directo/`) y `commit` (carpeta `qcc-commit/`). Las reglas generales del repo están en [AGENTS.md](AGENTS.md); el árbol de archivos, en [AGENTS.md](AGENTS.md#estructura).
 
 ## Comandos
 
 | Comando | Uso | Para qué |
 |---|---|---|
-| `/impl` | `<qué cambiar>` | Cambios en cualquier proyecto con git: explora, clasifica, planifica, pide aprobación, ejecuta por subtareas y cierra con una revisión final independiente y verificación real. |
-| `/impl-directo` | `<qué cambiar>` | Cambios sin plan ni aprobación: explora con Haiku, la sesión implementa en Opus medium, verifica y cierra con una revisión independiente en Opus high. |
+| `/impl` | `[-p] <qué cambiar>` | Cambios en cualquier proyecto con git: explora, clasifica, planifica, pide aprobación, ejecuta por subtareas y cierra con una revisión final independiente y verificación real. |
+| `/impl-d` | `[-p] <qué cambiar>` | Cambios sin plan ni aprobación: explora con Haiku, la sesión implementa en Opus medium, verifica y cierra con una revisión independiente en Opus high y el % de los límites que gastó. |
 | `/commit` | `[por qué, opcional]` | Pregunta si hacer commit + push, solo commit o commit en una rama nueva; separa los cambios sin commit en commits por grupo, con mensaje en español, y los hace, todo en Haiku high. |
+
+**`-p` (sin preguntas):** `/impl -p <qué cambiar>` e `/impl-d -p <qué cambiar>` corren sin AskUserQuestion, para cuando nadie responde (por ejemplo, `claude -p "/impl -p …"`). Cada duda toma la opción recomendada y el cierre la anota en `Decisiones sin preguntar:`. En `/impl` el plan se aprueba solo, `ALCANCE: FUERA` se restaura y otro flujo abierto lo termina; ninguno de los dos aprueba permisos ni corre comandos irreversibles o externos: van a «Queda para ti». El `-p` no entra en el pedido guardado.
 
 ## /impl
 
@@ -153,15 +155,16 @@ Un plugin de estilo (como Ponytail) puede pedir a los subagentes un resumen, lo 
 
 No cambies de modo a mitad de un flujo.
 
-## /impl-directo
+## /impl-d
 
-Comando aparte de `/impl`, sin carpeta de flujo, `estado.mjs`, historial, guardia ni pasos en el panel: el plugin es solo `skills/impl-directo/SKILL.md` y el agente `qcc-revisor-directo`.
+Comando aparte de `/impl`, sin carpeta de flujo, `estado.mjs`, historial, guardia ni pasos en el panel: el plugin es `skills/impl-d/SKILL.md`, el agente `qcc-revisor-directo` y `herramientas/limites.mjs`.
 
-- **Roles y modelos:** la skill fija `model: opus` y `effort: medium` para la sesión, que implementa. Explora el agente `Explore` de Claude Code con `model: "haiku"` y `effort: "low"` (hasta 4, por área); revisa `impl-directo:qcc-revisor-directo`, Opus high, con `tools: Read, Glob, Grep, Bash`.
+- **Roles y modelos:** la skill fija `model: opus` y `effort: medium` para la sesión, que implementa. Explora el agente `Explore` de Claude Code con `model: "haiku"` y `effort: "low"` (hasta 4, por área), salvo en un repo de menos de ~2.000 líneas de texto versionadas (sin lockfiles; la skill las inyecta al empezar) o si el pedido nombra pocos archivos: entonces lee la sesión; revisa `impl-d:qcc-revisor-directo`, Opus high, con `tools: Read, Glob, Grep, Bash`.
 - **Verificación:** los `cmd` de `verificar` en `.claude/qcc-implementador.json` (respeta `rutas` y `paralelo`); sin él, los del CLAUDE.md o AGENTS.md del proyecto. Dos correcciones sin VERDE cierran `DETENIDO`.
 - **Reglas del proyecto:** las mismas de `/impl`: la sesión lee `planificar.md` y `ejecutor.md`, el explorador `buscar.md` y el revisor `revisor.md`.
-- **Revisión:** el contrato es el pedido literal y el cambio es lo que no tiene commit (`git diff HEAD` y los archivos nuevos); `git status --short` se inyecta al empezar como sucios previos, que no cuentan. Hasta 2 ciclos: la sesión corrige los PROBLEMAS y las OBSERVACIONES van a «Riesgos pendientes».
+- **Revisión:** el contrato es el pedido literal y el cambio es lo que no tiene commit (`git diff HEAD` y los archivos nuevos); `git status --short` se inyecta al empezar como sucios previos, que no cuentan. El revisor prueba ejecutando cada regla con valores (números, formatos, límites) con valores que los tests no usan, y juzga contra el pedido el código previo que el cambio reutiliza. Hasta 2 ciclos: la sesión corrige los PROBLEMAS; de las OBSERVACIONES corrige, sin otro ciclo, las que son motivo de rechazo y se arreglan en una línea (documentación vieja), y el resto va a «Riesgos pendientes».
 - **Sin guardia:** el revisor no es un agente de `impl`, así que `guardia.mjs` no lo vigila: solo su prompt lo limita a leer. La sesión no corre git que escriba ni toca `.env*`, y pregunta antes de un comando irreversible o externo.
+- **Límites:** el cierre trae `Límites: 5h +N % · sem +N %`, lo que subió cada ventana entre la carga de la skill (`limites.mjs --inicio`) y el cierre (`--fin`). Lee el mismo snapshot del panel que `/impl` y con sus reglas (ver [LIMITES.md](LIMITES.md#3-cómo-se-registra-el--por-corrida)); no tiene fases ni fila en `flujos.jsonl`. La lectura inicial queda en el temporal del sistema (`qcc-impl-d/<sesión>.json`) y `--fin` la borra.
 
 ## /commit
 
