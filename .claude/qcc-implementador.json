@@ -4,7 +4,7 @@
     { "nombre": "test", "cmd": "claude plugin test qcc-panel", "rutas": ["qcc-panel/**"] },
     { "nombre": "test flujos", "cmd": "node --test \"qcc-implementador/herramientas/*.test.mjs\"", "rutas": ["qcc-implementador/**"], "paralelo": true },
     { "nombre": "test qcc-commit", "cmd": "node --test qcc-commit/herramientas/solo-git.test.mjs", "rutas": ["qcc-commit/**"], "paralelo": true },
-    { "nombre": "test impl-d", "cmd": "node --test qcc-impl-directo/herramientas/limites.test.mjs", "rutas": ["qcc-impl-directo/**"], "paralelo": true }
+    { "nombre": "test impl-d", "cmd": "node --test \"qcc-impl-directo/herramientas/*.test.mjs\"", "rutas": ["qcc-impl-directo/**"], "paralelo": true }
   ],
   "criticos": [
     {

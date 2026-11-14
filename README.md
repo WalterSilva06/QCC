@@ -48,7 +48,7 @@ claude plugin validate qcc-panel
 claude plugin test qcc-panel
 node --test "qcc-implementador/herramientas/*.test.mjs"
 node --test qcc-commit/herramientas/solo-git.test.mjs
-node --test qcc-impl-directo/herramientas/limites.test.mjs
+node --test "qcc-impl-directo/herramientas/*.test.mjs"
 ```
 
 Los cinco comandos tienen que terminar sin errores antes de dar algo por hecho (ver [AGENTS.md](AGENTS.md#verificar)).

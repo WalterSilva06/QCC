@@ -43,13 +43,12 @@ Si el pedido empieza con la palabra `-p`, la quitas (el pedido es lo que sigue) 
 
 ## 1. Exploración
 
-Sin exploración solo si el tamaño del repo da menos de ~2.000 líneas o si el pedido nombra los archivos y son pocos: los lees tú. Si no, o si el tamaño salió vacío o `s/d`, la exploración es obligatoria. Agent `Explore` con `model: "haiku"`, `effort: "low"` y `run_in_background: false`: uno por área del pedido, sin solapar, hasta 4 en un mismo mensaje. El prompt, nada más:
+Sin exploración solo si el tamaño del repo da menos de ~2.000 líneas o si el pedido nombra los archivos y son pocos: los lees tú. Si no, o si el tamaño salió vacío o `s/d`, la exploración es obligatoria. Agent `impl-d:qcc-explorador-directo`, sin overrides y con `run_in_background: false`: uno por área del pedido, sin solapar, hasta 4 en un mismo mensaje. El prompt, nada más:
 
 ```
 PEDIDO: <literal>
 ÁREA: <carpetas o archivos>
 REGLAS: <ruta de buscar.md o de .claude/qcc-implementador.md | ninguna>
-Ubica lo que toca el pedido; no propongas cómo implementarlo. No leas node_modules/, dist/, .git/ ni .env*. Responde ≤ 20 líneas, cada una `ruta:línea — hecho`, en ARCHIVOS, TESTS (los que cubren lo que cambia), ACOPLAMIENTOS (tipos, espejos, guardianes y documentación que cambian junto) y DUDAS.
 ```
 
 ## 2. Implementación

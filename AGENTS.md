@@ -4,7 +4,7 @@ Herramientas personales para Claude Code, en cuatro plugins de un marketplace (`
 
 - **`panel`** (carpeta `qcc-panel/`): mod con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Comando `/panel`. Ver [MODS.md](MODS.md).
 - **`impl`** (carpeta `qcc-implementador/`): el flujo `/impl` (con un solo modo), con sus agentes y herramientas. Ver [FLUJOS.md](FLUJOS.md).
-- **`impl-d`** (carpeta `qcc-impl-directo/`): `/impl-d`, sin plan ni aprobación; la skill, su revisor y `limites.mjs` (el % de los límites que gastó), sin hooks ni guardia. Ver [FLUJOS.md](FLUJOS.md#impl-d).
+- **`impl-d`** (carpeta `qcc-impl-directo/`): `/impl-d`, sin plan ni aprobación; la skill, su explorador, su revisor, `limites.mjs` (el % de los límites que gastó) y un hook con el tope de contexto del explorador, sin guardia. Ver [FLUJOS.md](FLUJOS.md#impl-d).
 - **`commit`** (carpeta `qcc-commit/`): el flujo `/commit`, con su agente y su guardia `solo-git`. Ver [FLUJOS.md](FLUJOS.md).
 
 Los flujos corren como plugins: sus herramientas se llaman con `${CLAUDE_PLUGIN_ROOT}/herramientas/…`, y las guardias van en el `hooks/hooks.json` de cada plugin y deciden por el `agent_type` del evento (`impl:qcc-ejecutor`…), porque los agentes de un plugin ignoran `hooks:` en su frontmatter. Los `subagent_type` llevan el prefijo del plugin (`impl:`, `commit:`); los agentes conservan su nombre `qcc-…`. La carpeta de cada flujo, el registro y las cachés de verificar viven en `<git-dir>/qcc-impl/` (una por repo y por worktree, compartida entre cuentas); `flujos.jsonl` e `historial/` están en `~/.claude/flujos/registros`. Los plugins se leen desde este repo; `qcc-implementador/instalar.mjs` no instala nada: con `--limpiar` archiva en `~/.claude/_archivo-limpieza-<fecha>/` las copias de `/impl` y `/commit` que dejó en `~/.claude` una instalación por copia.
@@ -32,9 +32,11 @@ qcc-implementador/                plugin impl
   herramientas/                   estado (entrada de línea de comandos, con --guia) y sus módulos estado-base, -plan, -exploracion, -guardar, -avance, -despachos, -preflight, -cambios y -cierre; verificar, guardia, plan-visible (la pregunta «Plan» muestra el plan), costos (consumo en tokens y % de límites por flujo y por fase, sin dólares), mover (bloques de líneas para el ejecutor), sus tests (guardia.test, plan-visible.test, estado.test, estado-fotos.test, estado-cambios.test, costos.test, verificar.test, mover.test) y pruebas-comun, comun.md, plan.md, pasos.md, config.ejemplo.md
 qcc-impl-directo/                 plugin impl-d
   .claude-plugin/plugin.json      manifiesto
+  hooks/hooks.json                tope-explorador.mjs en PreToolUse (Read, Glob, Grep)
   skills/impl-d/SKILL.md          /impl-d
+  agents/qcc-explorador-directo.md  explorador Haiku low de /impl-d
   agents/qcc-revisor-directo.md   revisor Opus high de /impl-d
-  herramientas/                   limites.mjs (% de 5 h y semanal entre la carga de la skill y el cierre) y su test
+  herramientas/                   limites.mjs (% de 5 h y semanal entre la carga de la skill y el cierre), tope-explorador.mjs (niega lecturas al explorador sobre 90k) y sus tests
 qcc-commit/                       plugin commit
   .claude-plugin/plugin.json      manifiesto
   hooks/hooks.json                solo-git.mjs en PreToolUse (Bash, PowerShell)
@@ -65,7 +67,7 @@ claude plugin validate qcc-panel
 claude plugin test qcc-panel
 node --test "qcc-implementador/herramientas/*.test.mjs"
 node --test qcc-commit/herramientas/solo-git.test.mjs
-node --test qcc-impl-directo/herramientas/limites.test.mjs
+node --test "qcc-impl-directo/herramientas/*.test.mjs"
 ```
 
 Los cinco comandos tienen que terminar sin errores antes de dar algo por hecho. Qué no prueban los tests del panel está en [MODS.md](MODS.md#verificar).

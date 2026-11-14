@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/herramientas/tope-explorador.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
