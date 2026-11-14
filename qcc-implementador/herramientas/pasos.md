@@ -1,5 +1,5 @@
 **0. Preflight**
-- Pedido vacío → responde `Uso: /impl <qué cambiar>` y termina.
+- Pedido vacío → responde `Uso: /impl [-p] <qué cambiar>` y termina.
 - Si el pedido no pide cambios (revisar, analizar, auditar, listar mejoras), dilo (`/impl` es para cambios: el análisis se pide sin `/impl`) y termina antes de `--paso 0`, sin analizar tú el repo.
 - Si tu herramienta Agent no tiene el parámetro `run_in_background`, fork mode está activo y la revisión final perdería Opus: dilo (se apaga con `"CLAUDE_CODE_FORK_SUBAGENT": "0"` en `env` de `~/.claude/settings.json`, reiniciando Claude Code) y termina.
 - Primero va solo `node "${CLAUDE_PLUGIN_ROOT}/herramientas/estado.mjs" --paso 0` (`estado.mjs` en el resto: comun.md §1). Anota `BASE_GLOBAL`, `DESDE_GLOBAL`, `FLUJO`, la ruta de `MAPA:` (o `ninguno`), el techo de `EXPLORADORES:`, rama y sucios previos. Según la salida:

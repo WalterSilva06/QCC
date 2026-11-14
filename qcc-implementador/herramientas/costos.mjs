@@ -622,7 +622,9 @@ function pedidoDe(todas, inicio) {
   const comando = comienzosDe(todas).find((f) => f.timestamp === inicio)
   if (!comando) return null
   const crudo = textoDe(comando.message?.content)
-  return esComando(comando) ? (/<command-args>([\s\S]*?)<\/command-args>/.exec(crudo)?.[1] ?? crudo.replace(/<[^>]*>/g, ' ')) : (/\*\*Pedido:\*\*[ \t]*(.*)/.exec(crudo)?.[1] ?? null)
+  const pedido = esComando(comando) ? (/<command-args>([\s\S]*?)<\/command-args>/.exec(crudo)?.[1] ?? crudo.replace(/<[^>]*>/g, ' ')) : (/\*\*Pedido:\*\*[ \t]*(.*)/.exec(crudo)?.[1] ?? null)
+  // `-p` es el modo sin preguntas, no parte del pedido.
+  return pedido === null ? null : pedido.replace(/^\s*-p(?=\s|$)/, '')
 }
 
 /** El pedido literal del flujo de `raiz` que empezó en `desde` (con `base`, su BASE_GLOBAL), leído de su primera sesión; null si no se encuentra. */

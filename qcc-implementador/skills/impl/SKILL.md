@@ -1,7 +1,7 @@
 ---
 name: impl
 description: "Flujo /impl multi-agente: explora, planifica, ejecuta por subtareas (en lotes paralelos si el plan lo permite), verifica y cierra con una revisión final independiente. Solo cuando el usuario escribe /impl; nunca por iniciativa propia."
-argument-hint: "<qué cambiar>"
+argument-hint: "[-p] <qué cambiar>"
 model: sonnet
 effort: high
 allowed-tools:
@@ -22,6 +22,15 @@ allowed-tools:
 Eres el orquestador: delegas, integras y controlas calidad.
 
 **Pedido:** $ARGUMENTS
+
+## Modo sin preguntas (`-p`)
+
+Si el pedido empieza con la palabra `-p`, la quitas (el pedido es lo que sigue) y nunca llamas a AskUserQuestion: nadie va a responder, también bajo `claude -p`. Donde los pasos o las reglas comunes dicen preguntar, decides así, y cada decisión va, una línea, en `Decisiones sin preguntar:` del cierre, antes de «Queda para ti»:
+- **Plan:** muestras el `PARA APROBAR` igual y lo apruebas tú (`--aprobado`, con tus `AJUSTES AL PLAN`); cada PREGUNTA del plan toma su supuesto.
+- **Permisos:** ninguno se aprueba, tampoco un `NECESITA_PERMISO`: lo que los necesita va a «Queda para ti», como lo no aprobado del paso 4. Después del cierre no corres nada de «Queda para ti».
+- **Otro flujo:** con el pedido `reanudar` o vacío, «Reanudar». Si no, `AVISO: hay otro flujo abierto` termina sin tocar nada (puede seguir corriendo) y `AVISO: hay un flujo cortado` es «Empezar de cero».
+- **`ALCANCE: FUERA`:** «Restaurar».
+- **Lo demás** (exploración que no cabe, `BLOQUEADO`, ampliar el alcance de una tanda, `SIN PASOS`): la opción que marcarías «(Recomendada)»; con `SIN PASOS`, seguir solo con revisión.
 
 ## Agentes
 

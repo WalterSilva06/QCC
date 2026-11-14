@@ -227,7 +227,7 @@ test('costos: reconoce /impl y agentType qcc-ejecutor como rol ejecutor', () => 
   const E1 = 'SUBTAREA 1/1: crear x'
 
   fs.writeFileSync(path.join(sesion, 's1.jsonl'), jsonl([
-    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/impl</command-name>\n<command-args> Probar el prefijo </command-args>' } },
+    { type: 'user', timestamp: en(0), message: { role: 'user', content: '<command-name>/impl</command-name>\n<command-args> -p Probar el prefijo </command-args>' } },
     turno('o1', 60, [agenteDe('a1', 'impl:qcc-explorador', 'PEDIDO: x')]),
     turno('o2', 200, [agenteDe('x1', 'impl:qcc-ejecutor', E1)]),
     turno('o3', 300, [agenteDe('x2', 'impl:qcc-revisor', 'QUÉ REVISAR: cambio completo (1 subtarea(s))')]),
