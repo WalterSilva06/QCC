@@ -1,7 +1,7 @@
 {
   "name": "impl-d",
   "displayName": "QCC",
-  "version": "0.4.0",
-  "description": "/impl-d: sin plan ni aprobación; explora con hasta 24 Haiku, la sesión implementa en Opus medium, verifica, cierra con una revisión independiente en Opus high, dice el % de los límites que gastó y anota la corrida en registros/impl-d.jsonl",
+  "version": "0.5.0",
+  "description": "/impl-d: sin plan ni aprobación; explora con hasta 24 Haiku, la sesión implementa en Opus medium, verifica, cierra con una revisión independiente en Opus high, dice el % de los límites que gastó y anota la corrida en registros/impl-d.jsonl; /impl-d:e, el modo esfuerzo, con la sesión en Opus high y la revisión en xhigh",
   "author": { "name": "WalterSilva06" }
 }

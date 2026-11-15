@@ -213,6 +213,9 @@ const leerJsonl = (archivo) => {
   }
 }
 
+/** El comando que abre la corrida: `/impl-d` (o `/impl-d:impl-d`) o el modo esfuerzo `/impl-d:e`. */
+const RE_COMANDO = /<command-name>\/(impl-d:e|(?:impl-d:)?impl-d)<\/command-name>/
+
 /** Tokens y pedidos de los mensajes del asistente entre `desde` y `hasta` (ISO), sin repetir id ni contar `<synthetic>`. */
 function tokensDe(eventos, desde, hasta) {
   const vistos = new Set()
@@ -234,7 +237,8 @@ function tokensDe(eventos, desde, hasta) {
 /**
  * Consumo de la corrida en el transcript `sesion` y sus subagentes, entre `desde` y `hasta`: `roles` (sesión,
  * explorador, revisor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor en orden y el `pedido`
- * (los argumentos del último `/impl-d` hasta un minuto después de `desde`).
+ * (los argumentos del último `/impl-d` o `/impl-d:e` hasta un minuto después de `desde`) y su `modo` (`normal`, `esfuerzo`
+ * con `/impl-d:e`, `s/d` sin comando).
  */
 export function consumoDe(sesion, desde, hasta) {
   const principal = leerJsonl(sesion)
@@ -269,10 +273,11 @@ export function consumoDe(sesion, desde, hasta) {
   }
   const tope = new Date(Date.parse(desde) + 60_000).toISOString()
   const comando = principal
-    .filter((e) => e.type === 'user' && typeof e.message?.content === 'string' && e.timestamp <= tope && /<command-name>\/(?:impl-d:)?impl-d<\/command-name>/.test(e.message.content))
+    .filter((e) => e.type === 'user' && typeof e.message?.content === 'string' && e.timestamp <= tope && RE_COMANDO.test(e.message.content))
     .at(-1)
   const pedido = comando?.message.content.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1].trim() ?? ''
-  return { roles, veredictos, pedido }
+  const modo = comando ? (comando.message.content.match(RE_COMANDO)[1] === 'impl-d:e' ? 'esfuerzo' : 'normal') : 's/d'
+  return { roles, veredictos, pedido, modo }
 }
 
 function version() {
@@ -336,7 +341,7 @@ function fin(argv) {
   if (!ini) return
   try {
     const sesion = path.join(carpetaProyecto(ini.cwd), `${sesionId()}.jsonl`)
-    const { roles, veredictos, pedido } = consumoDe(sesion, ini.t, lectura.t)
+    const { roles, veredictos, pedido, modo } = consumoDe(sesion, ini.t, lectura.t)
     const fila = {
       v: 1,
       t: lectura.t,
@@ -346,6 +351,7 @@ function fin(argv) {
       version: version(),
       sesion,
       pedido,
+      modo,
       resultado,
       limites,
       roles,

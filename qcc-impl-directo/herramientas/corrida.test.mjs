@@ -135,6 +135,7 @@ test('consumoDe suma por rol desde el inicio y lee los veredictos y el pedido', 
   agente('viejo', 'impl-d:qcc-revisor-directo', '2026-11-13T23:00:00Z', 'VEREDICTO: APROBADO')
   const r = consumoDe(sesion, '2026-11-14T01:00:00.500Z', '2026-11-14T02:00:00Z')
   assert.equal(r.pedido, '-p arregla el login')
+  assert.equal(r.modo, 'normal')
   assert.deepEqual(r.veredictos, ['RECHAZADO', 'APROBADO'])
   assert.deepEqual(r.roles.sesion, { agentes: 0, pedidos: 2, tokens: { entrada: 2, leidos: 200, escritos: 20, salida: 12 } })
   assert.equal(r.roles.explorador.agentes, 1)
@@ -172,7 +173,7 @@ test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la l
   assert.equal(fs.existsSync(huerfana), false)
   const t = new Date().toISOString()
   fs.writeFileSync(path.join(proyecto, 'sesion-1.jsonl'), [
-    { type: 'user', timestamp: t, message: { content: '<command-name>/impl-d</command-name>\n<command-args>-p cambia algo</command-args>' } },
+    { type: 'user', timestamp: t, message: { content: '<command-name>/impl-d:e</command-name>\n<command-args>-p cambia algo</command-args>' } },
     { type: 'assistant', timestamp: t, message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 9 } } },
   ].map((e) => JSON.stringify(e)).join('\n'))
   fs.writeFileSync(snapshot, JSON.stringify(lectura(new Date().toISOString(), 24, 5, reset)))
@@ -180,6 +181,7 @@ test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la l
   assert.deepEqual(fs.readdirSync(tmp), [])
   const fila = JSON.parse(fs.readFileSync(path.join(registros, 'impl-d.jsonl'), 'utf8'))
   assert.equal(fila.pedido, '-p cambia algo')
+  assert.equal(fila.modo, 'esfuerzo')
   assert.equal(fila.resultado, 'COMPLETO')
   assert.equal(fila.limites, '5h +4 % · sem +0 %')
   assert.deepEqual(fila.roles.sesion.tokens, { entrada: 1, leidos: 0, escritos: 0, salida: 9 })

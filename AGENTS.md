@@ -35,6 +35,7 @@ qcc-impl-directo/                 plugin impl-d
   .claude-plugin/plugin.json      manifiesto
   hooks/hooks.json                tope-explorador.mjs en PreToolUse (Read, Glob, Grep)
   skills/impl-d/SKILL.md          /impl-d
+  skills/e/SKILL.md               /impl-d:e, el modo esfuerzo: sesión Opus high, revisor xhigh; sigue skills/impl-d/SKILL.md
   agents/qcc-explorador-directo.md  explorador Haiku low de /impl-d
   agents/qcc-revisor-directo.md   revisor Opus high de /impl-d
   herramientas/                   corrida.mjs (--inicio: límites, base, mapa, verificación, reglas y memoria; --arbol y --diff; --fin: % de 5 h y semanal y la fila de impl-d.jsonl), tope-explorador.mjs (niega lecturas al explorador sobre 90k) y sus tests
