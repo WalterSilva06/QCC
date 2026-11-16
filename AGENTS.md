@@ -4,7 +4,7 @@ Herramientas personales para Claude Code, en cinco plugins de un marketplace (`q
 
 - **`panel`** (carpeta `qcc-panel/`): mod con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Comando `/panel`. Ver [MODS.md](MODS.md).
 - **`impl`** (carpeta `qcc-implementador/`): el flujo `/impl` (con un solo modo), con sus agentes y herramientas. Ver [FLUJOS.md](FLUJOS.md).
-- **`impl-d`** (carpeta `qcc-impl-directo/`): `/impl-d`, sin plan ni aprobación; la skill, su explorador, su revisor, `corrida.mjs` (lo que la skill inyecta al empezar, el diff contra el estado inicial, el % de los límites que gastó y la fila de `registros/impl-d.jsonl`) y un hook con el tope de contexto del explorador, sin guardia. Ver [FLUJOS.md](FLUJOS.md#impl-d).
+- **`impl-d`** (carpeta `qcc-impl-directo/`): `/impl-d:n`, sin plan ni aprobación; la skill, su explorador, su revisor, `corrida.mjs` (lo que la skill inyecta al empezar, el diff contra el estado inicial, el % de los límites que gastó y la fila de `registros/impl-d.jsonl`) y un hook con el tope de contexto del explorador, sin guardia. Ver [FLUJOS.md](FLUJOS.md#impl-d).
 - **`impl-l`** (carpeta `qcc-impl-largo/`): `/impl-l`, para tareas largas: la skill planifica en fases con criterios y `largo.mjs` corre cada fase en su propia sesión `claude -p "/impl-l:fase -p"`, espera los límites de uso, reintenta una vez la fase detenida y, con 3 fases o más, cierra con una revisión de integración; anota la fila de `registros/impl-l.jsonl`; sus propios explorador, revisor y tope del explorador, sin guardia. Ver [FLUJOS.md](FLUJOS.md#impl-l).
 - **`commit`** (carpeta `qcc-commit/`): el flujo `/commit`, con su agente y su guardia `solo-git`. Ver [FLUJOS.md](FLUJOS.md).
 
@@ -34,8 +34,8 @@ qcc-implementador/                plugin impl
 qcc-impl-directo/                 plugin impl-d
   .claude-plugin/plugin.json      manifiesto
   hooks/hooks.json                tope-explorador.mjs en PreToolUse (Read, Glob, Grep)
-  skills/impl-d/SKILL.md          /impl-d
-  skills/e/SKILL.md               /impl-d:e, el modo esfuerzo: sesión Opus high, revisor xhigh; sigue skills/impl-d/SKILL.md
+  skills/n/SKILL.md               /impl-d:n, el modo normal
+  skills/e/SKILL.md               /impl-d:e, el modo esfuerzo: sesión Opus high, revisor xhigh; sigue skills/n/SKILL.md
   agents/qcc-explorador-directo.md  explorador Haiku low de /impl-d
   agents/qcc-revisor-directo.md   revisor Opus high de /impl-d
   herramientas/                   corrida.mjs (--inicio: límites, base, mapa, verificación, reglas y memoria; --arbol y --diff; --fin: % de 5 h y semanal y la fila de impl-d.jsonl), tope-explorador.mjs (niega lecturas al explorador sobre 90k) y sus tests

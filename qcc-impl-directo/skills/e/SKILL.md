@@ -21,7 +21,7 @@ allowed-tools:
 
 # /impl-d:e
 
-Modo esfuerzo de /impl-d: el mismo flujo, con la sesión en Opus high (lo fija esta skill) y el revisor en xhigh. Lee entero `${CLAUDE_PLUGIN_ROOT}/skills/impl-d/SKILL.md` y síguelo desde «# /impl-d», con estos cambios:
+Modo esfuerzo de /impl-d: el mismo flujo, con la sesión en Opus high (lo fija esta skill) y el revisor en xhigh. Lee entero `${CLAUDE_PLUGIN_ROOT}/skills/n/SKILL.md` y síguelo desde «# /impl-d:n», con estos cambios:
 
 - El `Pedido`, los `Sucios previos` y lo de `Al empezar` son los de abajo: ya corrieron, no los corras de nuevo.
 - En ese archivo la variable de la carpeta del plugin sale sin expandir: la carpeta es `${CLAUDE_PLUGIN_ROOT}`, y `corrida.mjs` se corre como `node "${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs"`.

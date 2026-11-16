@@ -117,7 +117,7 @@ test('consumoDe suma por rol desde el inicio y lee los veredictos y el pedido', 
   const lineas = (eventos) => eventos.map((e) => JSON.stringify(e)).join('\n') + '\n'
   fs.writeFileSync(sesion, lineas([
     uso('viejo', '2026-11-14T00:00:00Z', 999),
-    { type: 'user', timestamp: '2026-11-14T01:00:00Z', message: { content: '<command-name>/impl-d</command-name>\n<command-args>-p arregla el login</command-args>' } },
+    { type: 'user', timestamp: '2026-11-14T01:00:00Z', message: { content: '<command-name>/impl-d:n</command-name>\n<command-args>-p arregla el login</command-args>' } },
     uso('m1', '2026-11-14T01:00:05Z', 5),
     uso('m1', '2026-11-14T01:00:05Z', 5),
     uso('m2', '2026-11-14T01:01:00Z', 7),

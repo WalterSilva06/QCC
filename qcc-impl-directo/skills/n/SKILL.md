@@ -1,6 +1,6 @@
 ---
-name: impl-d
-description: "Flujo /impl-d: sin plan ni aprobación; explora con Haiku (hasta 24 en paralelo), la sesión implementa (Opus medium), verifica y cierra con una revisión independiente (Opus high), el % de los límites que gastó y una fila en registros/impl-d.jsonl. Solo cuando el usuario escribe /impl-d; nunca por iniciativa propia."
+name: n
+description: "Flujo /impl-d:n, el modo normal de /impl-d: sin plan ni aprobación; explora con Haiku (hasta 24 en paralelo), la sesión implementa (Opus medium), verifica y cierra con una revisión independiente (Opus high), el % de los límites que gastó y una fila en registros/impl-d.jsonl. Solo cuando el usuario escribe /impl-d:n; nunca por iniciativa propia."
 argument-hint: "[-p] <qué cambiar>"
 model: opus
 effort: medium
@@ -19,7 +19,7 @@ allowed-tools:
   - Bash(node *${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs*)
 ---
 
-# /impl-d
+# /impl-d:n
 
 Implementas tú el pedido, sin planificador, plan ni aprobación. La exploración y la revisión van a subagentes: lo que lees tú se paga en cada pedido, y cada pedido relee todo tu contexto. Por eso pides en un mismo mensaje todas las lecturas, ediciones y comandos que no dependen entre sí. Todo lo que escribes va en español.
 
@@ -37,7 +37,7 @@ Si el pedido empieza con la palabra `-p`, la quitas (el pedido es lo que sigue) 
 
 ## 0. Preflight
 
-- Pedido vacío → responde `Uso: /impl-d [-p] <qué cambiar>` y termina. Si no pide cambios (revisar, analizar, auditar), dilo y termina.
+- Pedido vacío → responde `Uso: /impl-d:n [-p] <qué cambiar>` y termina. Si no pide cambios (revisar, analizar, auditar), dilo y termina.
 - Si tu herramienta Agent no tiene el parámetro `run_in_background`, fork mode está activo y la revisión perdería Opus: dilo (se apaga con `"CLAUDE_CODE_FORK_SUBAGENT": "0"` en `env` de `~/.claude/settings.json`, reiniciando Claude Code) y termina.
 - **Límites:** con `MARGEN BAJO` en `LÍMITES`, con `-p` vas directo al cierre con `DETENIDO (límite: 5h <n> %)`; sin `-p`, AskUserQuestion si seguir.
 - **Verificación:** la lista `VERIFICAR` de arriba; si remite al CLAUDE.md o AGENTS.md, sus comandos de verificación. Sin ninguno, AskUserQuestion qué comandos verifican el proyecto, o seguir solo con revisión.

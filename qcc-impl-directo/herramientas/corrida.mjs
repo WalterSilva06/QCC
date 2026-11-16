@@ -213,8 +213,8 @@ const leerJsonl = (archivo) => {
   }
 }
 
-/** El comando que abre la corrida: `/impl-d` (o `/impl-d:impl-d`) o el modo esfuerzo `/impl-d:e`. */
-const RE_COMANDO = /<command-name>\/(impl-d:e|(?:impl-d:)?impl-d)<\/command-name>/
+/** El comando que abre la corrida: `/impl-d:n` o el modo esfuerzo `/impl-d:e`. */
+const RE_COMANDO = /<command-name>\/(impl-d:[en])<\/command-name>/
 
 /** Tokens y pedidos de los mensajes del asistente entre `desde` y `hasta` (ISO), sin repetir id ni contar `<synthetic>`. */
 function tokensDe(eventos, desde, hasta) {
@@ -237,7 +237,7 @@ function tokensDe(eventos, desde, hasta) {
 /**
  * Consumo de la corrida en el transcript `sesion` y sus subagentes, entre `desde` y `hasta`: `roles` (sesión,
  * explorador, revisor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor en orden y el `pedido`
- * (los argumentos del último `/impl-d` o `/impl-d:e` hasta un minuto después de `desde`) y su `modo` (`normal`, `esfuerzo`
+ * (los argumentos del último `/impl-d:n` o `/impl-d:e` hasta un minuto después de `desde`) y su `modo` (`normal`, `esfuerzo`
  * con `/impl-d:e`, `s/d` sin comando).
  */
 export function consumoDe(sesion, desde, hasta) {
