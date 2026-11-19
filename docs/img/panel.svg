@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="940" viewBox="0 0 500 940" role="img" aria-label="Panel QCC, pestaña Inicio: límites, contexto y sesión">
+  <defs>
+    <pattern id="reserva" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect width="4" height="4" fill="#2a2927"/>
+      <rect width="2" height="2" fill="#6f6d69"/>
+      <rect x="2" y="2" width="2" height="2" fill="#6f6d69"/>
+    </pattern>
+  </defs>
+  <style>
+    text { font-family: 'Cascadia Mono', 'JetBrains Mono', Consolas, Menlo, 'DejaVu Sans Mono', monospace; font-size: 13px; fill: #e6e3dd; white-space: pre; }
+    .dim { fill: #8c8882; }
+    .b { font-weight: 700; }
+    .claude { fill: #d97757; }
+    .ok { fill: #5fb871; }
+    .warn { fill: #e0a43a; }
+    .cyan { fill: #4fc1d6; }
+    .purple { fill: #b57bee; }
+    .subtle { fill: #5c5a57; }
+    .inactive { fill: #6f6d69; }
+    .vacio { fill: #34332f; }
+  </style>
+
+  <rect x="0.5" y="0.5" width="499" height="939" rx="12" fill="#1a1a19" stroke="#34332f"/>
+  <circle cx="22" cy="18" r="5.5" fill="#e5534b"/>
+  <circle cx="40" cy="18" r="5.5" fill="#e0a43a"/>
+  <circle cx="58" cy="18" r="5.5" fill="#5fb871"/>
+  <text x="250" y="22" text-anchor="middle" class="dim" style="font-size:12px">claude · /panel</text>
+  <line x1="0" y1="36" x2="500" y2="36" stroke="#34332f"/>
+
+  <!-- Cabecera y pestañas -->
+  <text x="24" y="64"><tspan class="claude b">◆ QCC</tspan><tspan class="dim"> · panel</tspan></text>
+  <text x="476" y="64" text-anchor="end" class="ok">● trabajando</text>
+  <text x="24" y="92" class="claude b">[ Inicio ]</text>
+  <text x="112" y="92" class="dim">[ Semana ]</text>
+  <text x="200" y="92" class="dim">[ Hist. ]</text>
+  <text x="280" y="92" class="dim">[ Agentes ]</text>
+
+  <!-- LÍMITES -->
+  <rect x="16" y="106" width="468" height="108" rx="10" fill="none" stroke="#e0a43a" stroke-width="1.5"/>
+  <text x="32" y="130" class="warn b">LÍMITES</text>
+  <text x="32" y="156">5h</text>
+  <g class="warn">
+    <rect x="82" y="146" width="9" height="12"/><rect x="92" y="146" width="9" height="12"/><rect x="102" y="146" width="9" height="12"/><rect x="112" y="146" width="9" height="12"/>
+    <rect x="122" y="146" width="9" height="12"/><rect x="132" y="146" width="9" height="12"/><rect x="142" y="146" width="9" height="12"/><rect x="152" y="146" width="9" height="12"/>
+  </g>
+  <g class="vacio"><rect x="162" y="146" width="9" height="12"/><rect x="172" y="146" width="9" height="12"/><rect x="182" y="146" width="9" height="12"/><rect x="192" y="146" width="9" height="12"/></g>
+  <text x="240" y="156" text-anchor="end" class="warn b">64%</text>
+  <text x="250" y="156" class="dim">1 h 40 min</text>
+
+  <text x="32" y="178">sem</text>
+  <g class="ok"><rect x="82" y="168" width="9" height="12"/><rect x="92" y="168" width="9" height="12"/><rect x="102" y="168" width="9" height="12"/></g>
+  <g class="vacio">
+    <rect x="112" y="168" width="9" height="12"/><rect x="122" y="168" width="9" height="12"/><rect x="132" y="168" width="9" height="12"/><rect x="142" y="168" width="9" height="12"/><rect x="152" y="168" width="9" height="12"/>
+    <rect x="162" y="168" width="9" height="12"/><rect x="172" y="168" width="9" height="12"/><rect x="182" y="168" width="9" height="12"/><rect x="192" y="168" width="9" height="12"/>
+  </g>
+  <text x="240" y="178" text-anchor="end" class="ok b">23%</text>
+  <text x="250" y="178" class="dim">3 d 5 h</text>
+
+  <text x="32" y="200">gasto</text>
+  <rect x="82" y="190" width="9" height="12" class="ok"/>
+  <g class="vacio">
+    <rect x="92" y="190" width="9" height="12"/><rect x="102" y="190" width="9" height="12"/><rect x="112" y="190" width="9" height="12"/><rect x="122" y="190" width="9" height="12"/><rect x="132" y="190" width="9" height="12"/><rect x="142" y="190" width="9" height="12"/>
+    <rect x="152" y="190" width="9" height="12"/><rect x="162" y="190" width="9" height="12"/><rect x="172" y="190" width="9" height="12"/><rect x="182" y="190" width="9" height="12"/><rect x="192" y="190" width="9" height="12"/>
+  </g>
+  <text x="240" y="200" text-anchor="end" class="ok b">5%</text>
+
+  <!-- CONTEXTO -->
+  <rect x="16" y="228" width="468" height="346" rx="10" fill="none" stroke="#5fb871" stroke-width="1.5"/>
+  <text x="32" y="252" class="ok b">CONTEXTO</text>
+  <text x="32" y="278">ctx</text>
+  <rect x="80" y="268" width="6" height="12" fill="#9aa5ce"/>
+  <rect x="86.5" y="268" width="27" height="12" class="inactive"/>
+  <rect x="114" y="268" width="41" height="12" fill="#e9a07f"/>
+  <rect x="155.5" y="268" width="99.5" height="12" class="claude"/>
+  <rect x="255.5" y="273" width="148.5" height="2" class="subtle"/>
+  <rect x="404.5" y="268" width="63.5" height="12" fill="url(#reserva)"/>
+
+  <text x="32" y="304" class="ok b">54%</text>
+  <text x="468" y="304" text-anchor="end"><tspan>90,1k</tspan><tspan class="dim"> / 200k</tspan></text>
+  <text x="32" y="324" class="dim">╰ compacta en 167k</text>
+  <text x="468" y="324" text-anchor="end" class="dim">faltan 76,9k</text>
+  <text x="32" y="348" class="ok">caché ⏱ en 3 min · aciertos 92 %</text>
+
+  <text x="32" y="380"><tspan class="claude">■</tspan><tspan> Mensajes</tspan></text>
+  <text x="300" y="380" text-anchor="end">25,7%</text><text x="310" y="380" class="dim">◀57%</text>
+  <text x="32" y="400"><tspan fill="#e9a07f">■</tspan><tspan> Memoria</tspan></text>
+  <text x="300" y="400" text-anchor="end">10,7%</text>
+  <text x="32" y="420"><tspan class="inactive">■</tspan><tspan> Herramientas</tspan></text>
+  <text x="300" y="420" text-anchor="end">7,1%</text>
+  <text x="32" y="440"><tspan fill="#9aa5ce">■</tspan><tspan> Prompt del sistema</tspan></text>
+  <text x="300" y="440" text-anchor="end">1,6%</text>
+  <text x="32" y="460"><tspan class="subtle">■</tspan><tspan class="dim"> Libre</tspan></text>
+  <text x="32" y="480"><tspan class="inactive">■</tspan><tspan class="dim"> Reserva compactación</tspan></text>
+
+  <text x="32" y="512" class="dim">Lo más pesado</text>
+  <text x="44" y="532">CLAUDE.md</text>
+  <text x="300" y="532" text-anchor="end" class="dim">18,9k</text>
+  <text x="32" y="560">[ Precisar ]</text>
+
+  <!-- SESIÓN -->
+  <rect x="16" y="588" width="468" height="296" rx="10" fill="none" stroke="#d97757" stroke-width="1.5"/>
+  <text x="32" y="612"><tspan class="claude b">SESIÓN</tspan><tspan>  Sonnet 5.5 · high</tspan><tspan class="dim"> · flujo /impl · Ejecución…</tspan></text>
+
+  <text x="32" y="644">Sonnet</text><text x="92" y="644">5.5</text><text x="124" y="644">high</text>
+  <text x="196" y="644" class="warn">■</text><text x="208" y="644" class="dim">x0</text>
+  <text x="468" y="644" text-anchor="end">2,1M · sal 31k</text>
+  <rect x="32" y="652" width="51" height="8" class="claude"/>
+  <rect x="83" y="652" width="219" height="8" class="cyan"/>
+  <rect x="302" y="652" width="166" height="8" class="vacio"/>
+  <text x="32" y="678" class="dim">directo 0,4M · orquestador 1,7M</text>
+
+  <text x="32" y="710">Sonnet</text><text x="92" y="710">5.5</text><text x="124" y="710">medium</text>
+  <text x="196" y="710" class="ok">■</text><text x="208" y="710" class="dim">x2</text>
+  <text x="468" y="710" text-anchor="end">0,9M · sal 14k</text>
+  <rect x="32" y="718" width="116" height="8" fill="#b57bee">
+    <animate attributeName="fill" values="#d8cfc6;#b57bee" keyTimes="0;0.333" calcMode="discrete" dur="0.72s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="148" y="718" width="320" height="8" class="vacio"/>
+  <text x="32" y="744" class="dim">sub 0,9M</text>
+
+  <text x="32" y="776">Opus</text><text x="92" y="776">5.5</text><text x="124" y="776">medium</text>
+  <text x="196" y="776" class="subtle">■</text><text x="208" y="776" class="dim">x0</text>
+  <text x="468" y="776" text-anchor="end">0,4M · sal 5k</text>
+  <rect x="32" y="784" width="51" height="8" class="purple"/>
+  <rect x="83" y="784" width="385" height="8" class="vacio"/>
+  <text x="32" y="810" class="dim">sub 0,4M</text>
+
+  <text x="32" y="842"><tspan class="claude">■</tspan><tspan class="dim"> directo  </tspan><tspan class="cyan">■</tspan><tspan class="dim"> orquestador  </tspan><tspan class="purple">■</tspan><tspan class="dim"> subagentes</tspan></text>
+  <text x="32" y="866" class="dim">3,4M · sal 50k · total incluye caché</text>
+
+  <text x="24" y="916">[ Carpeta ]</text>
+</svg>

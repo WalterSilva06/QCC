@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="520" viewBox="0 0 760 520" role="img" aria-label="Uso de /commit: pregunta qué hacer, agrupa los cambios y hace un commit por grupo">
+  <style>
+    text { font-family: 'Cascadia Mono', 'JetBrains Mono', Consolas, Menlo, 'DejaVu Sans Mono', monospace; font-size: 13px; fill: #e6e3dd; white-space: pre; }
+    .dim { fill: #8c8882; }
+    .b { font-weight: 700; }
+    .claude { fill: #d97757; }
+    .ok { fill: #5fb871; }
+    .warn { fill: #e0a43a; }
+    .azul { fill: #7aa2f7; }
+  </style>
+
+  <rect x="0.5" y="0.5" width="759" height="519" rx="12" fill="#1a1a19" stroke="#34332f"/>
+  <circle cx="22" cy="18" r="5.5" fill="#e5534b"/>
+  <circle cx="40" cy="18" r="5.5" fill="#e0a43a"/>
+  <circle cx="58" cy="18" r="5.5" fill="#5fb871"/>
+  <text x="380" y="22" text-anchor="middle" class="dim" style="font-size:12px">claude · /commit</text>
+  <line x1="0" y1="36" x2="760" y2="36" stroke="#34332f"/>
+
+  <text x="24" y="64"><tspan class="dim">&gt; </tspan><tspan class="claude b">/commit</tspan><tspan> imágenes del README</tspan></text>
+
+  <rect x="24" y="82" width="712" height="134" rx="8" fill="#21201e" stroke="#7aa2f7" stroke-width="1.2"/>
+  <rect x="40" y="94" width="66" height="20" rx="4" fill="#7aa2f7" fill-opacity="0.18"/>
+  <text x="73" y="108" text-anchor="middle" class="azul b" style="font-size:12px">Commit</text>
+  <text x="40" y="136" class="b">¿Qué hacer con estos cambios?</text>
+  <text x="40" y="162" class="claude">❯ 1. Commit + push (Recomendado)</text>
+  <text x="340" y="162" class="dim">commit en la rama actual y después push</text>
+  <text x="40" y="184">  2. Solo commit</text>
+  <text x="340" y="184" class="dim">commit en la rama actual, sin push</text>
+  <text x="40" y="206">  3. Commit en una rama nueva</text>
+  <text x="340" y="206" class="dim">rama según los cambios, commit y push</text>
+
+  <text x="24" y="246"><tspan class="ok">● </tspan><tspan class="b">commit:qcc-generador-commit</tspan><tspan class="dim"> (Haiku · high)</tspan></text>
+  <text x="24" y="266" class="dim">  ⎿  2 grupos · sin excluidos</text>
+  <text x="24" y="292"><tspan class="ok">● </tspan><tspan class="b">Bash</tspan><tspan class="dim">(git add -A -- … ; git commit -F - …)  ×2</tspan></text>
+  <text x="24" y="314"><tspan class="ok">● </tspan><tspan class="b">Bash</tspan><tspan class="dim">(git push -u origin HEAD)</tspan></text>
+
+  <rect x="24" y="334" width="712" height="128" rx="8" fill="#222220" stroke="#34332f"/>
+  <text x="40" y="360"><tspan class="warn">a1f3c9e</tspan><tspan> Agrega imágenes del panel y de /commit al README</tspan></text>
+  <text x="40" y="380" class="dim">- Suma docs/img con el panel, /commit y los flujos</text>
+  <text x="40" y="400" class="dim">- Muestra el panel junto a lo que trae cada pestaña</text>
+  <text x="40" y="430"><tspan class="warn">7d02b4e</tspan><tspan> Anota docs/img en la estructura de AGENTS.md</tspan></text>
+  <text x="40" y="450" class="dim">- Una línea para las imágenes del README</text>
+
+  <text x="24" y="494"><tspan class="dim">Rama: </tspan><tspan>master</tspan><tspan class="dim"> · push: </tspan><tspan class="ok">hecho</tspan></text>
+</svg>
