@@ -134,6 +134,8 @@ test('consumoDe suma por rol desde el inicio y lee los veredictos y el pedido', 
   agente('r1', 'impl-d:qcc-revisor-directo', '2026-11-14T01:03:00Z', 'VEREDICTO: RECHAZADO')
   agente('viejo', 'impl-d:qcc-revisor-directo', '2026-11-13T23:00:00Z', 'VEREDICTO: APROBADO')
   agente('a1', 'impl-d:qcc-asesor-directo', '2026-11-14T01:02:00Z', 'CONSEJO: SIGUE')
+  agente('t1', 'impl-d:qcc-trabajador-directo', '2026-11-14T01:02:30Z', 'ESTADO: HECHO')
+  agente('t2', 'impl-d:qcc-trabajador-directo', '2026-11-14T01:02:31Z', 'ESTADO: HECHO')
   const r = consumoDe(sesion, '2026-11-14T01:00:00.500Z', '2026-11-14T02:00:00Z')
   assert.equal(r.pedido, '-p arregla el login')
   assert.equal(r.modo, 'normal')
@@ -142,6 +144,16 @@ test('consumoDe suma por rol desde el inicio y lee los veredictos y el pedido', 
   assert.equal(r.roles.explorador.agentes, 1)
   assert.deepEqual(r.roles.revisor, { agentes: 2, pedidos: 2, tokens: { entrada: 2, leidos: 200, escritos: 20, salida: 6 } })
   assert.deepEqual(r.roles.asesor, { agentes: 1, pedidos: 1, tokens: { entrada: 1, leidos: 100, escritos: 10, salida: 3 } })
+  assert.deepEqual(r.roles.trabajador, { agentes: 2, pedidos: 2, tokens: { entrada: 2, leidos: 200, escritos: 20, salida: 6 } })
+  assert.equal(r.roles.otros, undefined)
+})
+
+test('consumoDe anota el modo paralelo de /impl-d:p', () => {
+  const sesion = path.join(temporal('consumo-paralelo'), 's.jsonl')
+  fs.writeFileSync(sesion, JSON.stringify({ type: 'user', timestamp: '2026-11-14T01:00:00Z', message: { content: '<command-name>/impl-d:p</command-name>\n<command-args>aplica plan/largo.md</command-args>' } }))
+  const r = consumoDe(sesion, '2026-11-14T01:00:00.500Z', '2026-11-14T02:00:00Z')
+  assert.equal(r.pedido, 'aplica plan/largo.md')
+  assert.equal(r.modo, 'paralelo')
 })
 
 test('consumoDe lee el pedido y el modo cuando la sesión lanza la skill con Skill', () => {

@@ -213,8 +213,11 @@ const leerJsonl = (archivo) => {
   }
 }
 
-/** El comando que abre la corrida: `/impl-d:n` o el modo esfuerzo `/impl-d:e`. */
-const RE_COMANDO = /<command-name>\/(impl-d:[en])<\/command-name>/
+/** El comando que abre la corrida: `/impl-d:n`, el modo esfuerzo `/impl-d:e` o el paralelo `/impl-d:p`. */
+const RE_COMANDO = /<command-name>\/(impl-d:[enp])<\/command-name>/
+
+/** El `modo` de la fila según la skill; `/impl-d:n` es `normal`. */
+const MODOS = { 'impl-d:e': 'esfuerzo', 'impl-d:p': 'paralelo' }
 
 /**
  * Las aperturas de la corrida en el transcript, `[{ t, skill, args }]`: el comando escrito al principio del mensaje o,
@@ -229,7 +232,7 @@ function invocacionesDe(eventos) {
     }
     if (e.type !== 'assistant' || !Array.isArray(c)) return []
     return c
-      .filter((b) => b.type === 'tool_use' && b.name === 'Skill' && /^\/?impl-d:[en]$/.test(b.input?.skill ?? ''))
+      .filter((b) => b.type === 'tool_use' && b.name === 'Skill' && /^\/?impl-d:[enp]$/.test(b.input?.skill ?? ''))
       .map((b) => ({ t: e.timestamp, skill: b.input.skill.replace(/^\//, ''), args: b.input.args ?? '' }))
   })
 }
@@ -254,9 +257,9 @@ function tokensDe(eventos, desde, hasta) {
 
 /**
  * Consumo de la corrida en el transcript `sesion` y sus subagentes, entre `desde` y `hasta`: `roles` (sesión,
- * explorador, revisor, asesor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor en orden y el `pedido`
- * (los argumentos del último `/impl-d:n` o `/impl-d:e`, escrito o lanzado con Skill, hasta un minuto después de `desde`) y su `modo` (`normal`, `esfuerzo`
- * con `/impl-d:e`, `s/d` sin comando).
+ * explorador, asesor, trabajador, revisor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor en orden y el `pedido`
+ * (los argumentos del último `/impl-d:n`, `/impl-d:e` o `/impl-d:p`, escrito o lanzado con Skill, hasta un minuto después de `desde`) y su `modo`
+ * (`normal`, `esfuerzo` con `/impl-d:e`, `paralelo` con `/impl-d:p`, `s/d` sin comando).
  */
 export function consumoDe(sesion, desde, hasta) {
   const principal = leerJsonl(sesion)
@@ -278,7 +281,7 @@ export function consumoDe(sesion, desde, hasta) {
   } catch {}
   agentes.sort((a, b) => (a.t0 < b.t0 ? -1 : 1))
   for (const { tipo, eventos } of agentes) {
-    const rol = /explorador/.test(tipo) ? 'explorador' : /revisor/.test(tipo) ? 'revisor' : /asesor/.test(tipo) ? 'asesor' : 'otros'
+    const rol = /explorador/.test(tipo) ? 'explorador' : /revisor/.test(tipo) ? 'revisor' : /asesor/.test(tipo) ? 'asesor' : /trabajador/.test(tipo) ? 'trabajador' : 'otros'
     const t = tokensDe(eventos, desde, hasta)
     const acc = (roles[rol] ??= { agentes: 0, pedidos: 0, tokens: { entrada: 0, leidos: 0, escritos: 0, salida: 0 } })
     acc.agentes++
@@ -292,7 +295,7 @@ export function consumoDe(sesion, desde, hasta) {
   const tope = new Date(Date.parse(desde) + 60_000).toISOString()
   const comando = invocacionesDe(principal).filter((i) => i.t <= tope).at(-1)
   const pedido = comando?.args.trim() ?? ''
-  const modo = comando ? (comando.skill === 'impl-d:e' ? 'esfuerzo' : 'normal') : 's/d'
+  const modo = comando ? (MODOS[comando.skill] ?? 'normal') : 's/d'
   return { roles, veredictos, pedido, modo }
 }
 
