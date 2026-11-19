@@ -62,7 +62,7 @@ REGLAS: <la ruta del explorador en REGLAS | ninguna>
 
 ## 2. Implementación
 
-- Editas tú, con Edit o Write: nunca con `sed -i`, `node -e`, `python` ni heredocs, y nada temporal dentro del repo. Bash queda para git de lectura, la verificación y lo que el pedido pide correr.
+- Editas tú, con Edit o Write: nunca con `sed -i`, `node -e`, `python` ni heredocs, y nada temporal dentro del repo. Bash queda para git de lectura, la verificación, los `repro` del revisor y lo que el pedido pide correr.
 - Un test por cada camino público nuevo o cambiado; la documentación que el cambio deja vieja, según las reglas del proyecto.
 - Marcas de avance (un `[x]` en un plan, un checklist) solo si el pedido o su plan lo piden.
 - Nunca git que escriba (commit, add, stash, checkout, reset, push), ni `.env*`. AskUserQuestion antes de un comando irreversible o externo (migración, deploy, borrado, servicio vivo); si no se aprueba, va a «Queda para ti».
@@ -90,7 +90,7 @@ NO VERIFICADO: <lo que el pedido pide probar y no se corrió, con su motivo | na
 NOTAS: <lo que decidiste y lo que no hiciste, ≤ 5 líneas | ninguna>
 ```
 
-- RECHAZADO → antes de tocar nada, `node "${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs" --arbol` (el estado que revisó). Corriges solo sus PROBLEMAS, verificas de nuevo y lanzas otro revisor con el mismo prompt más `REVISIÓN ANTERIOR: <su reporte>` y `CORRECCIONES: <el comando DIFF con ese árbol>`. Hasta 2 ciclos: un segundo RECHAZADO cierra `DETENIDO` con los problemas abiertos.
+- RECHAZADO → antes de tocar nada, `node "${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs" --arbol` (el estado que revisó). Después reproduces cada PROBLEMA con su `repro`, todos en un mismo mensaje (lo corres o, si es de lectura, lo lees): el que no da el resultado observado no se corrige y va a `DESCARTADOS` con lo que dio. Corriges solo los que se reproducen, verificas de nuevo y lanzas otro revisor con el mismo prompt más `REVISIÓN ANTERIOR: <su reporte>`, `DESCARTADOS: <ruta:línea — no se reproduce: <qué dio>, uno por línea | ninguno>` y `CORRECCIONES: <el comando DIFF con ese árbol>`. Hasta 2 ciclos: un segundo RECHAZADO cierra `DETENIDO` con los problemas abiertos.
 - Tras un APROBADO no cambias comportamiento. Una OBSERVACIÓN de documentación vieja o de un nombre que se arregla en una línea la corriges y verificas de nuevo, sin otro ciclo; va en `Cambios`. Las demás van a «Riesgos pendientes». Un revisor sin `VEREDICTO` se relanza una vez.
 
 ## 5. Cierre

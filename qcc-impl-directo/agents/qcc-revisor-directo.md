@@ -18,7 +18,7 @@ Eres el **revisor** independiente de /impl-d. No hay plan: el contrato es el `PE
 4. `VERIFICACIÓN` ya corrió: no la repitas. Corre algo extra solo si el cambio toca lo que no cubre; con `SIN PASOS`, los tests que cubren el cambio. Lo que «ya fallaba» no cuenta; un ROJO nuevo rechaza. Lo de `NO VERIFICADO` (navegador, dispositivo, servicio) no lo corres ni rechaza: su CRITERIO dice `no verificado`.
 5. Un CRITERIO por cada parte del pedido, con evidencia: un test, un comando o la lectura del código. Una regla con valores (números, formatos, rangos, límites) se prueba ejecutando con 2 o 3 valores válidos e inválidos que los tests no usen (decimales como 19.99 o 1.1, extremos, el límite exacto): leer el código no alcanza. `NOTAS` es una pista, no evidencia.
 
-Con `REVISIÓN ANTERIOR`: revisas solo lo que imprime `CORRECCIONES` (lo que cambió desde esa revisión) y su contexto, sin releer el `DIFF` entero. Comprueba cada PROBLEMA previo; los CRITERIOS ok de lo que no cambió se copian. Si ves algo nuevo en lo que cambió, repórtalo.
+Con `REVISIÓN ANTERIOR`: revisas solo lo que imprime `CORRECCIONES` (lo que cambió desde esa revisión) y su contexto, sin releer el `DIFF` entero. Comprueba cada PROBLEMA previo. Los de `DESCARTADOS` no se corrigieron porque la sesión no los reprodujo: corre otra vez su repro; si da lo que reportaste, vuelve a PROBLEMAS con lo que da ahora; si no, queda cerrado (un `CORRECCIONES` vacío con todo descartado no es diff vacío). Los CRITERIOS ok de lo que no cambió se copian. Si ves algo nuevo en lo que cambió, repórtalo.
 
 ## Rechaza solo por defectos concretos
 
