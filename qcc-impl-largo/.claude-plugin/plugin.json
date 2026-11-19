@@ -1,7 +1,0 @@
-{
-  "name": "impl-l",
-  "displayName": "QCC",
-  "version": "0.2.1",
-  "description": "/impl-l para tareas largas: planifica en fases con criterios, y largo.mjs corre cada fase en su propia sesión (Opus medium, revisión Opus high), espera los límites de uso, reintenta y, con 3 fases o más, cierra con una revisión de integración y una fila en registros/impl-l.jsonl",
-  "author": { "name": "WalterSilva06" }
-}
