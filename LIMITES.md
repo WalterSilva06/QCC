@@ -40,7 +40,7 @@ Una sola persona, con 61 observaciones en 2 días, una cuenta, modelos mezclados
 
 El campo de la fila se llama `costo` (trae `inicio`, `minutos`, `roles` y `veredictos`). Las filas de `flujos.jsonl` con `usd` y `sinPrecio` se leen en `costos.mjs` y en el panel, y esos campos se ignoran.
 
-La línea `Costo: <n> ejecutor(es) · revisión final` del plan no es dinero: cuenta agentes. [comparativa-claude-5-5.md](comparativa-claude-5-5.md) conserva los precios de la API como dato de referencia de los modelos, no como cálculo del flujo.
+La línea `Costo: <n> ejecutor(es) · revisión final` del plan no es dinero: cuenta agentes.
 
 ## 3. Cómo se registra el % por corrida
 

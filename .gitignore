@@ -1,2 +1,6 @@
 # Bitácoras de la guardia cuando sus herramientas corren desde el repo (tests, pruebas a mano).
 qcc-implementador/herramientas/registros/
+
+# Notas locales, fuera del repo público.
+PENDIENTES.md
+comparativa-claude-5-5.md

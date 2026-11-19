@@ -19,7 +19,7 @@ AGENTS.md                         reglas generales (este archivo)
 MODS.md                           documentación del mod panel (carpeta qcc-panel)
 FLUJOS.md                         documentación de los flujos
 LIMITES.md                        límites de uso (5 h y semanal) y el % que /impl anota por corrida y por fase (/impl-d, por corrida)
-PENDIENTES.md                     lo que queda abierto, una línea por ítem
+PENDIENTES.md                     lo que queda abierto, una línea por ítem (local: está en .gitignore)
 .claude/qcc-implementador.json    pasos de verificación para /impl
 .claude/qcc-implementador/        reglas de /impl para este repo (un archivo por sección)
 .claude-plugin/marketplace.json   marketplace «qcc» con los cuatro plugins (panel, impl, impl-d, commit)
@@ -82,7 +82,7 @@ Los cinco comandos tienen que terminar sin errores antes de dar algo por hecho. 
 - Estilo: sin punto y coma, comillas simples y JSDoc breve en español. La línea en blanco antes de `return` rige solo en `qcc-panel/`; `qcc-implementador/`, `qcc-impl-directo/` y `qcc-commit/` no la usan.
 - Las del panel (atoms, hotkeys, versión) están en [MODS.md](MODS.md#convenciones-del-panel).
 - Documentación: describe cómo funciona el sistema ahora. Se reescribe la parte que cambió y se borra lo que dejó de ser cierto, sin «antes…/ahora…», «se cambió», fechas, versiones ni historial (eso lo guarda git), y solo con lo que un lector necesita para usar o mantener el sistema. Si un cambio no altera nada documentado, la documentación no se toca.
-- Pendientes: lo que queda abierto va en [PENDIENTES.md](PENDIENTES.md), una línea por ítem, sin fecha; lo resuelto se borra, no se tacha.
+- Pendientes: lo que queda abierto va en `PENDIENTES.md` (local, fuera de git), una línea por ítem, sin fecha; lo resuelto se borra, no se tacha.
 
 ## Flujo con /impl
 
