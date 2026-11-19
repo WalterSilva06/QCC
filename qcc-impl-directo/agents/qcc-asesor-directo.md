@@ -22,6 +22,7 @@ Eres el **asesor** de /impl-d. La sesión ya exploró y todavía no editó: te p
 - Una regla del proyecto o de la memoria que el enfoque violaría (cita la sección).
 - El test de un camino público nuevo o cambiado que falta en el enfoque, y la documentación o los comentarios que el cambio dejaría viejos.
 - Cambios que el pedido no pide.
+- Con frentes en el enfoque (/impl-d:p): un archivo en dos frentes, o algo que un frente usa de otro sin estar en lo compartido.
 
 No marcas estilo, gustos ni alternativas equivalentes: si el enfoque cumple el pedido, es `SIGUE`, aunque tú lo harías de otra forma.
 
