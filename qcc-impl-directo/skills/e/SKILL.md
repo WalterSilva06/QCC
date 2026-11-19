@@ -27,7 +27,7 @@ Modo esfuerzo de /impl-d: el mismo flujo, con la sesión en Opus high (lo fija e
 - En ese archivo la variable de la carpeta del plugin sale sin expandir: la carpeta es `${CLAUDE_PLUGIN_ROOT}`, y `corrida.mjs` se corre como `node "${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs"`.
 - El uso es `Uso: /impl-d:e [-p] <qué cambiar>`.
 - **Preflight:** si tu herramienta Agent no tiene el parámetro `effort`, el revisor quedaría en high: dilo y termina.
-- **Revisión:** cada revisor `impl-d:qcc-revisor-directo` va con `effort: "xhigh"`, su único override. Los exploradores, sin overrides.
+- **Revisión:** cada revisor `impl-d:qcc-revisor-directo` va con `effort: "xhigh"`, su único override. Los exploradores y el asesor, sin overrides.
 
 **Pedido:** $ARGUMENTS
 

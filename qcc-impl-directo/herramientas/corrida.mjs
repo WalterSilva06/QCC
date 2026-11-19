@@ -254,7 +254,7 @@ function tokensDe(eventos, desde, hasta) {
 
 /**
  * Consumo de la corrida en el transcript `sesion` y sus subagentes, entre `desde` y `hasta`: `roles` (sesión,
- * explorador, revisor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor en orden y el `pedido`
+ * explorador, revisor, asesor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor en orden y el `pedido`
  * (los argumentos del último `/impl-d:n` o `/impl-d:e`, escrito o lanzado con Skill, hasta un minuto después de `desde`) y su `modo` (`normal`, `esfuerzo`
  * con `/impl-d:e`, `s/d` sin comando).
  */
@@ -278,7 +278,7 @@ export function consumoDe(sesion, desde, hasta) {
   } catch {}
   agentes.sort((a, b) => (a.t0 < b.t0 ? -1 : 1))
   for (const { tipo, eventos } of agentes) {
-    const rol = /explorador/.test(tipo) ? 'explorador' : /revisor/.test(tipo) ? 'revisor' : 'otros'
+    const rol = /explorador/.test(tipo) ? 'explorador' : /revisor/.test(tipo) ? 'revisor' : /asesor/.test(tipo) ? 'asesor' : 'otros'
     const t = tokensDe(eventos, desde, hasta)
     const acc = (roles[rol] ??= { agentes: 0, pedidos: 0, tokens: { entrada: 0, leidos: 0, escritos: 0, salida: 0 } })
     acc.agentes++

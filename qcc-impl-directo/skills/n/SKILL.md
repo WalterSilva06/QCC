@@ -1,6 +1,6 @@
 ---
 name: n
-description: "Flujo /impl-d:n, el modo normal de /impl-d: sin plan ni aprobación; explora con Haiku (hasta 24 en paralelo), la sesión implementa (Opus medium), verifica y cierra con una revisión independiente (Opus high), el % de los límites que gastó y una fila en registros/impl-d.jsonl. Solo cuando el usuario escribe /impl-d:n; nunca por iniciativa propia."
+description: "Flujo /impl-d:n, el modo normal de /impl-d: sin plan ni aprobación; explora con Haiku (hasta 24 en paralelo), un asesor Opus revisa el enfoque antes de editar, la sesión implementa (Opus medium), verifica y cierra con una revisión independiente (Opus high), el % de los límites que gastó y una fila en registros/impl-d.jsonl. Solo cuando el usuario escribe /impl-d:n; nunca por iniciativa propia."
 argument-hint: "[-p] <qué cambiar>"
 model: opus
 effort: medium
@@ -61,6 +61,19 @@ REGLAS: <la ruta del explorador en REGLAS | ninguna>
 - **Con los informes:** lees solo los rangos `ruta:desde-hasta` de ARCHIVOS y TESTS, con Read `offset`/`limit`, todos en un mismo mensaje; un archivo entero, solo si tiene menos de ~150 líneas. Lo que trajeron no lo vuelves a buscar. Un `no explorado` sobre algo que vas a editar va a otro explorador, en un mismo mensaje y dentro de los 24.
 
 ## 2. Implementación
+
+**Antes de editar**, Agent `impl-d:qcc-asesor-directo`, sin overrides y con `run_in_background: false`. El prompt, nada más:
+
+```
+PEDIDO: <literal>
+REGLAS: <la ruta del revisor en REGLAS | ninguna>
+MEMORIA: <la ruta de MEMORIA | ninguna>
+ENFOQUE: <por cada parte del pedido: qué archivo cambias y cómo, con sus valores; los tests y la documentación que tocas; ≤ 10 líneas>
+LEÍDO: <los rangos ruta:desde-hasta que leíste, separados por coma>
+```
+
+- `CAMBIA` → cada línea de `FALTA` la sumas al enfoque o, si no corresponde, va a `NOTAS` del revisor con su motivo. Sin otro asesor.
+- Un asesor sin `CONSEJO` no se relanza: sigues con tu enfoque.
 
 - Editas tú, con Edit o Write: nunca con `sed -i`, `node -e`, `python` ni heredocs, y nada temporal dentro del repo. Bash queda para git de lectura, la verificación, los `repro` del revisor y lo que el pedido pide correr.
 - Un test por cada camino público nuevo o cambiado; la documentación que el cambio deja vieja, según las reglas del proyecto.

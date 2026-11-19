@@ -133,6 +133,7 @@ test('consumoDe suma por rol desde el inicio y lee los veredictos y el pedido', 
   agente('r2', 'impl-d:qcc-revisor-directo', '2026-11-14T01:05:00Z', 'VEREDICTO: APROBADO\nCRITERIOS:')
   agente('r1', 'impl-d:qcc-revisor-directo', '2026-11-14T01:03:00Z', 'VEREDICTO: RECHAZADO')
   agente('viejo', 'impl-d:qcc-revisor-directo', '2026-11-13T23:00:00Z', 'VEREDICTO: APROBADO')
+  agente('a1', 'impl-d:qcc-asesor-directo', '2026-11-14T01:02:00Z', 'CONSEJO: SIGUE')
   const r = consumoDe(sesion, '2026-11-14T01:00:00.500Z', '2026-11-14T02:00:00Z')
   assert.equal(r.pedido, '-p arregla el login')
   assert.equal(r.modo, 'normal')
@@ -140,6 +141,7 @@ test('consumoDe suma por rol desde el inicio y lee los veredictos y el pedido', 
   assert.deepEqual(r.roles.sesion, { agentes: 0, pedidos: 2, tokens: { entrada: 2, leidos: 200, escritos: 20, salida: 12 } })
   assert.equal(r.roles.explorador.agentes, 1)
   assert.deepEqual(r.roles.revisor, { agentes: 2, pedidos: 2, tokens: { entrada: 2, leidos: 200, escritos: 20, salida: 6 } })
+  assert.deepEqual(r.roles.asesor, { agentes: 1, pedidos: 1, tokens: { entrada: 1, leidos: 100, escritos: 10, salida: 3 } })
 })
 
 test('consumoDe lee el pedido y el modo cuando la sesión lanza la skill con Skill', () => {
