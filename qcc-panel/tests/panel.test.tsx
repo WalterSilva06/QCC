@@ -20,21 +20,16 @@ import { comandoCarpeta, tipoDeRuta } from '../hooks/carpeta'
 import {
   PASOS,
   abrirEspera,
-  abreTanda,
   anotarConfig,
   anotarExplorador,
-  anotarFilaExplorador,
   avanzar,
   baseDeUso,
   cerrarExploradorSinId,
   cerrarEspera,
   congelarConsumo,
   consumoDeFlujo,
-  cuadradosDeFila,
   datosDeExplorador,
-  detallePaso,
   iniciarFlujo,
-  lineaDeExplorador,
   marcarAgente,
   marcarOrquestador,
   nodos,
@@ -2354,7 +2349,6 @@ describe('flujo (puro)', () => {
       agente('explorador'),
       agenteFin('explorador'),
       agente('planificador'),
-      agente('revisor-plan'),
       pregunta(true),
       ...subtarea,
       ...subtarea,
@@ -2364,7 +2358,7 @@ describe('flujo (puro)', () => {
       verificar,
     ]
 
-    expect(pasos('impl', secuencia)).toEqual([0, 0, 1, 2, 2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
+    expect(pasos('impl', secuencia)).toEqual([0, 0, 1, 2, 2, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 7, 7])
   })
 
   test('planificador lleva al paso 2 y cuenta el plan', async () => {
@@ -2372,46 +2366,14 @@ describe('flujo (puro)', () => {
 
     const plan = avanzar(f, agente('planificador'), 1_000)
     expect(plan).toMatchObject({ paso: 2, planes: 1 })
-    // Un re-plan desde la revisión del plan vuelve al 2 y suma otro.
-    const revisado = avanzar(plan, agente('revisor-plan'), 2_000)
-    expect(revisado?.paso).toBe(3)
-    expect(avanzar(revisado, agente('planificador'), 3_000)).toMatchObject({ paso: 2, planes: 2 })
+    // Un re-plan sigue en el 2 y suma otro.
+    expect(avanzar(plan, agente('planificador'), 2_000)).toMatchObject({ paso: 2, planes: 2 })
   })
 
-  test('revisor-plan lleva al paso 3', async () => {
-    const secuencia = [
-      estado('preflight'),
-      agente('explorador'),
-      agenteFin('explorador'),
-      agente('planificador'),
-      agente('revisor-plan'),
-      pregunta(true),
-    ]
+  test('revisor-plan, de flujos anteriores, no mueve el paso', async () => {
+    const secuencia = [estado('preflight'), agente('explorador'), agenteFin('explorador'), agente('planificador'), agente('revisor-plan'), pregunta(true)]
 
-    expect(pasos('impl', secuencia)).toEqual([0, 1, 2, 2, 3, 4])
-
-    const f: Flujo = {
-      nombre: 'impl',
-      paso: 3,
-      ejecuto: false,
-      planes: 1,
-      estado: 'en curso',
-      inicio: 0,
-      desde: 0,
-      tiempos: {},
-      fin: null,
-    }
-
-    // En el paso 3 no cambia nada: ni el paso, ni `planes`, ni `revisiones`; el fin del agente tampoco.
-    expect(avanzar(f, agente('revisor-plan'), 1_000)).toEqual(f)
-    expect(avanzar(f, agenteFin('revisor-plan'), 1_000)).toEqual(f)
-
-    // Desde el plan sí lleva al 3, sin contar como plan ni como revisión.
-    const plan: Flujo = { ...f, paso: 2 }
-    expect(avanzar(plan, agente('revisor-plan'), 1_000)).toEqual({ ...f, tiempos: { 2: 1_000 }, desde: 1_000 })
-
-    // El `revisor` de verdad, desde la revisión del plan, pasa a Ejecución y se cuenta ahí.
-    expect(avanzar(f, agente('revisor'), 1_000)).toMatchObject({ paso: 5, revisiones: { 5: 1 } })
+    expect(pasos('impl', secuencia)).toEqual([0, 1, 2, 2, 2, 4])
   })
 
   test('impl NORMAL: sin planificador salta de Plan a Aprobación', async () => {
@@ -3299,52 +3261,6 @@ describe('flujo (puro)', () => {
     }
   })
 
-  test('anotarFilaExplorador y cuadradosDeFila', async () => {
-    const base = iniciarFlujo('impl', '', 0) as Flujo
-    const con = (n: number): Flujo => ({ ...base, exploradores: n })
-    const fila = 'Haiku 5.5|high|subagente'
-    const otra = 'Opus 5.5|high|principal'
-    const vacias: string[] = []
-
-    // Sin flujo: no anota y da 1.
-    expect(anotarFilaExplorador(vacias, null, fila)).toBe(vacias)
-    expect(cuadradosDeFila(null, [fila], fila)).toBe(1)
-
-    // En curso con 3 en vuelo: anota y da 3 (con 5 da 5; con 6, tope de 5).
-    const anotadas = anotarFilaExplorador(vacias, con(3), fila)
-    expect(anotadas).toEqual([fila])
-    expect(vacias).toEqual([])
-    expect(cuadradosDeFila(con(3), anotadas, fila)).toBe(3)
-    expect(cuadradosDeFila(con(5), anotadas, fila)).toBe(5)
-    expect(cuadradosDeFila(con(6), anotadas, fila)).toBe(5)
-    expect(cuadradosDeFila(con(2), anotadas, fila)).toBe(2)
-
-    // Con 0 en vuelo (o sin el campo): ni anota ni multiplica.
-    expect(anotarFilaExplorador(vacias, con(0), fila)).toBe(vacias)
-    expect(anotarFilaExplorador(vacias, base, fila)).toBe(vacias)
-    expect(cuadradosDeFila(con(0), anotadas, fila)).toBe(1)
-    expect(cuadradosDeFila(base, anotadas, fila)).toBe(1)
-
-    // Flujo terminado: ni anota ni multiplica.
-    const terminado = terminarFlujo(con(3), 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
-    expect(terminado.estado).toBe('completo')
-    expect(anotarFilaExplorador(vacias, terminado, fila)).toBe(vacias)
-    expect(cuadradosDeFila(terminado, anotadas, fila)).toBe(1)
-
-    // Otra fila no anotada: 1.
-    expect(cuadradosDeFila(con(3), anotadas, otra)).toBe(1)
-
-    // No duplica y devuelve la misma referencia si no cambia.
-    expect(anotarFilaExplorador(anotadas, con(3), fila)).toBe(anotadas)
-    expect(anotarFilaExplorador(anotadas, con(3), otra)).toEqual([fila, otra])
-
-    // Una entrada congelada no se muta.
-    const congeladas = Object.freeze([fila])
-    expect(() => anotarFilaExplorador(congeladas, con(2), otra)).not.toThrow()
-    expect(anotarFilaExplorador(congeladas, con(2), otra)).toEqual([fila, otra])
-    expect(congeladas).toEqual([fila])
-  })
-
   test('revisores en vuelo: suben al lanzar, bajan al volver sin mover el paso y no bajan de 0', async () => {
     const base = { ...(iniciarFlujo('impl', '', 0) as Flujo), paso: 6 }
 
@@ -3378,115 +3294,6 @@ describe('flujo (puro)', () => {
     expect(() => avanzar(congelado, agenteFin('revisor'), 0)).not.toThrow()
     expect((avanzar(congelado, agenteFin('revisor'), 0) as Flujo).revisores).toBe(0)
     expect(congelado.revisores).toBe(1)
-  })
-
-  test('anotar y cuadradosDeFila cuentan exploradores y revisores', async () => {
-    const base = iniciarFlujo('impl', '', 0) as Flujo
-    const fila = 'Haiku 5.5|high|subagente'
-    const vacias: string[] = []
-    const anotadas = [fila]
-
-    // Solo revisores en vuelo.
-    expect(anotarFilaExplorador(vacias, { ...base, revisores: 2 }, fila)).toEqual([fila])
-    expect(cuadradosDeFila({ ...base, revisores: 2 }, anotadas, fila)).toBe(2)
-    expect(cuadradosDeFila({ ...base, revisores: 6 }, anotadas, fila)).toBe(5)
-
-    // Exploradores y revisores suman.
-    expect(cuadradosDeFila({ ...base, exploradores: 1, revisores: 1 }, anotadas, fila)).toBe(2)
-
-    // Con 0 revisores: no anota y da 1.
-    expect(anotarFilaExplorador(vacias, { ...base, revisores: 0 }, fila)).toBe(vacias)
-    expect(cuadradosDeFila({ ...base, revisores: 0 }, anotadas, fila)).toBe(1)
-
-    // Flujo terminado: da 1.
-    const terminado = terminarFlujo({ ...base, revisores: 3 }, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
-    expect(terminado.estado).toBe('completo')
-    expect(cuadradosDeFila(terminado, anotadas, fila)).toBe(1)
-  })
-
-  test('cuadradosDeFila: cuenta solo exploradores en vuelo con la config de la fila', async () => {
-    const base = iniciarFlujo('impl', '', 0) as Flujo
-    const haiku = 'Haiku 5.5|high|subagente'
-    const sonnet = 'Sonnet 5.5|high|subagente'
-    const anotadas = [haiku, sonnet]
-    const f: Flujo = {
-      ...base,
-      exploradores: 3,
-      detalleExploradores: [
-        { id: 'a', config: ['Haiku 5.5 high'] },
-        { id: 'b', config: ['Haiku 5.5 high'] },
-        { id: 'c', config: ['Sonnet 5.5 high'] },
-        // Ya volvió: no cuenta aunque tenga la config de la fila.
-        { id: 'd', config: ['Haiku 5.5 high'], ms: 1_000 },
-      ],
-    }
-
-    expect(cuadradosDeFila(f, anotadas, haiku)).toBe(2)
-    expect(cuadradosDeFila(f, anotadas, sonnet)).toBe(1)
-
-    // Una fila sin exploradores propios (ni revisores) queda en 1.
-    const deOpus = ['a', 'b', 'c'].map(id => ({ id, config: ['Opus 5.5 high'] }))
-    expect(cuadradosDeFila({ ...f, detalleExploradores: deOpus }, anotadas, haiku)).toBe(1)
-
-    // Uno en vuelo que aún no anotó config (sin registro o sin primera petición) cuenta en todas las filas anotadas.
-    const nuevo: Flujo = { ...f, exploradores: 4 }
-    expect(cuadradosDeFila(nuevo, anotadas, haiku)).toBe(3)
-    expect(cuadradosDeFila(nuevo, anotadas, sonnet)).toBe(2)
-    const sinPeticion: Flujo = { ...nuevo, detalleExploradores: [...(f.detalleExploradores ?? []), { id: 'e' }] }
-    expect(cuadradosDeFila(sinPeticion, anotadas, haiku)).toBe(3)
-
-    // Tope en los exploradores en vuelo del flujo.
-    expect(cuadradosDeFila({ ...f, exploradores: 1 }, anotadas, haiku)).toBe(1)
-
-    // Los revisores entran en todas las filas anotadas.
-    expect(cuadradosDeFila({ ...f, revisores: 2 }, anotadas, haiku)).toBe(4)
-    expect(cuadradosDeFila({ ...f, revisores: 2 }, anotadas, sonnet)).toBe(3)
-
-    // Tope de TOPE_EN_VUELO.
-    expect(cuadradosDeFila({ ...f, revisores: 9 }, anotadas, haiku)).toBe(5)
-  })
-
-  test('cuadradosDeFila: sin config observada vuelve a exploradores + revisores', async () => {
-    const base = iniciarFlujo('impl', '', 0) as Flujo
-    const fila = 'Haiku 5.5|high|subagente'
-    const anotadas = [fila]
-    const sinConfig: Flujo['detalleExploradores'] = [{ id: 'a' }, { id: 'b', desde: 5 }]
-
-    // Sin lista, con lista vacía y con registros sin config: como antes.
-    expect(cuadradosDeFila({ ...base, exploradores: 3 }, anotadas, fila)).toBe(3)
-    expect(cuadradosDeFila({ ...base, exploradores: 3, detalleExploradores: [] }, anotadas, fila)).toBe(3)
-    expect(cuadradosDeFila({ ...base, exploradores: 2, revisores: 1, detalleExploradores: sinConfig }, anotadas, fila)).toBe(3)
-
-    // La config de un explorador que ya volvió no cuenta como observada.
-    const volvio: Flujo['detalleExploradores'] = [{ id: 'a', ms: 10, config: ['Sonnet 5.5 high'] }, { id: 'b' }]
-    expect(cuadradosDeFila({ ...base, exploradores: 2, detalleExploradores: volvio }, anotadas, fila)).toBe(2)
-
-    // Un campo roto (no es lista) también vuelve al conteo anterior.
-    const roto = { ...base, exploradores: 2, detalleExploradores: 'x' } as unknown as Flujo
-    expect(cuadradosDeFila(roto, anotadas, fila)).toBe(2)
-  })
-
-  test('abreTanda', async () => {
-    const base = iniciarFlujo('impl', '', 0) as Flujo
-    const paso1 = { ...base, paso: 1 }
-
-    // Revisor: abre con 0 o sin el campo; no con 1 en vuelo.
-    expect(abreTanda({ ...base, revisores: 0 }, agente('revisor'))).toBe(true)
-    expect(abreTanda(base, agente('revisor'))).toBe(true)
-    expect(abreTanda({ ...base, revisores: 1 }, agente('revisor'))).toBe(false)
-
-    // Explorador: fuera del paso 1 abre; en el paso 1 solo sin otros en vuelo.
-    expect(abreTanda({ ...base, paso: 0, exploradores: 2 }, agente('explorador'))).toBe(true)
-    expect(abreTanda({ ...paso1, exploradores: 2 }, agente('explorador'))).toBe(false)
-    expect(abreTanda(paso1, agente('explorador'))).toBe(true)
-
-    // Nada más abre tanda.
-    expect(abreTanda(base, agente('ejecutor'))).toBe(false)
-    expect(abreTanda(base, verificar)).toBe(false)
-    expect(abreTanda(null, agente('revisor'))).toBe(false)
-
-    const terminado = terminarFlujo(base, 'answer', 'CIERRE · x — COMPLETO', 1_000) as Flujo
-    expect(abreTanda(terminado, agente('revisor'))).toBe(false)
   })
 
   /** Una sesión con esas filas, ya ordenadas como las deja `resumir` (de mayor a menor total). */
@@ -3584,141 +3391,8 @@ describe('flujo (puro)', () => {
     expect(marcarOrquestador(fin, 'Sonnet 5.5 high')).toBe(fin)
   })
 
-  test('detallePaso: las líneas de agente de cada nodo, sin sangría', async () => {
-    const pasado = (etiqueta: string, resto: Partial<Nodo> = {}): Nodo => ({ etiqueta, estado: 'pasado', ...resto })
-
-    // Pendiente, Aprobación y Terminado: siempre vacío.
-    expect(detallePaso({ etiqueta: 'Plan', estado: 'pendiente' }, 'Opus 5.5 high')).toEqual([])
-    expect(detallePaso({ etiqueta: 'Ejecución', estado: 'pendiente', veces: 2, revisiones: 1, ms: 5 }, 'Opus 5.5 high')).toEqual([])
-    expect(detallePaso(pasado('Aprobación', { ms: 1_000, veces: 1, revisiones: 1 }), 'Opus 5.5 high')).toEqual([])
-    expect(detallePaso({ etiqueta: 'Terminado', estado: 'actual', ms: 9_000 }, 'Opus 5.5 high')).toEqual([])
-    expect(detallePaso({ etiqueta: 'Terminado · detenido', estado: 'actual', ms: 9_000 }, 'Opus 5.5 high')).toEqual([])
-
-    // Preflight y Cierre: el orquestador, solo con tiempo y con nombre.
-    for (const etiqueta of ['Preflight', 'Cierre']) {
-      expect(detallePaso(pasado(etiqueta, { ms: 1_000 }), 'Opus 5.5 high')).toEqual(['orquestador Opus 5.5 high'])
-      expect(detallePaso({ etiqueta, estado: 'actual', ms: 0 }, 'Sonnet 5.5 high')).toEqual(['orquestador Sonnet 5.5 high'])
-      expect(detallePaso(pasado(etiqueta), 'Opus 5.5 high')).toEqual([])
-      expect(detallePaso(pasado(etiqueta, { ms: 1_000 }))).toEqual([])
-    }
-
-    // Exploración: singular y plural.
-    expect(detallePaso(pasado('Exploración', { exploradores: 1 }))).toEqual(['1 explorador · Haiku high'])
-    expect(detallePaso(pasado('Exploración', { exploradores: 3 }))).toEqual(['3 exploradores · Haiku high'])
-    expect(detallePaso(pasado('Exploración'))).toEqual([])
-    expect(detallePaso({ etiqueta: 'Exploración', estado: 'actual', exploradores: 2 })).toEqual(['2 exploradores · Haiku high'])
-
-    // Plan: el planificador si se lanzó.
-    expect(detallePaso(pasado('Plan', { veces: 1 }))).toEqual(['planificador · Opus medium'])
-    expect(detallePaso(pasado('Plan', { veces: 2 }))).toEqual(['planificador · Opus medium'])
-    expect(detallePaso(pasado('Plan'))).toEqual([])
-    expect(detallePaso(pasado('Plan', { revisiones: 1 }))).toEqual([])
-
-    // Revisión del plan: solo si tiene tiempo (un paso saltado no lo tiene).
-    expect(detallePaso(pasado('Revisión del plan', { ms: 2_000 }))).toEqual(['revisor-plan · Sonnet medium'])
-    expect(detallePaso({ etiqueta: 'Revisión del plan', estado: 'actual', ms: 0 })).toEqual(['revisor-plan · Sonnet medium'])
-    expect(detallePaso(pasado('Revisión del plan'))).toEqual([])
-
-    // Ejecución: ejecutor y después revisor.
-    expect(detallePaso(pasado('Ejecución', { veces: 2, revisiones: 2 }))).toEqual(['ejecutor · Sonnet high', 'revisor · Sonnet high/medium'])
-    expect(detallePaso(pasado('Ejecución', { veces: 1 }))).toEqual(['ejecutor · Sonnet high'])
-    expect(detallePaso(pasado('Ejecución', { revisiones: 1 }))).toEqual(['revisor · Sonnet high/medium'])
-    expect(detallePaso(pasado('Ejecución', { ms: 1_000 }))).toEqual([])
-
-    // Verificación final: el revisor de Opus si se lanzó.
-    expect(detallePaso(pasado('Verificación final', { revisiones: 1 }))).toEqual(['revisor · Opus high'])
-    expect(detallePaso(pasado('Verificación final', { veces: 1 }))).toEqual([])
-    expect(detallePaso(pasado('Verificación final'))).toEqual([])
-
-    // Una etiqueta desconocida no tiene líneas.
-    expect(detallePaso(pasado('Otro', { ms: 1, veces: 1, revisiones: 1, exploradores: 1 }), 'Opus 5.5 high')).toEqual([])
-  })
-
-  test('detallePaso: ninguna línea fija pasa de 30 caracteres', async () => {
-    const lleno = (etiqueta: string): Nodo => ({ etiqueta, estado: 'actual', ms: 1, veces: 9, revisiones: 9, exploradores: 99 })
-    const lineas = PASOS.impl.flatMap(etiqueta => detallePaso(lleno(etiqueta)))
-
-    expect(lineas).toEqual([
-      '99 exploradores · Haiku high',
-      'planificador · Opus medium',
-      'revisor-plan · Sonnet medium',
-      'ejecutor · Sonnet high',
-      'revisor · Sonnet high/medium',
-      'revisor · Opus high',
-    ])
-
-    for (const linea of lineas) expect(linea.length).toBeLessThanOrEqual(30)
-
-    // Las líneas de los nodos reales de un flujo también caben.
-    const f = iniciarFlujo('impl', '', 0) as Flujo
-
-    for (const n of nodos(f, 1_000)) for (const linea of detallePaso(n)) expect(linea.length).toBeLessThanOrEqual(30)
-  })
-
   const flujoEn = (paso: number, resto: Partial<Flujo> = {}): Flujo => ({ nombre: 'impl', paso, ejecuto: false, estado: 'en curso', inicio: 0, desde: 0, tiempos: {}, fin: null, ...resto })
   const nodoPasado = (etiqueta: string, resto: Partial<Nodo> = {}): Nodo => ({ etiqueta, estado: 'pasado', ...resto })
-
-  test('detallePaso con configs observadas lista high y medium', async () => {
-    const ejecucion = nodoPasado('Ejecución', { veces: 1, revisiones: 2, configs: { ejecutor: ['Sonnet 5.5 high'], revisor: ['Sonnet 5.5 high', 'Sonnet 5.5 medium'] } })
-    const larga = ['ejecutor · Sonnet 5.5 high', 'revisor · Sonnet 5.5 high, medium']
-
-    expect(detallePaso(ejecucion)).toEqual(larga)
-    expect(detallePaso(ejecucion, undefined, 30)).toEqual(['ejecutor · Sonnet 5.5 high', 'revisor · Sonnet high, medium'])
-    expect(detallePaso(ejecucion, undefined, 47)).toEqual(larga)
-
-    // Plan y Verificación final también usan lo observado; sin lista de su agente, la línea fija.
-    expect(detallePaso(nodoPasado('Plan', { veces: 1, configs: { planificador: ['Opus 5.5 high'] } }))).toEqual(['planificador · Opus 5.5 high'])
-    expect(detallePaso(nodoPasado('Verificación final', { revisiones: 1, configs: { revisor: ['Opus 5.5 high'] } }), undefined, 30)).toEqual(['revisor · Opus 5.5 high'])
-    expect(detallePaso(nodoPasado('Verificación final', { revisiones: 1, configs: { revisor: ['Opus 5.5 high'] } }), undefined, 20)).toEqual(['revisor · Opus high'])
-    expect(detallePaso(nodoPasado('Ejecución', { veces: 1, revisiones: 1, configs: { ejecutor: ['Sonnet 5.5 high'] } }))).toEqual(['ejecutor · Sonnet 5.5 high', 'revisor · Sonnet high/medium'])
-    expect(detallePaso(nodoPasado('Plan', { veces: 1, configs: { planificador: [] } }))).toEqual(['planificador · Opus medium'])
-  })
-
-  test('revisor-plan observado se acorta a 30', async () => {
-    const n = nodoPasado('Revisión del plan', { ms: 2_000, configs: { 'revisor-plan': ['Sonnet 5.5 medium'] } })
-
-    expect(detallePaso(n, undefined, 30)).toEqual(['revisor-plan · Sonnet medium'])
-    expect(detallePaso(n, undefined, 47)).toEqual(['revisor-plan · Sonnet 5.5 medium'])
-  })
-
-  test('modelos distintos que no caben se cortan con …', async () => {
-    const n = nodoPasado('Verificación final', { revisiones: 1, configs: { revisor: ['Sonnet 5.5 high', 'Opus 5.5 high'] } })
-    const [linea = ''] = detallePaso(n, undefined, 30)
-
-    expect(Array.from(linea).length).toBeLessThanOrEqual(30)
-    expect(linea.endsWith('…')).toBe(true)
-    expect(linea.startsWith('revisor · Sonnet high, Opus')).toBe(true)
-    expect(detallePaso(n)).toEqual(['revisor · Sonnet 5.5 high, Opus 5.5 high'])
-  })
-
-  test('el effort max del explorador se ve', async () => {
-    expect(lineaDeExplorador({ descripcion: 'Explorar tests', ms: 5_000, gasto: 1_500, config: ['Haiku 5.5 max'] }, 47)).toBe('tests · Haiku max · 5 s · 1,5k')
-    expect(lineaDeExplorador({ descripcion: 'Explorar tests', config: ['Haiku 5.5 high', 'Haiku 5.5 max'] })).toBe('tests · Haiku high, max')
-    expect(lineaDeExplorador({ descripcion: 'Explorar tests', config: [] })).toBe('tests · Haiku high')
-    expect(detallePaso(nodoPasado('Exploración', { exploradores: 2, configs: { explorador: ['Haiku 5.5 high', 'Haiku 5.5 max'] } }))).toEqual(['2 exploradores · Haiku high, max'])
-    expect(detallePaso(nodoPasado('Exploración', { exploradores: 1, configs: { explorador: ['Haiku 5.5 max'] } }), undefined, 30)).toEqual(['1 explorador · Haiku max'])
-  })
-
-  test('sin esfuerzo usa —', async () => {
-    expect(detallePaso(nodoPasado('Ejecución', { veces: 1, configs: { ejecutor: ['Sonnet 5.5 —'] } }))).toEqual(['ejecutor · Sonnet 5.5 —'])
-    expect(detallePaso(nodoPasado('Ejecución', { veces: 1, configs: { ejecutor: ['Sonnet 5.5 —'] } }), undefined, 20)).toEqual(['ejecutor · Sonnet —'])
-  })
-
-  test('ninguna línea observada pasa del ancho', async () => {
-    // La línea total de «Exploración» no se recorta (solo usa la forma corta): aquí solo se comprueba que cabe a 47.
-    expect(Array.from(detallePaso(nodoPasado('Exploración', { exploradores: 2, configs: { explorador: ['Haiku 5.5 high', 'Haiku 5.5 medium', 'Haiku 5.5 max'] } }), undefined, 47)[0] ?? '').length).toBeLessThanOrEqual(47)
-
-    const nodosConConfig: Nodo[] = [
-      nodoPasado('Exploración', { exploradores: 1, porExplorador: [{ descripcion: 'Explorar tests de todo el panel', ms: 200_000, gasto: 96_200, config: ['Haiku 5.5 high', 'Haiku 5.5 max'] }] }),
-      nodoPasado('Plan', { veces: 1, configs: { planificador: ['Opus 5.5 high', 'Sonnet 5.5 medium'] } }),
-      nodoPasado('Revisión del plan', { ms: 1, configs: { 'revisor-plan': ['Sonnet 5.5 medium'] } }),
-      nodoPasado('Ejecución', { veces: 1, revisiones: 2, configs: { ejecutor: ['Sonnet 5.5 high'], revisor: ['Sonnet 5.5 high', 'Sonnet 5.5 medium', 'Opus 5.5 high'] } }),
-      nodoPasado('Verificación final', { revisiones: 1, configs: { revisor: ['Sonnet 5.5 high', 'Opus 5.5 high', 'Haiku 5.5 max'] } }),
-    ]
-
-    for (const ancho of [30, 47]) for (const n of nodosConConfig) for (const linea of detallePaso(n, undefined, ancho)) expect(Array.from(linea).length).toBeLessThanOrEqual(ancho)
-    for (let ancho = 1; ancho <= 60; ancho++) for (const n of nodosConConfig) for (const linea of detallePaso(n, undefined, ancho)) expect(Array.from(linea).length).toBeLessThanOrEqual(ancho)
-  })
 
   test('anotarConfig atribuye por agente en vuelo', async () => {
     // Revisores en vuelo: van a configs[paso].revisor, sin repetir y en orden de aparición.
@@ -3742,10 +3416,11 @@ describe('flujo (puro)', () => {
     const sinVuelo = flujoEn(5, { revisores: 0, ultimoAgente: 'revisor' })
     expect(anotarConfig(sinVuelo, 'r1', 'Sonnet 5.5 high')).toBe(sinVuelo)
 
-    // El último agente lanzado: ejecutor, planificador y revisor-plan.
+    // El último agente lanzado: ejecutor y planificador; un revisor-plan de flujos anteriores no se anota.
     expect((anotarConfig(flujoEn(5, { ultimoAgente: 'ejecutor' }), 'e1', 'Sonnet 5.5 high') as Flujo).configs).toEqual({ 5: { ejecutor: ['Sonnet 5.5 high'] } })
     expect((anotarConfig(flujoEn(2, { ultimoAgente: 'planificador' }), 'p1', 'Opus 5.5 high') as Flujo).configs).toEqual({ 2: { planificador: ['Opus 5.5 high'] } })
-    expect((anotarConfig(flujoEn(3, { ultimoAgente: 'revisor-plan' }), 'v1', 'Sonnet 5.5 medium') as Flujo).configs).toEqual({ 3: { 'revisor-plan': ['Sonnet 5.5 medium'] } })
+    const conRevisorPlan = flujoEn(3, { ultimoAgente: 'revisor-plan' })
+    expect(anotarConfig(conRevisorPlan, 'v1', 'Sonnet 5.5 medium')).toBe(conRevisorPlan)
 
     const ejecutor = anotarConfig(flujoEn(5, { ultimoAgente: 'ejecutor' }), 'e1', 'Sonnet 5.5 high') as Flujo
     expect(anotarConfig(ejecutor, 'e1', 'Sonnet 5.5 high')).toBe(ejecutor)
@@ -3816,7 +3491,6 @@ describe('flujo (puro)', () => {
 
       expect(() => nodos(roto, 5_000)).not.toThrow()
       expect(nodos(roto, 5_000)[1]).not.toHaveProperty('configs')
-      expect(() => detallePaso(nodos(roto, 5_000)[1] as Nodo, undefined, 30)).not.toThrow()
       expect((anotarConfig(roto, 'a1', 'Haiku 5.5 high') as Flujo).configs?.[1]).toEqual({ explorador: ['Haiku 5.5 high'] })
     }
 
@@ -3884,10 +3558,6 @@ describe('flujo (puro)', () => {
     expect(lista[6]).toMatchObject({ etiqueta: 'Verificación final', estado: 'pendiente' })
     expect(lista[6]).not.toHaveProperty('configs')
 
-    // Las líneas del panel usan lo observado.
-    expect(detallePaso(lista[5] as Nodo, undefined, 30)).toEqual(['ejecutor · Sonnet 5.5 high', 'revisor · Sonnet high, medium'])
-    expect(detallePaso(lista[1] as Nodo, undefined, 47)).toEqual(['uno · Haiku high, max', 'dos · Haiku high'])
-
     // Sin configs, el nodo es el de siempre: sin la clave.
     const sin = nodos(flujoEn(5, { planes: 1 }))
     expect(sin[2]).toEqual({ etiqueta: 'Plan', estado: 'pasado', veces: 1 })
@@ -3952,10 +3622,9 @@ describe('gasto por paso (puro)', () => {
     expect(() => { r = sumarGasto(viejo, USO) }).not.toThrow()
     expect((r as unknown as Flujo).gasto).toEqual({ 5: [100_000, 2_000] })
     expect(() => nodos(r as unknown as Flujo, 9_000)).not.toThrow()
-    expect(() => nodos(r as unknown as Flujo).forEach(n => detallePaso(n))).not.toThrow()
     expect(nodos(r as unknown as Flujo, 9_000)[5]?.gasto).toEqual([100_000, 2_000])
 
-    // Sin gasto, los nodos son los de siempre y ninguno trae línea de gasto.
+    // Sin gasto, los nodos son los de siempre y ninguno trae gasto.
     const f = enCurso(2, { tiempos: { 0: 1_000, 1: 2_000 }, desde: 3_000 })
     expect(nodos(f, 5_000)).toEqual([
       { etiqueta: 'Preflight', estado: 'pasado', ms: 1_000 },
@@ -3968,8 +3637,6 @@ describe('gasto por paso (puro)', () => {
       { etiqueta: 'Cierre', estado: 'pendiente' },
       { etiqueta: 'Terminado', estado: 'pendiente' },
     ])
-
-    for (const n of nodos(f, 5_000)) expect(detallePaso(n, 'Opus 5.5 high').some(l => l.startsWith('gasto'))).toBe(false)
   })
 
   test('nodos: el gasto va en los pasos con valor, con o sin hora, y no en pendientes ni en Terminado', async () => {
@@ -3989,22 +3656,6 @@ describe('gasto por paso (puro)', () => {
     const terminado = { ...f, estado: 'completo', fin: 9_000, paso: 7, gasto: { 7: [10, 1] } } as Flujo
     expect(nodos(terminado, 9_000).at(-1)).not.toHaveProperty('gasto')
     expect(nodos(terminado, 9_000)[7]?.gasto).toEqual([10, 1])
-  })
-
-  test('detallePaso: línea de gasto al final, también en Aprobación, y cabe en 30 caracteres', async () => {
-    expect(detallePaso(pasado('Plan', { veces: 1, gasto: [100_000, 2_000] }))).toEqual(['planificador · Opus medium', 'gasto 100k · sal 2k'])
-    expect(detallePaso(pasado('Plan', { veces: 1, gasto: [950, 0] }))).toEqual(['planificador · Opus medium', 'gasto 950'])
-    expect(detallePaso(pasado('Plan', { gasto: [950, 0] }))).toEqual(['gasto 950'])
-    expect(detallePaso({ etiqueta: 'Plan', estado: 'pendiente', veces: 1, gasto: [100_000, 2_000] })).toEqual([])
-    expect(detallePaso(pasado('Aprobación', { ms: 1_000, gasto: [100_000, 2_000] }))).toEqual(['gasto 100k · sal 2k'])
-    expect(detallePaso(pasado('Ejecución', { veces: 2, revisiones: 1, gasto: [100_000, 2_000] }))).toEqual(['ejecutor · Sonnet high', 'revisor · Sonnet high/medium', 'gasto 100k · sal 2k'])
-
-    for (const etiqueta of ['Preflight', 'Exploración', 'Plan', 'Revisión del plan', 'Aprobación', 'Ejecución', 'Verificación final', 'Cierre']) {
-      const lleno: Nodo = { etiqueta, estado: 'actual', ms: 1, veces: 9, revisiones: 9, exploradores: 99, gasto: [1_234_567_890, 999_950] }
-
-      for (const linea of detallePaso(lleno, 'Opus 5.5 high')) expect(linea.length).toBeLessThanOrEqual(30)
-      expect(detallePaso(lleno, 'Opus 5.5 high').at(-1)).toMatch(/^gasto /)
-    }
   })
 
   test('anotarExplorador y sumarGastoDeExplorador dan lo mismo en cualquier orden', async () => {
@@ -4227,7 +3878,7 @@ describe('gasto por paso (puro)', () => {
     const sinGasto = enCurso(2, { totalExploradores: 1, detalleExploradores: [{ id: 'a', descripcion: 'Explorar uno', gasto: 0 }] })
     expect(nodos(sinGasto, 5_000)[1]?.porExplorador).toEqual([{ descripcion: 'Explorar uno' }])
 
-    // Falta uno de los lanzados (no se lanzó con descripción, o su registro no la trae): línea total, sin el campo.
+    // Falta uno de los lanzados (no se lanzó con descripción, o su registro no la trae): sin el campo.
     for (const sin of [
       enCurso(2, { totalExploradores: 3, detalleExploradores: detalle }),
       enCurso(2, { totalExploradores: 2, detalleExploradores: [detalle[0] as { id: string }, { id: 'b', gasto: 7 }] }),
@@ -4237,7 +3888,6 @@ describe('gasto por paso (puro)', () => {
       const nodo = nodos(sin, 9_000)[1] as Nodo
 
       expect(nodo).not.toHaveProperty('porExplorador')
-      expect(detallePaso(nodo, undefined, 30)).toEqual([`${nodo.exploradores} exploradores · Haiku high`])
     }
 
     // Exploración pendiente (paso 0): ni total ni detalle.
@@ -4246,17 +3896,15 @@ describe('gasto por paso (puro)', () => {
     expect(pendiente).not.toHaveProperty('exploradores')
   })
 
-  test('nodos y detallePaso con atom 0.16.0 y 0.9.5 sin detalleExploradores (y con el campo malformado, no array) dibujan la línea total', async () => {
+  test('nodos con atom 0.16.0 y 0.9.5 sin detalleExploradores (y con el campo malformado, no array)', async () => {
     const f016 = enCurso(2, { totalExploradores: 2, exploradores: 0, tiempos: { 1: 2_000 }, gasto: { 1: [100_000, 2_000] } })
     expect('detalleExploradores' in f016).toBe(false)
     expect(nodos(f016, 5_000)[1]).toEqual({ etiqueta: 'Exploración', estado: 'pasado', exploradores: 2, ms: 2_000, gasto: [100_000, 2_000] })
-    expect(detallePaso(nodos(f016, 5_000)[1] as Nodo, undefined, 30)).toEqual(['2 exploradores · Haiku high', 'gasto 100k · sal 2k'])
 
     const v095 = { nombre: 'impl', variante: null, paso: 2, ejecuto: false, estado: 'en curso', exploradores: 2 } as unknown as Flujo
     expect(() => nodos(v095, 3_000)).not.toThrow()
     expect(nodos(v095, 3_000)[1]).toMatchObject({ etiqueta: 'Exploración', estado: 'pasado', exploradores: 2 })
     expect(nodos(v095, 3_000)[1]).not.toHaveProperty('porExplorador')
-    expect(detallePaso(nodos(v095, 3_000)[1] as Nodo)).toEqual(['2 exploradores · Haiku high'])
 
     for (const malo of ['a1', 5, true, {}, { id: 'a', descripcion: 'x' }, [null, 3, 'x', {}, { descripcion: 'sin id' }]]) {
       for (const base of [f016, v095]) {
@@ -4264,7 +3912,6 @@ describe('gasto por paso (puro)', () => {
 
         expect(() => nodos(roto, 5_000)).not.toThrow()
         expect(nodos(roto, 5_000)[1]).not.toHaveProperty('porExplorador')
-        expect(detallePaso(nodos(roto, 5_000)[1] as Nodo, undefined, 30)[0]).toBe('2 exploradores · Haiku high')
         expect(() => anotarExplorador(roto, 'a1', { descripcion: 'x' })).not.toThrow()
         expect(() => sumarGastoDeExplorador(roto, 'a1', USO)).not.toThrow()
       }
@@ -4273,82 +3920,6 @@ describe('gasto por paso (puro)', () => {
     // Anotar sobre un campo malformado lo reemplaza por una lista válida.
     const roto = { ...f016, detalleExploradores: 'basura' } as unknown as Flujo
     expect((anotarExplorador(roto, 'a1', { descripcion: 'Explorar x' }) as Flujo).detalleExploradores).toEqual([{ id: 'a1', descripcion: 'Explorar x' }])
-  })
-
-  test('lineaDeExplorador a 47 y 30: cifras intactas, recorte en la descripción y largo ≤ ancho', async () => {
-    const largo = { descripcion: 'Explorar hooks de register y su cableado con el motor', ms: 200_000, gasto: 96_200 }
-
-    expect(lineaDeExplorador(largo)).toBe('hooks de register y su cableado con el motor · Haiku high · 3 min 20 s · 96,2k')
-    expect(lineaDeExplorador(largo, 47)).toBe('hooks de reg… · Haiku high · 3 min 20 s · 96,2k')
-    expect(lineaDeExplorador(largo, 30)).toBe('hooks de… · 3 min 20 s · 96,2k')
-
-    for (const ancho of [47, 30]) expect(Array.from(lineaDeExplorador(largo, ancho)).length).toBeLessThanOrEqual(ancho)
-
-    // Cabe entera: no se recorta ni se quita la config.
-    expect(lineaDeExplorador({ descripcion: 'Explorar tests', ms: 5_000, gasto: 1_500 }, 47)).toBe('tests · Haiku high · 5 s · 1,5k')
-
-    // Prefijo: sin distinguir mayúsculas; el «:» o espacios pegados se van; si no está pegado o no hay prefijo, queda tal cual.
-    expect(lineaDeExplorador({ descripcion: 'EXPLORAR el repo' })).toBe('el repo · Haiku high')
-    expect(lineaDeExplorador({ descripcion: 'explorar:  tests' })).toBe('tests · Haiku high')
-    expect(lineaDeExplorador({ descripcion: 'Explorar : tests' })).toBe('tests · Haiku high')
-    expect(lineaDeExplorador({ descripcion: 'Revisar tests' })).toBe('Revisar tests · Haiku high')
-    expect(lineaDeExplorador({ descripcion: 'Exploraremos tests' })).toBe('Exploraremos tests · Haiku high')
-    expect(lineaDeExplorador({ descripcion: 'Explorar' })).toBe('Explorar · Haiku high')
-
-    // Falta una cifra: la línea omite solo esa.
-    expect(lineaDeExplorador({ descripcion: 'Explorar tests', gasto: 950 })).toBe('tests · Haiku high · 950')
-    expect(lineaDeExplorador({ descripcion: 'Explorar tests', ms: 45_000 })).toBe('tests · Haiku high · 45 s')
-    expect(lineaDeExplorador({ descripcion: 'Explorar tests', ms: 0, gasto: 0 })).toBe('tests · Haiku high · 0 s')
-    expect(lineaDeExplorador({ descripcion: 'Explorar tests' }, 14)).toBe('tests')
-
-    // Un emoji no se parte: se cuenta por caracteres.
-    const emojis = { descripcion: `Explorar ${'🔎'.repeat(30)}`, ms: 5_000, gasto: 1_500 }
-    const corta = lineaDeExplorador(emojis, 47)
-    expect(corta).toBe(`${'🔎'.repeat(20)}… · Haiku high · 5 s · 1,5k`)
-    expect(Array.from(corta).length).toBe(47)
-    expect(corta).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/)
-
-    // Ancho corto: la descripción cae a «…» y las cifras no se tocan mientras quepan con ella.
-    expect(lineaDeExplorador(largo, 22)).toBe('… · 3 min 20 s · 96,2k')
-    expect(lineaDeExplorador({ ...largo, ms: 3_723_000 }, 21)).toBe('… · 1 h 2 min · 96,2k')
-
-    // Si ni «…» cabe con las cifras, van solas: primero se va el gasto, después se recorta la duración.
-    expect(lineaDeExplorador(largo, 10)).toBe('3 min 20 s')
-    expect(lineaDeExplorador(largo, 18)).toBe('3 min 20 s · 96,2k')
-    expect(lineaDeExplorador({ ...largo, ms: 3_723_000 }, 20)).toBe('1 h 2 min · 96,2k')
-    expect(lineaDeExplorador(largo, 6)).toBe('3 min…')
-    expect(lineaDeExplorador({ descripcion: 'Explorar tests', gasto: 96_200 }, 3)).toBe('96…')
-
-    // Descripción muy corta y cifras largas: nunca pasa del ancho, a ningún ancho.
-    for (const d of [largo, { descripcion: 'x', ms: 3_599_000, gasto: 999_900 }, { descripcion: 'Explorar tests' }, { descripcion: 'ab', gasto: 950 }]) {
-      for (let ancho = 1; ancho <= 60; ancho++) expect(Array.from(lineaDeExplorador(d, ancho)).length).toBeLessThanOrEqual(ancho)
-    }
-  })
-
-  test('detallePaso: una línea por explorador en lugar de la total; la de gasto del paso sigue', async () => {
-    const exploracion = pasado('Exploración', {
-      exploradores: 2,
-      gasto: [150_000, 3_000],
-      porExplorador: [
-        { descripcion: 'Explorar hooks de register', ms: 200_000, gasto: 96_200 },
-        { descripcion: 'Explorar tests', ms: 45_000 },
-      ],
-    })
-
-    expect(detallePaso(exploracion)).toEqual([
-      'hooks de register · Haiku high · 3 min 20 s · 96,2k',
-      'tests · Haiku high · 45 s',
-      'gasto 150k · sal 3k',
-    ])
-    expect(detallePaso(exploracion, 'Opus 5.5 high', 30)).toEqual(['hooks de… · 3 min 20 s · 96,2k', 'tests · Haiku high · 45 s', 'gasto 150k · sal 3k'])
-
-    for (const linea of detallePaso(exploracion, undefined, 30)) expect(Array.from(linea).length).toBeLessThanOrEqual(30)
-
-    // Sin `porExplorador` (o vacío), todo igual que antes.
-    expect(detallePaso({ ...exploracion, porExplorador: undefined as never })).toEqual(['2 exploradores · Haiku high', 'gasto 150k · sal 3k'])
-    expect(detallePaso(pasado('Exploración', { exploradores: 1 }))).toEqual(['1 explorador · Haiku high'])
-    expect(detallePaso(pasado('Exploración', { exploradores: 2, porExplorador: [] }))).toEqual(['2 exploradores · Haiku high'])
-    expect(detallePaso({ ...exploracion, estado: 'pendiente' })).toEqual([])
   })
 })
 
