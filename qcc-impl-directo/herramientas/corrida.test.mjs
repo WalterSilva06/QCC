@@ -10,7 +10,7 @@ import { leer, resumen, lineaLimites, mapa, verificacionDe, reglasDe, arbolActua
 const SCRIPT = fileURLToPath(new URL('./corrida.mjs', import.meta.url))
 const RESET_5H = '2026-11-14T05:00:00.000Z'
 const RESET_SEM = '2026-11-16T09:00:00.000Z'
-const lectura = (t, pct5, pctSem, reset5 = RESET_5H) => ({ t, five_hour: { pct: pct5, resetsAt: reset5 }, seven_day: { pct: pctSem, resetsAt: RESET_SEM } })
+const lectura = (t, pct5, pctSem, reset5 = RESET_5H, resetSem = RESET_SEM) => ({ t, five_hour: { pct: pct5, resetsAt: reset5 }, seven_day: { pct: pctSem, resetsAt: resetSem } })
 const temporal = (nombre) => fs.mkdtempSync(path.join(os.tmpdir(), `qcc-impl-d-${nombre}-`))
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'core.autocrlf=false', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
 
@@ -142,6 +142,18 @@ test('consumoDe suma por rol desde el inicio y lee los veredictos y el pedido', 
   assert.deepEqual(r.roles.revisor, { agentes: 2, pedidos: 2, tokens: { entrada: 2, leidos: 200, escritos: 20, salida: 6 } })
 })
 
+test('consumoDe lee el pedido y el modo cuando la sesión lanza la skill con Skill', () => {
+  const sesion = path.join(temporal('consumo-skill'), 's.jsonl')
+  const t = '2026-11-14T01:00:00Z'
+  fs.writeFileSync(sesion, [
+    { type: 'user', timestamp: t, message: { content: 'texto pegado… /impl-d:e aplica 1 y 2' } },
+    { type: 'assistant', timestamp: t, message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'impl-d:e', args: ' aplica 1 y 2 ' } }], usage: { output_tokens: 1 } } },
+  ].map((e) => JSON.stringify(e)).join('\n'))
+  const r = consumoDe(sesion, '2026-11-14T01:00:00.500Z', '2026-11-14T02:00:00Z')
+  assert.equal(r.pedido, 'aplica 1 y 2')
+  assert.equal(r.modo, 'esfuerzo')
+})
+
 test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la lectura', () => {
   const dir = repo()
   fs.mkdirSync(path.join(dir, '.claude'))
@@ -162,7 +174,7 @@ test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la l
   const env = { ...process.env, QCC_LIMITES: snapshot, QCC_IMPL_D_TMP: tmp, CLAUDE_CODE_SESSION_ID: 'sesion-1', CLAUDE_CONFIG_DIR: config, FLUJOS_REGISTROS: registros }
   const correr = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: dir, env, encoding: 'utf8' }).stdout.trim()
   const reset = new Date(Date.now() + 3_600_000).toISOString()
-  fs.writeFileSync(snapshot, JSON.stringify(lectura(new Date().toISOString(), 20, 5, reset)))
+  fs.writeFileSync(snapshot, JSON.stringify(lectura(new Date().toISOString(), 20, 5, reset, reset)))
   const salida = correr('--inicio').split('\n')
   assert.equal(salida[0], 'LÍMITES: 5h 20 % · sem 5 %')
   assert.match(salida[1], /^BASE: [0-9a-f]{40}$/)
@@ -176,7 +188,7 @@ test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la l
     { type: 'user', timestamp: t, message: { content: '<command-name>/impl-d:e</command-name>\n<command-args>-p cambia algo</command-args>' } },
     { type: 'assistant', timestamp: t, message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 9 } } },
   ].map((e) => JSON.stringify(e)).join('\n'))
-  fs.writeFileSync(snapshot, JSON.stringify(lectura(new Date().toISOString(), 24, 5, reset)))
+  fs.writeFileSync(snapshot, JSON.stringify(lectura(new Date().toISOString(), 24, 5, reset, reset)))
   assert.equal(correr('--fin', '--resultado', 'COMPLETO'), 'LÍMITES: 5h +4 % · sem +0 %')
   assert.deepEqual(fs.readdirSync(tmp), [])
   const fila = JSON.parse(fs.readFileSync(path.join(registros, 'impl-d.jsonl'), 'utf8'))

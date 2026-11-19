@@ -216,6 +216,24 @@ const leerJsonl = (archivo) => {
 /** El comando que abre la corrida: `/impl-d:n` o el modo esfuerzo `/impl-d:e`. */
 const RE_COMANDO = /<command-name>\/(impl-d:[en])<\/command-name>/
 
+/**
+ * Las aperturas de la corrida en el transcript, `[{ t, skill, args }]`: el comando escrito al principio del mensaje o,
+ * si va en medio, la herramienta Skill con la que la sesión lo lanza.
+ */
+function invocacionesDe(eventos) {
+  return eventos.flatMap((e) => {
+    const c = e.message?.content
+    if (e.type === 'user' && typeof c === 'string') {
+      const m = c.match(RE_COMANDO)
+      return m ? [{ t: e.timestamp, skill: m[1], args: c.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1] ?? '' }] : []
+    }
+    if (e.type !== 'assistant' || !Array.isArray(c)) return []
+    return c
+      .filter((b) => b.type === 'tool_use' && b.name === 'Skill' && /^\/?impl-d:[en]$/.test(b.input?.skill ?? ''))
+      .map((b) => ({ t: e.timestamp, skill: b.input.skill.replace(/^\//, ''), args: b.input.args ?? '' }))
+  })
+}
+
 /** Tokens y pedidos de los mensajes del asistente entre `desde` y `hasta` (ISO), sin repetir id ni contar `<synthetic>`. */
 function tokensDe(eventos, desde, hasta) {
   const vistos = new Set()
@@ -237,7 +255,7 @@ function tokensDe(eventos, desde, hasta) {
 /**
  * Consumo de la corrida en el transcript `sesion` y sus subagentes, entre `desde` y `hasta`: `roles` (sesión,
  * explorador, revisor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor en orden y el `pedido`
- * (los argumentos del último `/impl-d:n` o `/impl-d:e` hasta un minuto después de `desde`) y su `modo` (`normal`, `esfuerzo`
+ * (los argumentos del último `/impl-d:n` o `/impl-d:e`, escrito o lanzado con Skill, hasta un minuto después de `desde`) y su `modo` (`normal`, `esfuerzo`
  * con `/impl-d:e`, `s/d` sin comando).
  */
 export function consumoDe(sesion, desde, hasta) {
@@ -272,11 +290,9 @@ export function consumoDe(sesion, desde, hasta) {
     }
   }
   const tope = new Date(Date.parse(desde) + 60_000).toISOString()
-  const comando = principal
-    .filter((e) => e.type === 'user' && typeof e.message?.content === 'string' && e.timestamp <= tope && RE_COMANDO.test(e.message.content))
-    .at(-1)
-  const pedido = comando?.message.content.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1].trim() ?? ''
-  const modo = comando ? (comando.message.content.match(RE_COMANDO)[1] === 'impl-d:e' ? 'esfuerzo' : 'normal') : 's/d'
+  const comando = invocacionesDe(principal).filter((i) => i.t <= tope).at(-1)
+  const pedido = comando?.args.trim() ?? ''
+  const modo = comando ? (comando.skill === 'impl-d:e' ? 'esfuerzo' : 'normal') : 's/d'
   return { roles, veredictos, pedido, modo }
 }
 
