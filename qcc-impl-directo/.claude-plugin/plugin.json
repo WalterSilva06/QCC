@@ -2,6 +2,7 @@
   "name": "impl-d",
   "displayName": "QCC",
   "version": "0.6.0",
+  "license": "MIT",
   "description": "/impl-d:n: sin plan ni aprobación; explora con hasta 24 Haiku, un asesor Opus revisa el enfoque antes de editar, la sesión implementa en Opus medium, verifica, cierra con una revisión independiente en Opus high, dice el % de los límites que gastó y anota la corrida en registros/impl-d.jsonl; /impl-d:e, el modo esfuerzo, con la sesión en Opus high y la revisión en xhigh; /impl-d:p, el modo paralelo para tareas largas, con trabajadores Opus medium en paralelo por frentes sin archivos en común",
   "author": { "name": "WalterSilva06" }
 }

@@ -2,6 +2,7 @@
   "name": "impl",
   "displayName": "QCC",
   "version": "0.8.0",
+  "license": "MIT",
   "description": "/impl: flujo multi-agente que explora, planifica, ejecuta por subtareas, verifica y cierra con una revisión final independiente",
   "author": { "name": "WalterSilva06" }
 }

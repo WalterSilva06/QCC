@@ -61,3 +61,7 @@ Los cinco comandos tienen que terminar sin errores antes de dar algo por hecho (
 - [MODS.md](MODS.md): el panel de uso.
 - [FLUJOS.md](FLUJOS.md): los flujos (`/impl`, `/impl-d` y `/commit`).
 - [LIMITES.md](LIMITES.md): qué miden los límites de uso de 5 h y semanal, y cómo `/impl` anota el % que gasta cada corrida y cada fase.
+
+## Licencia
+
+[MIT](LICENSE).

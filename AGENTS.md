@@ -15,6 +15,7 @@ Los flujos corren como plugins: sus herramientas se llaman con `${CLAUDE_PLUGIN_
 
 ```
 README.md                         entrada al repo e índice
+LICENSE                           licencia MIT
 AGENTS.md                         reglas generales (este archivo)
 MODS.md                           documentación del mod panel (carpeta qcc-panel)
 FLUJOS.md                         documentación de los flujos
