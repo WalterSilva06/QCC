@@ -342,7 +342,7 @@ async function leerArchivoHistorial($: EngineInterface) {
     // En pantalla van solo las 10 filas más recientes.
     const filas = unirHistorial([leerHistorial(texto, 10)], 10)
 
-    await update($, historial, () => ({ v: 7, mtimeMs, filas }))
+    await update($, historial, () => ({ v: 7 as const, mtimeMs, filas }))
   } catch {
     // Sin archivo o sin lectura el historial queda como estaba.
   }
@@ -981,7 +981,7 @@ export const register: Register = on => {
   on('tool.call', async ($, e, siguiente) => {
     // La pestaña «Agentes» anota la herramienta antes y, al volver, su archivo o el cierre de su `Agent`; el resultado y el error de `siguiente` pasan intactos.
     await contarHerramienta($, e.agentId, (e as unknown as Record<string, unknown>).run_in_background === true)
-    const next: typeof siguiente = async evento => {
+    const next = async (evento: Parameters<typeof siguiente>[0]): Promise<Awaited<ReturnType<typeof siguiente>>> => {
       let r: Awaited<ReturnType<typeof siguiente>>
       try {
         r = await siguiente(evento)
