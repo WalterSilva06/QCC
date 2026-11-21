@@ -47,7 +47,7 @@
   <line x1="266" y1="192" x2="277" y2="192" stroke="#8c8882" stroke-width="1.4" marker-end="url(#flecha)"/>
   <rect x="280" y="166" width="112" height="52" rx="10" fill="#21201e" stroke="#7aa2f7" stroke-width="1.4"/>
   <text x="336" y="188" text-anchor="middle" class="b">Implementa</text>
-  <text x="336" y="206" text-anchor="middle" class="dim" style="font-size:11px">Opus medium</text>
+  <text x="336" y="206" text-anchor="middle" class="dim" style="font-size:11px">Opus · /effort</text>
   <line x1="394" y1="192" x2="405" y2="192" stroke="#8c8882" stroke-width="1.4" marker-end="url(#flecha)"/>
   <rect x="408" y="166" width="112" height="52" rx="10" fill="#21201e" stroke="#7aa2f7" stroke-width="1.4"/>
   <text x="464" y="188" text-anchor="middle" class="b">Verificación</text>
@@ -55,7 +55,7 @@
   <line x1="522" y1="192" x2="533" y2="192" stroke="#8c8882" stroke-width="1.4" marker-end="url(#flecha)"/>
   <rect x="536" y="166" width="112" height="52" rx="10" fill="#21201e" stroke="#7aa2f7" stroke-width="1.4"/>
   <text x="592" y="188" text-anchor="middle" class="b">Revisión</text>
-  <text x="592" y="206" text-anchor="middle" class="dim" style="font-size:11px">Opus high</text>
+  <text x="592" y="206" text-anchor="middle" class="dim" style="font-size:11px">Opus +1 nivel</text>
   <line x1="650" y1="192" x2="661" y2="192" stroke="#8c8882" stroke-width="1.4" marker-end="url(#flecha)"/>
   <rect x="664" y="166" width="112" height="52" rx="10" fill="#21201e" stroke="#7aa2f7" stroke-width="1.4"/>
   <text x="720" y="188" text-anchor="middle" class="b">Cierre</text>

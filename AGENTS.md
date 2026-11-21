@@ -4,7 +4,7 @@ Herramientas personales para Claude Code, en cuatro plugins de un marketplace (`
 
 - **`panel`** (carpeta `qcc-panel/`): mod con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Comando `/panel`. Ver [MODS.md](MODS.md).
 - **`impl`** (carpeta `qcc-implementador/`): el flujo `/impl` (con un solo modo), con sus agentes y herramientas. Ver [FLUJOS.md](FLUJOS.md).
-- **`impl-d`** (carpeta `qcc-impl-directo/`): `/impl-d:n`, sin plan ni aprobación, con sus modos esfuerzo (`/impl-d:e`) y paralelo (`/impl-d:p`, para tareas largas); las skills, su explorador, su asesor, su trabajador, su revisor, `corrida.mjs` (lo que la skill inyecta al empezar, el diff contra el estado inicial, el % de los límites que gastó y la fila de `registros/impl-d.jsonl`) y un hook con el tope de contexto del explorador, sin guardia. Ver [FLUJOS.md](FLUJOS.md#impl-d).
+- **`impl-d`** (carpeta `qcc-impl-directo/`): `/impl-d:n`, sin plan ni aprobación y con el esfuerzo de `/effort`, con su modo paralelo (`/impl-d:p`, para tareas largas); las skills, su explorador, su asesor, su trabajador, su revisor, `corrida.mjs` (lo que la skill inyecta al empezar, el diff contra el estado inicial, el % de los límites que gastó y la fila de `registros/impl-d.jsonl`) y un hook con el tope de contexto del explorador, sin guardia. Ver [FLUJOS.md](FLUJOS.md#impl-d).
 - **`commit`** (carpeta `qcc-commit/`): el flujo `/commit`, con su agente y su guardia `solo-git`. Ver [FLUJOS.md](FLUJOS.md).
 
 Los flujos corren como plugins: sus herramientas se llaman con `${CLAUDE_PLUGIN_ROOT}/herramientas/…`, y las guardias van en el `hooks/hooks.json` de cada plugin y deciden por el `agent_type` del evento (`impl:qcc-ejecutor`…), porque los agentes de un plugin ignoran `hooks:` en su frontmatter. Los `subagent_type` llevan el prefijo del plugin (`impl:`, `commit:`); los agentes conservan su nombre `qcc-…`. La carpeta de cada flujo, el registro y las cachés de verificar viven en `<git-dir>/qcc-impl/` (una por repo y por worktree, compartida entre cuentas); `flujos.jsonl` e `historial/` están en `~/.claude/flujos/registros`. Los plugins se leen desde este repo; `qcc-implementador/instalar.mjs` no instala nada: con `--limpiar` archiva en `~/.claude/_archivo-limpieza-<fecha>/` las copias de `/impl` y `/commit` que dejó en `~/.claude` una instalación por copia.
@@ -36,12 +36,11 @@ qcc-impl-directo/                 plugin impl-d
   .claude-plugin/plugin.json      manifiesto
   hooks/hooks.json                tope-explorador.mjs en PreToolUse (Read, Glob, Grep)
   skills/n/SKILL.md               /impl-d:n, el modo normal
-  skills/e/SKILL.md               /impl-d:e, el modo esfuerzo: sesión Opus high, revisor xhigh; sigue skills/n/SKILL.md
   skills/p/SKILL.md               /impl-d:p, el modo paralelo: reparte en frentes para trabajadores en paralelo; sigue skills/n/SKILL.md
   agents/qcc-explorador-directo.md  explorador Haiku low de /impl-d
   agents/qcc-asesor-directo.md    asesor Opus high de /impl-d: revisa el enfoque antes de editar
-  agents/qcc-trabajador-directo.md  trabajador Opus medium de /impl-d:p: implementa un frente
-  agents/qcc-revisor-directo.md   revisor Opus high de /impl-d
+  agents/qcc-trabajador-directo.md  trabajador Opus de /impl-d:p (medium, o el esfuerzo de la sesión si es mayor): implementa un frente
+  agents/qcc-revisor-directo.md   revisor Opus de /impl-d, un nivel arriba de la sesión (high como mínimo)
   herramientas/                   corrida.mjs (--inicio: límites, base, mapa, verificación, reglas y memoria; --arbol y --diff; --fin: % de 5 h y semanal y la fila de impl-d.jsonl), tope-explorador.mjs (niega lecturas al explorador sobre 90k) y sus tests
 qcc-commit/                       plugin commit
   .claude-plugin/plugin.json      manifiesto

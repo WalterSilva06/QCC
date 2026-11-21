@@ -1,9 +1,8 @@
 ---
 name: p
-description: "Flujo /impl-d:p, el modo paralelo de /impl-d para tareas largas: sin plan ni aprobación; explora con Haiku, la sesión escribe lo compartido y reparte el resto en frentes sin archivos en común que implementan trabajadores Opus medium en paralelo, integra, verifica y cierra con una revisión Opus high (una por frente si el cambio es grande). Solo cuando el usuario escribe /impl-d:p; nunca por iniciativa propia."
+description: "Flujo /impl-d:p, el modo paralelo de /impl-d para tareas largas: sin plan ni aprobación; explora con Haiku, la sesión escribe lo compartido y reparte el resto en frentes sin archivos en común que implementan trabajadores Opus en paralelo (medium, o el esfuerzo de /effort si es mayor), integra, verifica y cierra con una revisión Opus high (una por frente si el cambio es grande). Solo cuando el usuario escribe /impl-d:p; nunca por iniciativa propia."
 argument-hint: "[-p] <qué cambiar>"
 model: opus
-effort: medium
 allowed-tools:
   - Read
   - Glob
@@ -24,7 +23,7 @@ allowed-tools:
 Modo paralelo de /impl-d, para tareas largas: tú repartes e integras, y los trabajadores implementan en paralelo. Cada trabajador arranca sin tu contexto: lo que no va en su prompt no existe para él. Lo que no editas tú no lo lees: así tu contexto queda chico y cada pedido tuyo sale barato. Lee entero `${CLAUDE_PLUGIN_ROOT}/skills/n/SKILL.md` y síguelo desde «# /impl-d:n», con estos cambios:
 
 - El `Pedido`, los `Sucios previos` y lo de `Al empezar` son los de abajo: ya corrieron, no los corras de nuevo.
-- En ese archivo la variable de la carpeta del plugin sale sin expandir: la carpeta es `${CLAUDE_PLUGIN_ROOT}`, y `corrida.mjs` se corre como `node "${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs"`.
+- En ese archivo las variables salen sin expandir: la carpeta del plugin es `${CLAUDE_PLUGIN_ROOT}`, `corrida.mjs` se corre como `node "${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs"` y el esfuerzo de la sesión es `${CLAUDE_EFFORT}`.
 - El uso es `Uso: /impl-d:p [-p] <qué cambiar>`.
 - **Exploración, con los informes:** lees solo los rangos que necesitas para repartir y los de lo que vas a escribir tú; los de cada frente van a su trabajador en `LEER`.
 - **Implementación:** la de abajo. «2. Implementación» de /impl-d:n rige para lo que editas tú (lo compartido, la integración y las correcciones), menos su asesor, que es el de abajo. Lo que prohíbe (git que escriba, `.env*`, comandos irreversibles o externos sin aprobar, segundo plano sin parar) rige también para los trabajadores.
@@ -43,7 +42,7 @@ Si el cambio entero es chico (menos de ~300 líneas cambiadas o hasta 3 archivos
 
 **Lo compartido** lo escribes completo, no como borrador: los trabajadores lo usan tal cual y no lo cambian.
 
-**Trabajadores:** por ola, todos en un mismo mensaje: Agent `impl-d:qcc-trabajador-directo`, sin overrides y con `run_in_background: false`; uno que el harness no deja arrancar lo relanzas en cuanto termina otro. El prompt, nada más; el `PEDIDO` va literal y la `TAREA` copia los valores, textos y formatos del pedido sin resumirlos:
+**Trabajadores:** por ola, todos en un mismo mensaje: Agent `impl-d:qcc-trabajador-directo`, con `run_in_background: false` y, si el esfuerzo de la sesión es `high`, `xhigh` o `max`, ese mismo en `effort` (con otro, sin override: medium); uno que el harness no deja arrancar lo relanzas en cuanto termina otro. El prompt, nada más; el `PEDIDO` va literal y la `TAREA` copia los valores, textos y formatos del pedido sin resumirlos:
 
 ```
 PEDIDO: <literal>

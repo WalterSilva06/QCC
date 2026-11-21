@@ -160,12 +160,12 @@ test('consumoDe lee el pedido y el modo cuando la sesión lanza la skill con Ski
   const sesion = path.join(temporal('consumo-skill'), 's.jsonl')
   const t = '2026-11-14T01:00:00Z'
   fs.writeFileSync(sesion, [
-    { type: 'user', timestamp: t, message: { content: 'texto pegado… /impl-d:e aplica 1 y 2' } },
-    { type: 'assistant', timestamp: t, message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'impl-d:e', args: ' aplica 1 y 2 ' } }], usage: { output_tokens: 1 } } },
+    { type: 'user', timestamp: t, message: { content: 'texto pegado… /impl-d:n aplica 1 y 2' } },
+    { type: 'assistant', timestamp: t, message: { id: 'm1', model: 'claude-opus-5-5', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'impl-d:n', args: ' aplica 1 y 2 ' } }], usage: { output_tokens: 1 } } },
   ].map((e) => JSON.stringify(e)).join('\n'))
   const r = consumoDe(sesion, '2026-11-14T01:00:00.500Z', '2026-11-14T02:00:00Z')
   assert.equal(r.pedido, 'aplica 1 y 2')
-  assert.equal(r.modo, 'esfuerzo')
+  assert.equal(r.modo, 'normal')
 })
 
 test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la lectura', () => {
@@ -185,7 +185,7 @@ test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la l
   fs.writeFileSync(huerfana, '{}')
   const dosDias = (Date.now() - 2 * 86_400_000) / 1000
   fs.utimesSync(huerfana, dosDias, dosDias)
-  const env = { ...process.env, QCC_LIMITES: snapshot, QCC_IMPL_D_TMP: tmp, CLAUDE_CODE_SESSION_ID: 'sesion-1', CLAUDE_CONFIG_DIR: config, FLUJOS_REGISTROS: registros }
+  const env = { ...process.env, QCC_LIMITES: snapshot, QCC_IMPL_D_TMP: tmp, CLAUDE_CODE_SESSION_ID: 'sesion-1', CLAUDE_EFFORT: 'high', CLAUDE_CONFIG_DIR: config, FLUJOS_REGISTROS: registros }
   const correr = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: dir, env, encoding: 'utf8' }).stdout.trim()
   const reset = new Date(Date.now() + 3_600_000).toISOString()
   fs.writeFileSync(snapshot, JSON.stringify(lectura(new Date().toISOString(), 20, 5, reset, reset)))
@@ -199,7 +199,7 @@ test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la l
   assert.equal(fs.existsSync(huerfana), false)
   const t = new Date().toISOString()
   fs.writeFileSync(path.join(proyecto, 'sesion-1.jsonl'), [
-    { type: 'user', timestamp: t, message: { content: '<command-name>/impl-d:e</command-name>\n<command-args>-p cambia algo</command-args>' } },
+    { type: 'user', timestamp: t, message: { content: '<command-name>/impl-d:n</command-name>\n<command-args>-p cambia algo</command-args>' } },
     { type: 'assistant', timestamp: t, message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 9 } } },
   ].map((e) => JSON.stringify(e)).join('\n'))
   fs.writeFileSync(snapshot, JSON.stringify(lectura(new Date().toISOString(), 24, 5, reset, reset)))
@@ -207,7 +207,8 @@ test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la l
   assert.deepEqual(fs.readdirSync(tmp), [])
   const fila = JSON.parse(fs.readFileSync(path.join(registros, 'impl-d.jsonl'), 'utf8'))
   assert.equal(fila.pedido, '-p cambia algo')
-  assert.equal(fila.modo, 'esfuerzo')
+  assert.equal(fila.modo, 'normal')
+  assert.equal(fila.esfuerzo, 'high')
   assert.equal(fila.resultado, 'COMPLETO')
   assert.equal(fila.limites, '5h +4 % · sem +0 %')
   assert.deepEqual(fila.roles.sesion.tokens, { entrada: 1, leidos: 0, escritos: 0, salida: 9 })

@@ -1,9 +1,8 @@
 ---
 name: n
-description: "Flujo /impl-d:n, el modo normal de /impl-d: sin plan ni aprobación; explora con Haiku (hasta 24 en paralelo), un asesor Opus revisa el enfoque antes de editar, la sesión implementa (Opus medium), verifica y cierra con una revisión independiente (Opus high), el % de los límites que gastó y una fila en registros/impl-d.jsonl. Solo cuando el usuario escribe /impl-d:n; nunca por iniciativa propia."
+description: "Flujo /impl-d:n, el modo normal de /impl-d: sin plan ni aprobación; explora con Haiku (hasta 24 en paralelo), un asesor Opus revisa el enfoque antes de editar, la sesión implementa (Opus, con el esfuerzo de /effort), verifica y cierra con una revisión independiente (Opus high, o xhigh si la sesión va en high o más), el % de los límites que gastó y una fila en registros/impl-d.jsonl. Solo cuando el usuario escribe /impl-d:n; nunca por iniciativa propia."
 argument-hint: "[-p] <qué cambiar>"
 model: opus
-effort: medium
 allowed-tools:
   - Read
   - Glob
@@ -38,6 +37,7 @@ Si el pedido empieza con la palabra `-p`, la quitas (el pedido es lo que sigue) 
 ## 0. Preflight
 
 - Pedido vacío → responde `Uso: /impl-d:n [-p] <qué cambiar>` y termina. Si no pide cambios (revisar, analizar, auditar), dilo y termina.
+- **Esfuerzo:** el de la sesión, `${CLAUDE_EFFORT}`, que el usuario elige con `/effort` antes de la corrida. El revisor va un nivel arriba: con `high` o `xhigh`, `effort: "xhigh"`; con `max`, `effort: "max"`; con otro, sin override (high). Si lleva override y tu herramienta Agent no tiene el parámetro `effort`, dilo y termina.
 - Si tu herramienta Agent no tiene el parámetro `run_in_background`, fork mode está activo y la revisión perdería Opus: dilo (se apaga con `"CLAUDE_CODE_FORK_SUBAGENT": "0"` en `env` de `~/.claude/settings.json`, reiniciando Claude Code) y termina.
 - **Límites:** con `MARGEN BAJO` en `LÍMITES`, con `-p` vas directo al cierre con `DETENIDO (límite: 5h <n> %)`; sin `-p`, AskUserQuestion si seguir.
 - **Verificación:** la lista `VERIFICAR` de arriba; si remite al CLAUDE.md o AGENTS.md, sus comandos de verificación. Sin ninguno, AskUserQuestion qué comandos verifican el proyecto, o seguir solo con revisión.
@@ -90,7 +90,7 @@ LEÍDO: <los rangos ruta:desde-hasta que leíste, separados por coma>
 
 ## 4. Revisión
 
-Agent `impl-d:qcc-revisor-directo`, sin overrides y con `run_in_background: false`. El prompt, nada más:
+Agent `impl-d:qcc-revisor-directo`, con el `effort` de «Esfuerzo» como único override y `run_in_background: false`. El prompt, nada más:
 
 ```
 PEDIDO: <literal>

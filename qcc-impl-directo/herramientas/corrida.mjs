@@ -213,11 +213,11 @@ const leerJsonl = (archivo) => {
   }
 }
 
-/** El comando que abre la corrida: `/impl-d:n`, el modo esfuerzo `/impl-d:e` o el paralelo `/impl-d:p`. */
-const RE_COMANDO = /<command-name>\/(impl-d:[enp])<\/command-name>/
+/** El comando que abre la corrida: `/impl-d:n` o el modo paralelo `/impl-d:p`. */
+const RE_COMANDO = /<command-name>\/(impl-d:[np])<\/command-name>/
 
 /** El `modo` de la fila según la skill; `/impl-d:n` es `normal`. */
-const MODOS = { 'impl-d:e': 'esfuerzo', 'impl-d:p': 'paralelo' }
+const MODOS = { 'impl-d:p': 'paralelo' }
 
 /**
  * Las aperturas de la corrida en el transcript, `[{ t, skill, args }]`: el comando escrito al principio del mensaje o,
@@ -232,7 +232,7 @@ function invocacionesDe(eventos) {
     }
     if (e.type !== 'assistant' || !Array.isArray(c)) return []
     return c
-      .filter((b) => b.type === 'tool_use' && b.name === 'Skill' && /^\/?impl-d:[enp]$/.test(b.input?.skill ?? ''))
+      .filter((b) => b.type === 'tool_use' && b.name === 'Skill' && /^\/?impl-d:[np]$/.test(b.input?.skill ?? ''))
       .map((b) => ({ t: e.timestamp, skill: b.input.skill.replace(/^\//, ''), args: b.input.args ?? '' }))
   })
 }
@@ -258,8 +258,8 @@ function tokensDe(eventos, desde, hasta) {
 /**
  * Consumo de la corrida en el transcript `sesion` y sus subagentes, entre `desde` y `hasta`: `roles` (sesión,
  * explorador, asesor, trabajador, revisor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor en orden y el `pedido`
- * (los argumentos del último `/impl-d:n`, `/impl-d:e` o `/impl-d:p`, escrito o lanzado con Skill, hasta un minuto después de `desde`) y su `modo`
- * (`normal`, `esfuerzo` con `/impl-d:e`, `paralelo` con `/impl-d:p`, `s/d` sin comando).
+ * (los argumentos del último `/impl-d:n` o `/impl-d:p`, escrito o lanzado con Skill, hasta un minuto después de `desde`) y su `modo`
+ * (`normal`, `paralelo` con `/impl-d:p`, `s/d` sin comando).
  */
 export function consumoDe(sesion, desde, hasta) {
   const principal = leerJsonl(sesion)
@@ -371,6 +371,8 @@ function fin(argv) {
       sesion,
       pedido,
       modo,
+      // El esfuerzo de la sesión: Claude Code lo pasa a los comandos de Bash en CLAUDE_EFFORT.
+      esfuerzo: process.env.CLAUDE_EFFORT || 's/d',
       resultado,
       limites,
       roles,
