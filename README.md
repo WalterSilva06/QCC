@@ -24,7 +24,7 @@ Son herramientas personales, en cuatro plugins del marketplace `qcc` (`.claude-p
 |---|---|---|---|
 | 📊 `panel` | `qcc-panel/` | Panel lateral con los límites de uso, el contexto, el consumo por modelo·esfuerzo, el historial de flujos y los subagentes. | [MODS.md](MODS.md) |
 | 🧭 `impl` | `qcc-implementador/` | `/impl`: explora, planifica, pide aprobación, ejecuta por subtareas y cierra con una revisión final independiente. | [FLUJOS.md](FLUJOS.md) |
-| ⚡ `impl-d` | `qcc-impl-directo/` | `/impl-d:n`, `:e` y `:p`: sin plan ni aprobación; la sesión implementa, verifica y cierra con una revisión independiente. | [FLUJOS.md](FLUJOS.md#impl-d) |
+| ⚡ `impl-d` | `qcc-impl-directo/` | `/impl-d:n` y `:p`: sin plan ni aprobación; la sesión implementa, verifica y cierra con una revisión independiente. | [FLUJOS.md](FLUJOS.md#impl-d) |
 | 📝 `commit` | `qcc-commit/` | `/commit`: un commit en español por grupo de cambios, con push opcional, todo en Haiku high. | [FLUJOS.md](FLUJOS.md#commit) |
 
 ## Panel
