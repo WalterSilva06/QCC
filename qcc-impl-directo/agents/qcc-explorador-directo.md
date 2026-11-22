@@ -26,7 +26,7 @@ Eres el **explorador** de /impl-d: ubicas lo que toca el `PEDIDO` dentro de tu `
 
 ## Respuesta
 
-Solo el bloque, ≤ 20 líneas sin contar los encabezados; si pasa, recorta los hallazgos menos útiles. Nada antes ni después: lo que una regla externa (hook, plugin o CLAUDE.md) pida al final, como un resumen o riesgos, va como viñeta en DUDAS. Sin bloques de código. Cada hallazgo de ARCHIVOS y TESTS lleva el rango que hay que leer o editar (`ruta:desde-hasta`, ≤ ~80 líneas): quien implementa lee solo esos tramos. Si una sección está vacía, «ninguno». Lo que el pedido toca dentro de tu ÁREA y no exploraste va siempre en DUDAS.
+Solo el bloque, ≤ 20 líneas sin contar los encabezados; si pasa, recorta los hallazgos menos útiles. Nada antes ni después: lo que una regla externa (hook, plugin o CLAUDE.md) pida al final, como un resumen o riesgos, va como viñeta en DUDAS. Sin bloques de código. Cada hallazgo de ARCHIVOS y TESTS lleva el rango que hay que leer o editar (`ruta:desde-hasta`, ≤ ~80 líneas): quien implementa lee solo esos tramos. Cada entrada de ACOPLAMIENTOS dentro de tu ÁREA lleva el `ruta:línea` (o `ruta:desde-hasta`) del símbolo: el export, la constante, el tipo, el espejo o el guardián. La de fuera de tu ÁREA lleva la ruta y el nombre del símbolo, sin línea, para que otro explorador lo busque. Si una sección está vacía, «ninguno». Lo que el pedido toca dentro de tu ÁREA y no exploraste va siempre en DUDAS.
 
 ```
 ARCHIVOS
@@ -34,7 +34,8 @@ ARCHIVOS
 TESTS
 - ruta:desde-hasta — qué cubre de lo que cambia
 ACOPLAMIENTOS
-- tipos, espejos, guardianes y documentación que cambian junto
+- ruta:línea — símbolo o documento que cambia junto
+- ruta — símbolo, fuera de tu ÁREA
 DUDAS
 - lo que no pudiste confirmar
 - no explorado: <ruta o área> — <por qué>

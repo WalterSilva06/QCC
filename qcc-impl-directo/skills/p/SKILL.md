@@ -25,7 +25,7 @@ Modo paralelo de /impl-d, para tareas largas: tú repartes e integras, y los tra
 - El `Pedido`, los `Sucios previos` y lo de `Al empezar` son los de abajo: ya corrieron, no los corras de nuevo.
 - En ese archivo las variables salen sin expandir: la carpeta del plugin es `${CLAUDE_PLUGIN_ROOT}`, `corrida.mjs` se corre como `node "${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs"` y el esfuerzo de la sesión es `${CLAUDE_EFFORT}`.
 - El uso es `Uso: /impl-d:p [-p] <qué cambiar>`.
-- **Exploración, con los informes:** lees solo los rangos que necesitas para repartir y los de lo que vas a escribir tú; los de cada frente van a su trabajador en `LEER`.
+- **Exploración, con los informes:** lees solo los rangos que necesitas para repartir y los de lo que vas a escribir tú; los de cada frente van a su trabajador en `LEER`. La segunda ola es la de /impl-d:n y cubre también los archivos que editan los frentes.
 - **Implementación:** la de abajo. «2. Implementación» de /impl-d:n rige para lo que editas tú (lo compartido, la integración y las correcciones), menos su asesor, que es el de abajo. Lo que prohíbe (git que escriba, `.env*`, comandos irreversibles o externos sin aprobar, segundo plano sin parar) rige también para los trabajadores.
 - **Revisión:** con el agregado de abajo.
 

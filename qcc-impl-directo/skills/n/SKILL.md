@@ -58,7 +58,7 @@ FOCO: <qué del pedido toca esta área, ≤ 2 líneas | ninguno>
 REGLAS: <la ruta del explorador en REGLAS | ninguna>
 ```
 
-- **Con los informes:** lees solo los rangos `ruta:desde-hasta` de ARCHIVOS y TESTS, con Read `offset`/`limit`, todos en un mismo mensaje; un archivo entero, solo si tiene menos de ~150 líneas. Lo que trajeron no lo vuelves a buscar. Un `no explorado` sobre algo que vas a editar va a otro explorador, en un mismo mensaje y dentro de los 24.
+- **Con los informes:** lees solo los rangos `ruta:desde-hasta` de ARCHIVOS y TESTS, y los de ACOPLAMIENTOS que vas a editar o cuyo símbolo necesitas, con Read `offset`/`limit`, todos en un mismo mensaje; un archivo entero, solo si tiene menos de ~150 líneas. Lo que trajeron no lo vuelves a buscar. Después, y antes del asesor, va una sola segunda ola, en un mismo mensaje y dentro de los 24: cubre cada `no explorado` de DUDAS y cada entrada de ACOPLAMIENTOS o DUDAS sin rango, si es sobre un archivo que vas a editar o cuyo símbolo necesitas. Su prompt es el de arriba, con `ÁREA` = esos archivos y `FOCO` = los símbolos o el acoplamiento que nombró el informe. Lo que cubre esa ola no lo buscas tú con Grep/Glob ni con Bash: lees sus rangos como los de la primera.
 
 ## 2. Implementación
 
