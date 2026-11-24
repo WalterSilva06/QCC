@@ -3,6 +3,6 @@
   "displayName": "QCC",
   "version": "0.9.0",
   "license": "MIT",
-  "description": "/impl-d:n: sin plan ni aprobación; explora con hasta 24 Haiku, un asesor Opus revisa el enfoque antes de editar, la sesión implementa en Opus con el esfuerzo de /effort, verifica, cierra con una revisión independiente en Opus un nivel arriba (high desde medium, xhigh desde high o xhigh), dice el % de los límites que gastó y anota la corrida en registros/impl-d.jsonl; /impl-d:p, lo mismo pero la sesión no edita: deriva la implementación y cada corrección a trabajadores Opus, varios a la vez si hay partes sin archivos en común",
+  "description": "/impl-d:n: sin plan ni aprobación; explora con hasta 24 Haiku, un asesor Opus revisa el enfoque antes de editar, la sesión implementa en Opus con el esfuerzo de /effort, verifica, cierra con una revisión independiente en Opus un nivel arriba (high desde medium, xhigh desde high o xhigh), dice el % de los límites que gastó y anota la corrida en registros/impl-d.jsonl; /impl-d:p, lo mismo pero la sesión no edita: parte el pedido en frentes parejos sin archivos en común, los deriva a la vez a trabajadores Opus con cada corrección, revisa cada frente al terminar mientras siguen los demás y cierra con una revisión de la integración",
   "author": { "name": "WalterSilva06" }
 }

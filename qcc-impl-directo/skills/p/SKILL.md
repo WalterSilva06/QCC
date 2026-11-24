@@ -1,6 +1,6 @@
 ---
 name: p
-description: "Flujo /impl-d:p, /impl-d:n con la implementación derivada: sin plan ni aprobación; explora con Haiku, un asesor Opus revisa el enfoque, la sesión no edita: deriva la implementación a trabajadores Opus con el esfuerzo de /effort (uno, o varios a la vez si hay partes sin archivos en común) y les devuelve cada corrección, verifica y cierra con la revisión de /impl-d:n. Solo cuando el usuario escribe /impl-d:p; nunca por iniciativa propia."
+description: "Flujo /impl-d:p, /impl-d:n con la implementación derivada: sin plan ni aprobación; explora con Haiku, un asesor Opus revisa el enfoque, la sesión no edita: parte el pedido en frentes parejos sin archivos en común (uno solo si no se parte) y los deriva a la vez a trabajadores Opus con el esfuerzo de /effort, revisa cada frente al terminar mientras siguen los demás, les devuelve cada corrección, verifica y cierra con una revisión de la integración. Solo cuando el usuario escribe /impl-d:p; nunca por iniciativa propia."
 argument-hint: "[-p] <qué cambiar>"
 model: opus
 allowed-tools:
@@ -27,32 +27,47 @@ Es /impl-d:n con una diferencia: tú no editas. Orquestas: exploras, escribes lo
 - **Preflight:** el trabajador lleva en `effort` el esfuerzo de la sesión: sin el parámetro `effort` en Agent, dilo y termina.
 - **Exploración, con los informes:** lees solo los rangos que necesitas para escribir los encargos; los de los archivos que edita un trabajador van en su `LEER` y no los lees tú. La segunda ola cubre también lo que editan los trabajadores.
 - **Implementación:** la de abajo, en vez de «2. Implementación» de /impl-d:n. Lo que esa prohíbe (git que escriba, `.env*`, segundo plano sin parar) rige igual. Un comando irreversible o externo que el pedido necesita no lo corre el trabajador: te llega en su `FUERA`, y lo preguntas y lo corres tú, como en /impl-d:n.
-- **Verificación:** la corres tú, con todos los trabajadores terminados. Un ROJO por el cambio lo corrige el trabajador de esos archivos (ver «Correcciones»); cuenta para las 2 correcciones.
-- **Revisión:** la de /impl-d:n. Los PROBLEMAS que se reproducen y, tras un APROBADO, la OBSERVACIÓN que se arregla en una línea los corrige su trabajador (ver «Correcciones»).
+- **Verificación:** la corres tú en cuanto todos los trabajadores reportan `HECHO` y ninguno sigue con una corrección, sin esperar las revisiones de frente en curso, y otra vez antes del cierre si algo cambió después de su VERDE; para lanzar el ciclo siguiente de una revisión de frente basta con los `TESTS` de su trabajador. Un ROJO por el cambio lo corrige el trabajador de esos archivos (ver «Correcciones»); cuenta para las 2 correcciones.
+- **Revisión:** la de abajo, en vez de «4. Revisión» de /impl-d:n.
+- **Cierre:** el de /impl-d:n, con todas las revisiones cerradas y nada en segundo plano: trabajadores y revisores terminados o parados con TaskStop. `Revisión:` lleva la última de cada frente y la de integración: `frente 1 APROBADO en ciclo 1 · frente 2 APROBADO en ciclo 2 · integración APROBADO en ciclo 1`.
 
 ## 2. Implementación
 
-**Frentes:** lo normal es uno, un trabajador con el pedido entero. Partes el pedido en más frentes solo si una parte se puede hacer a la vez que otra: sin ningún archivo en común con otro frente y sin usar lo que otro escribe. Una parte que necesita lo que escribe otro frente va en ese frente o en uno que lanzas cuando ese termina. No partas por capas (dominio, comandos, tests) lo que se edita junto: cada trabajador relee su parte, y menos frentes es más barato.
+**Frentes:** un trabajador por cada parte del pedido que no comparte ningún archivo con otra ni usa lo que otra escribe; uno solo, con el pedido entero, cuando no se parte. La implementación dura lo que el frente más grande: si uno queda claramente más grande que los demás (en archivos o en trabajo) y se puede partir sin archivos en común, lo partes (p. ej., unas lecturas públicas en 15 archivos, en «reserva» y «páginas y reseñas», cada una con sus tests). Una parte que necesita lo que escribe otro frente va en ese frente o en uno que lanzas cuando ese termina. No partas por capas (dominio, comandos, tests) lo que se edita junto: el código va con sus tests.
 
 **Asesor:** el de /impl-d:n, antes del primer trabajador, con `ENFOQUE` de hasta 15 líneas: por frente, sus archivos y su parte del pedido, con sus valores, tests y documentación. `LEÍDO` lleva también el `LEER` de cada frente. `CAMBIA` se resuelve igual que en /impl-d:n.
 
-**Trabajadores:** los frentes que no esperan a otro, todos en un mismo mensaje: Agent `impl-d:qcc-trabajador-directo`, con `run_in_background: false` y en `effort` el esfuerzo de la sesión (si no hay, sin override); uno que el harness no deja arrancar lo relanzas en cuanto termina otro. Uno que espera a otro lo lanzas cuando ese reporta `HECHO`. El prompt, nada más; el `PEDIDO` va literal y la `TAREA` copia los valores, textos y formatos del pedido sin resumirlos:
+**Trabajadores:** los frentes que no esperan a otro, todos en un mismo mensaje: Agent `impl-d:qcc-trabajador-directo`, con `run_in_background: true` (cada uno avisa al terminar y su revisión arranca sin esperar a los demás; no los esperas con comandos) y en `effort` el esfuerzo de la sesión (si no hay, sin override); uno que el harness no deja arrancar lo relanzas en cuanto termina otro. Uno que espera a otro lo lanzas cuando ese reporta `HECHO`. El prompt, nada más; el `PEDIDO` va literal y la `TAREA` copia los valores, textos y formatos del pedido sin resumirlos:
 
 ```
 PEDIDO: <literal>
 FRENTE: <n> · <título>
 ARCHIVOS: <los que edita o crea, y solo esos>
 TAREA: <su parte del pedido: qué cambia en cada archivo, con sus valores; los tests y la documentación que le tocan>
-LEER: <los rangos ruta:desde-hasta de la exploración para este frente>
+LEER: <los rangos ruta:desde-hasta de los informes para este frente, tal cual: sin juntarlos ni ampliarlos a 1-<fin>; un archivo sin rango, como ruta — símbolo>
 OTROS FRENTES: <n · sus archivos, uno por línea | ninguno>
 TESTS: <el comando que corre solo los tests de este frente | ninguno>
 REGLAS: <las rutas de la sesión en REGLAS | ninguna>
 MEMORIA: <la ruta de MEMORIA | ninguna>
 ```
 
-**Correcciones:** lo que hay que cambiar después de un reporte (lo que falta de un `PARCIAL` o `BLOQUEADO`, lo de `FUERA`, un ROJO, los PROBLEMAS del revisor, la OBSERVACIÓN de una línea) va al trabajador dueño de esos archivos, con SendMessage al id que dio su resultado de Agent (si SendMessage es diferida, la cargas con ToolSearch): sigue con su contexto y no relee. El mensaje lleva `ANTERIOR: <qué corregir, con el fallo o los PROBLEMAS y su repro>` y, si suma archivos, `ARCHIVOS: <los nuevos>`. Lo de un archivo que no es de nadie va al trabajador que lo pidió, sumándolo a sus `ARCHIVOS`. Las de varios trabajadores van en un mismo mensaje. Sin SendMessage, o si el trabajador no responde, lanzas uno nuevo con el prompt de ese frente más `ANTERIOR`. Un reporte sin `ESTADO` se relanza una vez.
+**Correcciones:** lo que hay que cambiar después de un reporte (lo que falta de un `PARCIAL` o `BLOQUEADO`, lo de `FUERA`, un ROJO, los PROBLEMAS de un revisor, la OBSERVACIÓN de una línea) va al trabajador dueño de esos archivos, con SendMessage al id de su Agent (si SendMessage es diferida, la cargas con ToolSearch): sigue con su contexto y no relee. El mensaje lleva `ANTERIOR: <qué corregir, con el fallo o los PROBLEMAS y su repro>` y, si suma archivos, `ARCHIVOS: <los nuevos>`. Lo de un archivo que no es de nadie va al trabajador que lo pidió, sumándolo a sus `ARCHIVOS`. Las de varios trabajadores van en un mismo mensaje. Un frente con su revisión en curso no recibe correcciones: esperas su veredicto y le mandas todo junto. Sin SendMessage, o si el trabajador no responde, lanzas uno nuevo con el prompt de ese frente más `ANTERIOR`. Un reporte sin `ESTADO` se relanza una vez.
 
-**Integración:** con todos los frentes terminados, comparas `DIFF --stat` con los `ARCHIVOS` de cada trabajador: uno que no es de nadie va a `NOTAS` del revisor. Lo que editaron los trabajadores lo lees solo para reproducir un PROBLEMA o escribir una corrección.
+**Integración:** con todos los frentes en `HECHO`, junto con la verificación, comparas `DIFF --stat` con los `ARCHIVOS` de cada trabajador: uno que no es de nadie va a `SIN DUEÑO` de la revisión de integración. Lo que editaron los trabajadores lo lees solo para reproducir un PROBLEMA o escribir una corrección.
+
+## 4. Revisión
+
+Una por frente, que arranca cuando ese frente termina, y una de integración al final. Cada una es Agent `impl-d:qcc-revisor-directo`, con el `effort` de «Esfuerzo» como único override, `run_in_background: true` (sigues con lo demás y su veredicto te llega al terminar) y el prompt de «4. Revisión» de /impl-d:n con lo de abajo. Un RECHAZADO (el árbol, reproducir, `DESCARTADOS`, el ciclo siguiente) y lo de tras un APROBADO son los de /impl-d:n, con cada corrección a cargo de su trabajador (ver «Correcciones»).
+
+- **De frente:** cuando su trabajador reporta `HECHO` (un ROJO propio en sus `TESTS` va antes como corrección). Después de `PEDIDO` van `FRENTE`, `ARCHIVOS` y `TAREA` de su encargo, con lo que sumaron sus correcciones, y `VERIFICACIÓN` es la línea `TESTS` del reporte. Lo que se corrige en un frente ya revisado (sus PROBLEMAS o un ROJO de la verificación) lo revisa un ciclo más de ese frente, con `CORRECCIONES` desde el `--arbol` que tomas antes de mandar la corrección.
+- **De integración:** con todos los frentes en `HECHO` y la verificación en VERDE, sin esperar las revisiones de frente en curso. Revisa solo lo que no ve ninguna de frente: los archivos sin dueño, lo que un frente usa de otro y que cada parte del pedido esté hecha en algún frente. Después de `SUCIOS PREVIOS` van:
+
+```
+FRENTES: <n · título · sus ARCHIVOS, uno por línea>
+SIN DUEÑO: <los archivos de DIFF --stat que no son de ningún frente | ninguno>
+```
+
+- **Límite:** un segundo RECHAZADO del mismo frente, o de la integración, cierra `DETENIDO` con los problemas abiertos: no lanzas nada más, esperas a los trabajadores en curso (pararlos dejaría archivos a medias) y paras con TaskStop las revisiones en curso.
 
 **Pedido:** $ARGUMENTS
 

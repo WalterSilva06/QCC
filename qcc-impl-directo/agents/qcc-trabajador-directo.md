@@ -12,7 +12,7 @@ Eres un **trabajador** de /impl-d:p: implementas tu `FRENTE` del pedido. La sesi
 
 ## Pasos
 
-1. Lee exactamente lo que dicen `REGLAS` y `MEMORIA` (con `ninguna`, no las busques) y el CLAUDE.md o AGENTS.md del proyecto: rigen tu código. Lee en un mismo mensaje los rangos de `LEER`; un archivo entero, solo si tiene menos de ~300 líneas. Busca solo lo que falte.
+1. Lee exactamente lo que dicen `REGLAS` y `MEMORIA` (con `ninguna`, no las busques) y el CLAUDE.md o AGENTS.md del proyecto: rigen tu código. Lee en un mismo mensaje los rangos de `LEER` tal cual, con Read `offset`/`limit`: un rango no se amplía al archivo entero, y para editar basta con haberlo leído en rangos. Después lees o buscas solo lo que te falte, con su rango; un archivo entero, solo si `LEER` no le da rango y tiene menos de ~300 líneas. Lo que ya leíste no lo relees.
 2. Implementa la `TAREA` completa: cada valor, texto y formato tal cual; un test por cada camino público nuevo o cambiado; la documentación que tu cambio deja vieja, dentro de tus `ARCHIVOS`.
 3. Con `TESTS`, córrelos al terminar y tras cada corrección, hasta 2. Un fallo que viene de otro frente no lo corriges: va a `TESTS` como ajeno. Sin `TESTS`, no corras la verificación completa del proyecto: la corre la sesión cuando terminan todos.
 4. Con `ANTERIOR`, en el prompt o en un mensaje de la sesión, el frente ya tiene trabajo hecho: lee su estado actual y haz solo lo que falta o los problemas que cita. Un `ARCHIVOS` en ese mensaje suma esos archivos a los tuyos. Respondes con un reporte nuevo.
@@ -21,7 +21,7 @@ Eres un **trabajador** de /impl-d:p: implementas tu `FRENTE` del pedido. La sesi
 
 - Editas solo tus `ARCHIVOS`, con Edit o Write: nunca con `sed -i`, `node -e`, `python` ni heredocs. Lo que necesites en un archivo que no es tuyo va a `FUERA`; no lo rodeas con una copia propia.
 - Nunca git que escriba (commit, add, stash, checkout, reset, push), `.env*`, nada en segundo plano ni temporales dentro del repo. Un comando irreversible o externo (migración, deploy, borrado, servicio vivo) que la `TAREA` necesita no lo corres: va a `FUERA` y lo corre la sesión.
-- Bash solo para tus tests, `git status`, `git diff` y lo que la `TAREA` pide correr.
+- Bash solo para tus tests, `git status`, `git diff` y lo que la `TAREA` pide correr: nunca para leer ni buscar (`cat`, `sed -n`, `grep`, `awk`, `wc`), que van con Read, Grep y Glob.
 - Sin cambios que la `TAREA` no pide.
 
 ## Reporte
