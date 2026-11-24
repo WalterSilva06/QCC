@@ -255,9 +255,19 @@ function tokensDe(eventos, desde, hasta) {
   return r
 }
 
+/** Qué revisó un revisor de `/impl-d:p`, por su prompt: `frente <n> ` o `integración `; vacío en `/impl-d:n`. */
+function revisado(eventos) {
+  const c = eventos.find((e) => e.type === 'user')?.message?.content
+  const prompt = typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => b.text ?? '').join('\n') : ''
+  if (/^FRENTES:/m.test(prompt)) return 'integración '
+  const frente = prompt.match(/^FRENTE:\s*([^\s·]+)/m)?.[1]
+  return frente ? `frente ${frente} ` : ''
+}
+
 /**
  * Consumo de la corrida en el transcript `sesion` y sus subagentes, entre `desde` y `hasta`: `roles` (sesión,
- * explorador, asesor, trabajador, revisor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor en orden y el `pedido`
+ * explorador, asesor, trabajador, revisor, otros, cada uno con agentes, pedidos y tokens), los `veredictos` del revisor
+ * en orden (en `/impl-d:p`, con lo que revisó delante: `frente 2 RECHAZADO`, `integración APROBADO`) y el `pedido`
  * (los argumentos del último `/impl-d:n` o `/impl-d:p`, escrito o lanzado con Skill, hasta un minuto después de `desde`) y su `modo`
  * (`normal`, `paralelo` con `/impl-d:p`, `s/d` sin comando).
  */
@@ -289,7 +299,7 @@ export function consumoDe(sesion, desde, hasta) {
     for (const k of Object.keys(acc.tokens)) acc.tokens[k] += t.tokens[k]
     if (rol === 'revisor') {
       const textos = eventos.filter((e) => e.type === 'assistant').flatMap((e) => (Array.isArray(e.message?.content) ? e.message.content : [])).filter((b) => b.type === 'text')
-      veredictos.push(textos.at(-1)?.text.match(/VEREDICTO:\s*(APROBADO|RECHAZADO)/)?.[1] ?? 'sin veredicto')
+      veredictos.push(revisado(eventos) + (textos.at(-1)?.text.match(/VEREDICTO:\s*(APROBADO|RECHAZADO)/)?.[1] ?? 'sin veredicto'))
     }
   }
   const tope = new Date(Date.parse(desde) + 60_000).toISOString()

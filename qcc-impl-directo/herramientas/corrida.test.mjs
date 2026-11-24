@@ -156,6 +156,28 @@ test('consumoDe anota el modo paralelo de /impl-d:p', () => {
   assert.equal(r.modo, 'paralelo')
 })
 
+test('consumoDe anota qué revisó cada revisor de /impl-d:p', () => {
+  const dir = temporal('consumo-frentes')
+  const sesion = path.join(dir, 's.jsonl')
+  fs.writeFileSync(sesion, JSON.stringify({ type: 'user', timestamp: '2026-11-14T01:00:00Z', message: { content: '<command-name>/impl-d:p</command-name>\n<command-args>x</command-args>' } }))
+  const sub = path.join(dir, 's', 'subagents')
+  fs.mkdirSync(sub, { recursive: true })
+  const revisor = (id, t, prompt, texto) => {
+    fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ agentType: 'impl-d:qcc-revisor-directo' }))
+    fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), [
+      { type: 'user', timestamp: t, message: { role: 'user', content: prompt } },
+      { type: 'assistant', timestamp: t, message: { id: `${id}-1`, model: 'claude-opus-5-5', usage: { output_tokens: 1 }, content: [{ type: 'text', text: texto }] } },
+    ].map((e) => JSON.stringify(e)).join('\n'))
+  }
+  revisor('f2', '2026-11-14T01:02:00Z', 'PEDIDO: x\nFRENTE: 2 · reseñas\nARCHIVOS: b.ts', 'VEREDICTO: RECHAZADO')
+  revisor('f1', '2026-11-14T01:01:00Z', 'PEDIDO: x\nFRENTE: 1 · reserva\nARCHIVOS: a.ts', 'VEREDICTO: APROBADO')
+  revisor('in', '2026-11-14T01:04:00Z', [{ type: 'text', text: 'PEDIDO: x\nFRENTES:\n1 · reserva · a.ts\n2 · reseñas · b.ts\nSIN DUEÑO: ninguno' }], 'VEREDICTO: APROBADO')
+  revisor('f2b', '2026-11-14T01:05:00Z', 'PEDIDO: x\nFRENTE: 2 · reseñas\nREVISIÓN ANTERIOR: VEREDICTO: RECHAZADO', 'sin bloque')
+  const r = consumoDe(sesion, '2026-11-14T01:00:00.500Z', '2026-11-14T02:00:00Z')
+  assert.deepEqual(r.veredictos, ['frente 1 APROBADO', 'frente 2 RECHAZADO', 'integración APROBADO', 'frente 2 sin veredicto'])
+  assert.equal(r.roles.revisor.agentes, 4)
+})
+
 test('consumoDe lee el pedido y el modo cuando la sesión lanza la skill con Skill', () => {
   const sesion = path.join(temporal('consumo-skill'), 's.jsonl')
   const t = '2026-11-14T01:00:00Z'
