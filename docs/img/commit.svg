@@ -31,8 +31,8 @@
 
   <text x="24" y="246"><tspan class="ok">● </tspan><tspan class="b">commit:qcc-generador-commit</tspan><tspan class="dim"> (Haiku · high)</tspan></text>
   <text x="24" y="266" class="dim">  ⎿  2 grupos · sin excluidos</text>
-  <text x="24" y="292"><tspan class="ok">● </tspan><tspan class="b">Bash</tspan><tspan class="dim">(git add -A -- … ; git commit -F - …)  ×2</tspan></text>
-  <text x="24" y="314"><tspan class="ok">● </tspan><tspan class="b">Bash</tspan><tspan class="dim">(git push -u origin HEAD)</tspan></text>
+  <text x="24" y="292"><tspan class="ok">● </tspan><tspan class="b">Bash</tspan><tspan class="dim">(node …/commitear.mjs --modo push)</tspan></text>
+  <text x="24" y="314" class="dim">  ⎿  2 commits · push hecho</text>
 
   <rect x="24" y="334" width="712" height="128" rx="8" fill="#222220" stroke="#34332f"/>
   <text x="40" y="360"><tspan class="warn">a1f3c9e</tspan><tspan> Agrega imágenes del panel y de /commit al README</tspan></text>

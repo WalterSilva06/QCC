@@ -5,7 +5,7 @@ Herramientas personales para Claude Code, en cuatro plugins de un marketplace (`
 - **`panel`** (carpeta `qcc-panel/`): mod con un panel lateral que muestra el contexto de la sesión, los límites de uso, el esfuerzo y el consumo de tokens. Comando `/panel`. Ver [MODS.md](MODS.md).
 - **`impl`** (carpeta `qcc-implementador/`): el flujo `/impl` (con un solo modo), con sus agentes y herramientas. Ver [FLUJOS.md](FLUJOS.md).
 - **`impl-d`** (carpeta `qcc-impl-directo/`): `/impl-d:n`, sin plan ni aprobación y con el esfuerzo de `/effort`, con su modo que delega (`/impl-d:p`: la sesión no edita, deriva frentes parejos a trabajadores a la vez y revisa cada uno al terminar); las skills, su explorador, su asesor, su trabajador, su revisor, `corrida.mjs` (lo que la skill inyecta al empezar, el diff contra el estado inicial, el % de los límites que gastó y la fila de `registros/impl-d.jsonl`) y un hook con el tope de contexto del explorador, sin guardia. Ver [FLUJOS.md](FLUJOS.md#impl-d).
-- **`commit`** (carpeta `qcc-commit/`): el flujo `/commit`, con su agente y su guardia `solo-git`. Ver [FLUJOS.md](FLUJOS.md).
+- **`commit`** (carpeta `qcc-commit/`): el flujo `/commit`, con su agente, su guardia `solo-git` y `commitear.mjs`, que hace los commits y el push con la respuesta del agente. Ver [FLUJOS.md](FLUJOS.md).
 
 Los flujos corren como plugins: sus herramientas se llaman con `${CLAUDE_PLUGIN_ROOT}/herramientas/…`, y las guardias van en el `hooks/hooks.json` de cada plugin y deciden por el `agent_type` del evento (`impl:qcc-ejecutor`…), porque los agentes de un plugin ignoran `hooks:` en su frontmatter. Los `subagent_type` llevan el prefijo del plugin (`impl:`, `commit:`); los agentes conservan su nombre `qcc-…`. La carpeta de cada flujo, el registro y las cachés de verificar viven en `<git-dir>/qcc-impl/` (una por repo y por worktree, compartida entre cuentas); `flujos.jsonl` e `historial/` están en `~/.claude/flujos/registros`. Los plugins se leen desde este repo; `qcc-implementador/instalar.mjs` no instala nada: con `--limpiar` archiva en `~/.claude/_archivo-limpieza-<fecha>/` las copias de `/impl` y `/commit` que dejó en `~/.claude` una instalación por copia.
 
@@ -47,7 +47,7 @@ qcc-commit/                       plugin commit
   hooks/hooks.json                solo-git.mjs en PreToolUse (Bash, PowerShell)
   skills/commit/SKILL.md          /commit
   agents/qcc-generador-commit.md  agente Haiku high de /commit
-  herramientas/                   solo-git.mjs y su test
+  herramientas/                   solo-git.mjs, commitear.mjs (hace los commits y el push de /commit con la respuesta del agente) y sus tests
 qcc-panel/                        plugin panel
   .claude-plugin/plugin.json      manifiesto (nombre, versión, types)
   hooks/hooks.json                { "modules": ["./register.tsx"] }
@@ -71,7 +71,7 @@ qcc-panel/                        plugin panel
 claude plugin validate qcc-panel
 claude plugin test qcc-panel
 node --test "qcc-implementador/herramientas/*.test.mjs"
-node --test qcc-commit/herramientas/solo-git.test.mjs
+node --test "qcc-commit/herramientas/*.test.mjs"
 node --test "qcc-impl-directo/herramientas/*.test.mjs"
 ```
 
