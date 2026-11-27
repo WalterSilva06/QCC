@@ -58,7 +58,7 @@ FOCO: <qué del pedido toca esta área, ≤ 2 líneas | ninguno>
 REGLAS: <la ruta del explorador en REGLAS | ninguna>
 ```
 
-- **Con los informes:** lees solo los rangos `ruta:desde-hasta` de ARCHIVOS y TESTS, y los de ACOPLAMIENTOS que vas a editar o cuyo símbolo necesitas, con Read `offset`/`limit`, todos en un mismo mensaje; un archivo entero, solo si tiene menos de ~150 líneas. Lo que trajeron no lo vuelves a buscar. Después, y antes del asesor, va una sola segunda ola, en un mismo mensaje y dentro de los 24: cubre cada `no explorado` de DUDAS y cada entrada de ACOPLAMIENTOS o DUDAS sin rango, si es sobre un archivo que vas a editar o cuyo símbolo necesitas. Su prompt es el de arriba, con `ÁREA` = esos archivos y `FOCO` = los símbolos o el acoplamiento que nombró el informe. Lo que cubre esa ola no lo buscas tú con Grep/Glob ni con Bash: lees sus rangos como los de la primera.
+- **Con los informes:** lees solo los rangos `ruta:desde-hasta` de ARCHIVOS y TESTS, y los de ACOPLAMIENTOS que vas a editar o cuyo símbolo necesitas, con Read `offset`/`limit`, todos en un mismo mensaje; un archivo entero, solo si tiene menos de ~150 líneas. Lo que trajeron no lo vuelves a buscar. Un `no explorado` de DUDAS o una entrada de ACOPLAMIENTOS sin rango, si es sobre un archivo que vas a editar o cuyo símbolo necesitas, lo ubicas con Grep `-n` (y `head_limit`) dentro de ese archivo y lees el tramo que encontró. Glob, `ls` y las búsquedas por carpeta o en todo el repo son de los exploradores, salvo el Grep de lo que el cambio quitó o cambió (en «2. Implementación»).
 
 ## 2. Implementación
 
@@ -77,6 +77,8 @@ LEÍDO: <los rangos ruta:desde-hasta que leíste, separados por coma>
 
 - Editas tú, con Edit o Write: nunca con `sed -i`, `node -e`, `python` ni heredocs, y nada temporal dentro del repo. Bash queda para git de lectura, la verificación, los `repro` del revisor y lo que el pedido pide correr.
 - Un test por cada camino público nuevo o cambiado; la documentación que el cambio deja vieja, según las reglas del proyecto.
+- Comentarios, tests y documentación describen lo vigente: sin «antes», «ahora», «ya no», fechas ni verbos sobre lo que hacía el código viejo («caía», «devolvía»).
+- Antes de verificar, Grep en todo el repo de cada nombre, valor o frase que el cambio quitó o cambió (documentación, comentarios, tests), no solo de lo que nombró el asesor.
 - Marcas de avance (un `[x]` en un plan, un checklist) solo si el pedido o su plan lo piden.
 - Nunca git que escriba (commit, add, stash, checkout, reset, push), ni `.env*`. AskUserQuestion antes de un comando irreversible o externo (migración, deploy, borrado, servicio vivo); si no se aprueba, va a «Queda para ti».
 - Lo que lanzas en segundo plano (un servidor, una búsqueda larga) lo paras con TaskStop en cuanto deja de servir, y siempre antes del cierre.
@@ -103,8 +105,13 @@ NO VERIFICADO: <lo que el pedido pide probar y no se corrió, con su motivo | na
 NOTAS: <lo que decidiste y lo que no hiciste, ≤ 5 líneas | ninguna>
 ```
 
-- RECHAZADO → antes de tocar nada, `node "${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs" --arbol` (el estado que revisó). Después reproduces cada PROBLEMA con su `repro`, todos en un mismo mensaje (lo corres o, si es de lectura, lo lees): el que no da el resultado observado no se corrige y va a `DESCARTADOS` con lo que dio. Corriges solo los que se reproducen, verificas de nuevo y lanzas otro revisor con el mismo prompt más `REVISIÓN ANTERIOR: <su reporte>`, `DESCARTADOS: <ruta:línea — no se reproduce: <qué dio>, uno por línea | ninguno>` y `CORRECCIONES: <el comando DIFF con ese árbol>`. Hasta 2 ciclos: un segundo RECHAZADO cierra `DETENIDO` con los problemas abiertos.
-- Tras un APROBADO no cambias comportamiento. Una OBSERVACIÓN de documentación vieja o de un nombre que se arregla en una línea la corriges y verificas de nuevo, sin otro ciclo; va en `Cambios`. Las demás van a «Riesgos pendientes». Un revisor sin `VEREDICTO` se relanza una vez.
+- RECHAZADO → antes de tocar nada, `node "${CLAUDE_PLUGIN_ROOT}/herramientas/corrida.mjs" --arbol` (el estado que revisó). Después, por cada PROBLEMA:
+  - De comportamiento: su `repro` pasa a ser un test, que ves fallar; corriges la causa; sumas el caso vecino (undefined, estado inicial, el borde del otro lado) y buscas con Grep el mismo patrón en el resto del DIFF y en sus llamadores.
+  - Un repro que no falla no se corrige: va a `DESCARTADOS` con lo que dio.
+  - De documentación o comentario: corriges y buscas con Grep la misma frase en todo el repo.
+
+  Verificas de nuevo y lanzas otro revisor con el mismo prompt más `REVISIÓN ANTERIOR: <su reporte>`, `DESCARTADOS: <ruta:línea — no se reproduce: <qué dio>, uno por línea | ninguno>` y `CORRECCIONES: <el comando DIFF con ese árbol>`. Hasta 3 ciclos: un tercer RECHAZADO cierra `DETENIDO` con los problemas abiertos. El tercero se lanza como el segundo: `REVISIÓN ANTERIOR` con el último reporte y `CORRECCIONES` desde el último `--arbol`.
+- Tras un APROBADO no cambias comportamiento. Una OBSERVACIÓN de documentación vieja o de un nombre que se arregla en una línea la corriges y verificas de nuevo, sin otro ciclo; va en `Cambios`. Las demás van a «Riesgos pendientes», salvo el comando de un CRITERIO `queda para el usuario`, que va a «Queda para ti». Un revisor sin `VEREDICTO` se relanza una vez.
 
 ## 5. Cierre
 

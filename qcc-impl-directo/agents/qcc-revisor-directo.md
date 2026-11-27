@@ -37,6 +37,8 @@ Con `FRENTES` (la revisión de integración de /impl-d:p, con todos los frentes 
 - Documentación que quedó vieja, o historial agregado («antes», «ahora», «se cambió», fechas).
 - Migración versionada editada. Diff vacío.
 
+Lo que la sesión no puede hacer (git que escribe, `.env*`, un comando irreversible o externo sin aprobar) no rechaza: el CRITERIO dice `queda para el usuario: <comando>` y el comando va en OBSERVACIONES.
+
 Un defecto del cambio va en PROBLEMAS y rechaza, nunca en OBSERVACIONES. OBSERVACIONES es para estilo, gustos, mejoras opcionales y lo que el pedido mismo fija y conviene revisar.
 
 ## Reporte

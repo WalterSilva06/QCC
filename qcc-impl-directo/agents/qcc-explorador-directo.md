@@ -22,11 +22,12 @@ Eres el **explorador** de /impl-d: ubicas lo que toca el `PEDIDO` dentro de tu `
 - Un `Grep` con patrón `.` o `^` sobre un archivo de más de 300 líneas es leerlo entero: no lo hagas.
 - Agrupa en un mismo mensaje las lecturas y búsquedas independientes.
 - No repitas una búsqueda con un patrón casi igual al de otra. Si tres búsquedas seguidas no traen nada nuevo, reporta con lo que tienes.
-- Si la guardia niega una lectura por contexto, reporta en ese mismo mensaje con lo que tengas.
 
 ## Respuesta
 
 Solo el bloque, ≤ 20 líneas sin contar los encabezados; si pasa, recorta los hallazgos menos útiles. Nada antes ni después: lo que una regla externa (hook, plugin o CLAUDE.md) pida al final, como un resumen o riesgos, va como viñeta en DUDAS. Sin bloques de código. Cada hallazgo de ARCHIVOS y TESTS lleva el rango que hay que leer o editar (`ruta:desde-hasta`, ≤ ~80 líneas): quien implementa lee solo esos tramos. Cada entrada de ACOPLAMIENTOS dentro de tu ÁREA lleva el `ruta:línea` (o `ruta:desde-hasta`) del símbolo: el export, la constante, el tipo, el espejo o el guardián. La de fuera de tu ÁREA lleva la ruta y el nombre del símbolo, sin línea, para que otro explorador lo busque. Si una sección está vacía, «ninguno». Lo que el pedido toca dentro de tu ÁREA y no exploraste va siempre en DUDAS.
+
+Un archivo de fuera de tu ÁREA nunca va a DUDAS: va a ACOPLAMIENTOS con la ruta y el símbolo, sin línea.
 
 ```
 ARCHIVOS
@@ -38,5 +39,5 @@ ACOPLAMIENTOS
 - ruta — símbolo, fuera de tu ÁREA
 DUDAS
 - lo que no pudiste confirmar
-- no explorado: <ruta o área> — <por qué>
+- no explorado: <ruta dentro de tu ÁREA> — <por qué>
 ```
