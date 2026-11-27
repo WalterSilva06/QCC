@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { motivoDe, esAgenteDeCommit } from './solo-git.mjs'
+import { motivoDe, esAgenteDeCommit, normalizarRuta } from './solo-git.mjs'
 
 const RUTA = fileURLToPath(new URL('./solo-git.mjs', import.meta.url))
 
@@ -89,6 +89,43 @@ test('motivoDe niega lo que no es texto', () => {
   }
 })
 
+const CWD = 'D:\\GitHub-Personal\\repo'
+
+test('motivoDe acepta un 2>/dev/null final en Bash y un cd al cwd del evento', () => {
+  for (const comando of [
+    'git diff HEAD -U1 -- src/a.ts 2>/dev/null',
+    'git -c core.quotePath=false diff HEAD -- a.md  2>/dev/null  ',
+    'cd D:/GitHub-Personal/repo && git diff HEAD --stat',
+    'cd "D:/GitHub-Personal/repo/" && git status --short 2>/dev/null',
+    "cd 'D:\\GitHub-Personal\\repo'; git log -8 --format=%s",
+  ]) assert.equal(motivoDe(comando, CWD, 'Bash'), null, comando)
+})
+
+test('motivoDe niega el cd a otra carpeta, sin cwd o con metacaracteres, y el 2>/dev/null fuera de lugar o en PowerShell', () => {
+  for (const [nombre, comando, cwd, herramienta] of [
+    ['cd a otra carpeta', 'cd D:/otro && git status', CWD],
+    ['cd relativo', 'cd .. && git status', CWD],
+    ['cd sin cwd', 'cd D:/GitHub-Personal/repo && git status', undefined],
+    ['cd con ||', 'cd D:/GitHub-Personal/repo || git status', CWD],
+    ['cd y push', 'cd D:/GitHub-Personal/repo && git push', CWD],
+    ['cd y otro comando', 'cd D:/GitHub-Personal/repo && git status && rm x', CWD],
+    ['ruta con $', 'cd "D:/a$b" && git status', 'D:/a$b'],
+    ['2>/dev/null en medio', 'git diff 2>/dev/null -- x', CWD],
+    ['2>/dev/null y otro comando', 'git status 2>/dev/null && rm x', CWD],
+    ['stdout a /dev/null', 'git status > /dev/null', CWD],
+    ['stderr a un archivo', 'git status 2>/tmp/x', CWD],
+    ['2>/dev/null en PowerShell', 'git status 2>/dev/null', CWD, 'PowerShell'],
+  ]) assert.equal(typeof motivoDe(comando, cwd, herramienta), 'string', nombre)
+})
+
+test('normalizarRuta: barras y barra final siempre; /d/ y mayúsculas solo en Windows', () => {
+  assert.equal(normalizarRuta('D:\\GitHub\\Repo\\', true), 'd:/github/repo')
+  assert.equal(normalizarRuta('/d/GitHub/Repo', true), 'd:/github/repo')
+  assert.equal(normalizarRuta('/D', true), 'd:')
+  assert.equal(normalizarRuta('/d/GitHub/Repo/', false), '/d/GitHub/Repo')
+  assert.equal(normalizarRuta('a\\B', false), 'a/B')
+})
+
 const AGENTE = 'commit:qcc-generador-commit'
 
 /** Corre la guardia como hook real y devuelve el resultado. */
@@ -102,6 +139,12 @@ test('hook real: Bash con git push se niega', () => {
   assert.equal(salida.hookSpecificOutput.permissionDecision, 'deny')
   assert.equal(salida.hookSpecificOutput.hookEventName, 'PreToolUse')
   assert.match(salida.hookSpecificOutput.permissionDecisionReason, /^Guardia \/commit: /)
+})
+
+test('hook real: el cd al cwd del evento y el 2>/dev/null pasan; un cd a otra carpeta se niega', () => {
+  const evento = (command) => JSON.stringify({ agent_type: AGENTE, tool_name: 'Bash', cwd: CWD, tool_input: { command } })
+  assert.equal(correr(evento('cd "D:/GitHub-Personal/repo" && git status --short 2>/dev/null')).stdout, '')
+  assert.equal(JSON.parse(correr(evento('cd D:/otro && git status --short')).stdout).hookSpecificOutput.permissionDecision, 'deny')
 })
 
 test('hook real: PowerShell con git status --short pasa sin salida', () => {
