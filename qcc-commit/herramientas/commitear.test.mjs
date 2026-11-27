@@ -125,6 +125,22 @@ test('solo commit: un archivo versionado dentro de una carpeta ignorada entra si
   assert.equal(remotoTiene(remoto, 'main'), '')
 })
 
+test('lo sacado del índice con git rm --cached sale en su commit y queda en disco; un borrado común, también', () => {
+  const { dir } = repo()
+  for (const f of ['notas.md', 'otra.md', 'borrado.txt']) escribir(dir, f, `${f}\n`)
+  git(dir, 'add', '-A')
+  git(dir, 'commit', '-q', '-m', 'Notas')
+  escribir(dir, '.gitignore', 'notas.md\n')
+  git(dir, 'rm', '-q', '--cached', '--', 'notas.md', 'otra.md')
+  git(dir, 'rm', '-q', '--', 'borrado.txt')
+  const r = correr(dir, 'solo', respuesta({ commits: [[['.gitignore', 'notas.md', 'otra.md', 'borrado.txt'], 'Deja de versionar las notas']] }))
+  assert.equal(r.status, 0, r.stdout + r.stderr)
+  assert.equal(git(dir, 'show', '--no-renames', '--name-status', '--format=', 'HEAD'), 'A\t.gitignore\nD\tborrado.txt\nD\tnotas.md\nD\totra.md')
+  assert.equal(git(dir, 'ls-files'), '.gitignore\nbase.txt')
+  assert.deepEqual(['notas.md', 'otra.md', 'borrado.txt'].map((f) => fs.existsSync(path.join(dir, f))), [true, true, false])
+  assert.doesNotMatch(r.stdout, /Quedó sin commit/)
+})
+
 test('corta en el primer fallo: no sigue con los demás commits ni con el push y dice qué quedó en stage', () => {
   const { dir, remoto } = repo()
   escribir(dir, '.git/hooks/pre-commit', '#!/bin/sh\ngit diff --cached --name-only | grep -q b.txt && exit 1\nexit 0\n')

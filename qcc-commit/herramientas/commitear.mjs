@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Hace los commits de /commit a partir de la respuesta del agente qcc-generador-commit.
 // Uso: node commitear.mjs --modo <push|solo|rama> [--archivo <ruta>]   (sin --archivo, la respuesta va por stdin)
-// Crea la rama (modo rama), saca todo de stage, agrega y commitea cada grupo con su mensaje exacto, corta en el primer
-// fallo, revisa lo que quedó sin commit, hace el push (salvo modo solo) e imprime el cierre. Nunca agrega rutas de
-// EXCLUIDOS ni .env*, ni atribuciones. Sale con 0 si todo salió bien, 1 si falló un paso de git y 2 si el uso o la
-// respuesta no sirven (en ese caso no toca git).
+// Crea la rama (modo rama), saca todo de stage, agrega y commitea cada grupo con su mensaje exacto (lo sacado del
+// índice con git rm --cached vuelve a salir en su grupo), corta en el primer fallo, revisa lo que quedó sin commit,
+// hace el push (salvo modo solo) e imprime el cierre. Nunca agrega rutas de EXCLUIDOS ni .env*, ni atribuciones. Sale
+// con 0 si todo salió bien, 1 si falló un paso de git y 2 si el uso o la respuesta no sirven (en ese caso no toca git).
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -153,6 +153,8 @@ export function commitear(respuesta, modo) {
     error = `${paso}: ${salida}`
     return false
   }
+  // Lo sacado del índice con `git rm --cached` (borrado en stage y todavía en disco): el reset lo vuelve a versionar.
+  const sinSeguir = git(['diff', '--cached', '--name-only', '--diff-filter=D', '--relative', '-z']).stdout.split('\0').filter((f) => f && fs.existsSync(f))
   const correr = () => {
     const reset = git(['reset', '-q'])
     if (!reset.ok) return fallo('git reset -q', reset.salida)
@@ -174,6 +176,11 @@ export function commitear(respuesta, modo) {
       if (g.versionados.length) {
         const r = git(['--literal-pathspecs', 'add', '-u', '--', ...g.versionados])
         if (!r.ok) return fallo(`git add -u («${g.resumen}»)`, r.salida)
+      }
+      const quitar = g.versionados.filter((f) => sinSeguir.includes(f))
+      if (quitar.length) {
+        const r = git(['--literal-pathspecs', 'rm', '--cached', '-q', '--', ...quitar])
+        if (!r.ok) return fallo(`git rm --cached («${g.resumen}»)`, r.salida)
       }
       if (g.nuevos.length) {
         const r = git(['--literal-pathspecs', 'add', '-A', '--', ...g.nuevos])
@@ -200,7 +207,7 @@ export function commitear(respuesta, modo) {
     if (!r.ok) error = `git push -u origin HEAD: ${r.salida}`
   }
 
-  const resto = pendientes()
+  const resto = pendientes().filter((f) => !sinSeguir.includes(f))
   const secretos = resto.filter((f) => esEnv(f) || estaExcluida(f, excluidos))
   const noDebia = resto.filter((f) => !secretos.includes(f))
   if (hechos.length) {
