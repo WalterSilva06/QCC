@@ -44,8 +44,8 @@ const rutaInicio = () => path.join(dirInicio(), `${sesionId()}.json`)
 const carpetaProyecto = (cwd) => path.join(configDe(), 'projects', path.resolve(cwd).replace(/[^a-zA-Z0-9]/g, '-'))
 
 /**
- * Lectura del snapshot: `{ t, five_hour?: { pct, resetsAt }, seven_day?: … }`; sin snapshot, roto o con más de
- * `LIMITES_MAX_SEG`, `{ t, sinDato: <motivo> }`.
+ * Lectura del snapshot: `{ t, edad, five_hour?: { pct, resetsAt }, seven_day?: … }`, con `edad` los segundos del snapshot;
+ * sin snapshot, roto o con más de `LIMITES_MAX_SEG`, `{ t, sinDato: <motivo> }` (con `edad` si es viejo).
  */
 export function leer(archivo = rutaLimites(), ahora = Date.now()) {
   const t = new Date(ahora).toISOString()
@@ -55,10 +55,10 @@ export function leer(archivo = rutaLimites(), ahora = Date.now()) {
   } catch {
     return { t, sinDato: 'sin snapshot del panel' }
   }
-  const edad = (ahora - Date.parse(s?.t)) / 1000
+  const edad = Math.round((ahora - Date.parse(s?.t)) / 1000)
   if (!Number.isFinite(edad)) return { t, sinDato: 'snapshot roto' }
-  if (edad > LIMITES_MAX_SEG) return { t, sinDato: 'snapshot viejo' }
-  const lectura = { t }
+  if (edad > LIMITES_MAX_SEG) return { t, edad, sinDato: 'snapshot viejo' }
+  const lectura = { t, edad }
   for (const [, k] of VENTANAS) if (Number.isFinite(s[k]?.pct)) lectura[k] = { pct: s[k].pct, resetsAt: s[k].resetsAt }
   return lectura
 }
@@ -385,6 +385,8 @@ function fin(argv) {
       esfuerzo: process.env.CLAUDE_EFFORT || 's/d',
       resultado,
       limites,
+      // Segundos del snapshot en cada lectura, para ver de dónde salen los `s/d` (falta sin snapshot o roto).
+      edad: { inicio: ini.lectura?.edad, fin: lectura.edad },
       roles,
       veredictos,
     }

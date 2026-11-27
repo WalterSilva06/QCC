@@ -44,8 +44,10 @@ test('leer marca sin dato al snapshot ausente, roto o viejo', () => {
   assert.equal(leer(archivo, ahora).sinDato, 'snapshot roto')
   fs.writeFileSync(archivo, JSON.stringify(lectura('2026-11-14T00:49:00Z', 40, 10)))
   assert.equal(leer(archivo, ahora).sinDato, 'snapshot viejo')
+  assert.equal(leer(archivo, ahora).edad, 660)
   fs.writeFileSync(archivo, JSON.stringify(lectura('2026-11-14T00:55:00Z', 40, 10)))
   assert.deepEqual(leer(archivo, ahora).five_hour, { pct: 40, resetsAt: RESET_5H })
+  assert.equal(leer(archivo, ahora).edad, 300)
 })
 
 test('lineaLimites da el % actual y avisa el margen bajo desde 85 % de 5 h', () => {
@@ -233,6 +235,7 @@ test('--inicio imprime lo que la skill usa y --fin anota la corrida y borra la l
   assert.equal(fila.esfuerzo, 'high')
   assert.equal(fila.resultado, 'COMPLETO')
   assert.equal(fila.limites, '5h +4 % · sem +0 %')
+  assert.ok(fila.edad.inicio >= 0 && fila.edad.inicio < 60 && fila.edad.fin >= 0 && fila.edad.fin < 60, JSON.stringify(fila.edad))
   assert.deepEqual(fila.roles.sesion.tokens, { entrada: 1, leidos: 0, escritos: 0, salida: 9 })
   assert.equal(correr('--fin'), 'LÍMITES: 5h s/d · sem s/d (sin lectura inicial)')
 })
